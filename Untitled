@@ -1,0 +1,11 @@
+# 1. Setup git and save files (if not done yet)
+git init
+git add .
+git commit -m "First commit"
+
+# 2. Connect to your repo (The code you sent)
+git branch -M main
+git remote add origin https://github.com/D71404/Epermit.git
+
+# 3. Upload
+git push -u origin main
