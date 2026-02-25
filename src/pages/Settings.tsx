@@ -29,6 +29,8 @@ import {
   CheckCircle2,
   AlertCircle,
   KeyRound,
+  Trash2,
+  Database,
 } from "lucide-react";
 import { PortalCredentialsManager } from "@/components/settings/PortalCredentialsManager";
 
@@ -102,6 +104,10 @@ export default function Settings() {
   // Notification preferences state
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(defaultNotificationPrefs);
   const [notificationsSaving, setNotificationsSaving] = useState(false);
+
+  // Clean up data state
+  const [removingDuplicates, setRemovingDuplicates] = useState(false);
+  const [clearingTestData, setClearingTestData] = useState(false);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -267,6 +273,78 @@ export default function Settings() {
     }
   };
 
+  const handleRemoveDuplicateProjects = async () => {
+    if (!user?.id) return;
+    setRemovingDuplicates(true);
+    try {
+      const { data: projects, error: fetchError } = await supabase
+        .from("projects")
+        .select("id, permit_number, last_checked_at")
+        .eq("user_id", user.id);
+
+      if (fetchError) throw fetchError;
+
+      const list = (projects ?? []).filter((p) => p.permit_number != null && String(p.permit_number).trim() !== "");
+      const byPermit = new Map<string, { id: string; last_checked_at: string | null }[]>();
+      for (const p of list) {
+        const num = String(p.permit_number).trim();
+        if (!byPermit.has(num)) byPermit.set(num, []);
+        byPermit.get(num)!.push({
+          id: p.id,
+          last_checked_at: p.last_checked_at ?? null,
+        });
+      }
+
+      const toDelete: string[] = [];
+      for (const [, arr] of byPermit) {
+        if (arr.length <= 1) continue;
+        const sorted = [...arr].sort((a, b) => {
+          const tA = a.last_checked_at || "";
+          const tB = b.last_checked_at || "";
+          return tB.localeCompare(tA);
+        });
+        for (let i = 1; i < sorted.length; i++) {
+          toDelete.push(sorted[i].id);
+        }
+      }
+
+      for (const projectId of toDelete) {
+        await supabase.from("parsed_comments").delete().eq("project_id", projectId);
+        await supabase.from("projects").delete().eq("id", projectId);
+      }
+
+      toast.success(`Removed ${toDelete.length} duplicate projects`);
+    } catch (error) {
+      console.error("Remove duplicate projects error:", error);
+      toast.error("Failed to remove duplicate projects");
+    } finally {
+      setRemovingDuplicates(false);
+    }
+  };
+
+  const handleClearTestData = async () => {
+    if (!user?.id) return;
+    setClearingTestData(true);
+    try {
+      const { data: deleted, error } = await supabase
+        .from("projects")
+        .delete()
+        .eq("user_id", user.id)
+        .is("portal_data", null)
+        .is("permit_number", null)
+        .select("id");
+
+      if (error) throw error;
+      const count = (deleted ?? []).length;
+      toast.success(`Removed ${count} empty test projects`);
+    } catch (error) {
+      console.error("Clear test data error:", error);
+      toast.error("Failed to clear test data");
+    } finally {
+      setClearingTestData(false);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-[80vh] flex items-center justify-center">
@@ -301,7 +379,7 @@ export default function Settings() {
             transition={{ delay: 0.1 }}
           >
             <Tabs defaultValue="profile" className="space-y-6">
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5">
                 <TabsTrigger value="profile" className="flex items-center gap-2">
                   <User className="h-4 w-4" />
                   <span className="hidden sm:inline">Profile</span>
@@ -317,6 +395,10 @@ export default function Settings() {
                 <TabsTrigger value="portals" className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4" />
                   <span className="hidden sm:inline">Portal Credentials</span>
+                </TabsTrigger>
+                <TabsTrigger value="cleanup" className="flex items-center gap-2">
+                  <Database className="h-4 w-4" />
+                  <span className="hidden sm:inline">Clean Up Data</span>
                 </TabsTrigger>
               </TabsList>
 
@@ -698,6 +780,60 @@ export default function Settings() {
               {/* Portal Credentials Tab */}
               <TabsContent value="portals">
                 <PortalCredentialsManager />
+              </TabsContent>
+
+              {/* Clean Up Data Tab */}
+              <TabsContent value="cleanup">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Trash2 className="h-5 w-5 text-muted-foreground" />
+                      Clean Up Data
+                    </CardTitle>
+                    <CardDescription>
+                      Remove duplicate projects or empty test projects for your account
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="space-y-2">
+                      <Label>Remove Duplicate Projects</Label>
+                      <p className="text-sm text-muted-foreground">
+                        For each permit number with multiple projects, keeps the most recently checked and deletes the rest (including their comments).
+                      </p>
+                      <Button
+                        variant="outline"
+                        onClick={handleRemoveDuplicateProjects}
+                        disabled={removingDuplicates}
+                      >
+                        {removingDuplicates ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Database className="mr-2 h-4 w-4" />
+                        )}
+                        Remove Duplicate Projects
+                      </Button>
+                    </div>
+                    <Separator />
+                    <div className="space-y-2">
+                      <Label>Clear Test Data</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Deletes all projects that have no portal data and no permit number (empty test entries).
+                      </p>
+                      <Button
+                        variant="outline"
+                        onClick={handleClearTestData}
+                        disabled={clearingTestData}
+                      >
+                        {clearingTestData ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="mr-2 h-4 w-4" />
+                        )}
+                        Clear Test Data
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               </TabsContent>
             </Tabs>
           </motion.div>

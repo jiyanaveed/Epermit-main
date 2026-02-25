@@ -32,7 +32,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Save, Wand2, ArrowLeft, CheckCircle2, ShieldCheck, FileDown } from "lucide-react";
+import { Loader2, Save, Wand2, ArrowLeft, CheckCircle2, ShieldCheck, FileDown, UserCheck, Copy, FileQuestion } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const RESPONSE_MATRIX_STYLES = `
+  @keyframes response-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes icon-shimmer { 0%, 100% { opacity: 1; filter: drop-shadow(0 0 4px rgba(16,185,129,0.3)); } 50% { opacity: 0.9; filter: drop-shadow(0 0 10px rgba(16,185,129,0.5)); } }
+  .auto-draft-icon { animation: icon-shimmer 2.5s ease-in-out infinite; }
+  .response-text-fade-in { animation: response-fade-in 0.3s ease-out; }
+`;
 
 const STATUS_OPTIONS = [
   "Pending Review",
@@ -64,6 +72,104 @@ function isReportMetadataRow(row: { original_text?: string | null }): boolean {
   const t = (row.original_text ?? "").trim();
   if (t.length < 15) return true;
   return REPORT_METADATA_PHRASES.some((phrase) => t.includes(phrase));
+}
+
+function statusBorderClass(status: string | null): string {
+  const s = (status ?? "").toLowerCase();
+  if (s === "pending" || s === "pending review" || s === "draft") return "border-l-amber-400";
+  if (s === "approved") return "border-l-emerald-500";
+  if (s === "rejected") return "border-l-red-500";
+  if (s.includes("ready")) return "border-l-blue-500";
+  return "border-l-gray-300";
+}
+
+function statusBadgeClass(status: string): string {
+  const s = status.toLowerCase();
+  if (s === "pending" || s === "pending review" || s === "draft") return "bg-amber-500/10 text-amber-700 border-amber-500/30";
+  if (s === "approved") return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
+  if (s === "rejected") return "bg-red-500/10 text-red-700 border-red-500/30";
+  if (s.includes("ready")) return "bg-blue-500/10 text-blue-700 border-blue-500/30";
+  return "bg-gray-500/10 text-gray-600 border-gray-500/30";
+}
+
+const DISCIPLINE_COLORS: Record<string, string> = {
+  zoning: "bg-violet-500/15 text-violet-700 border-violet-500/30",
+  structural: "bg-blue-500/15 text-blue-700 border-blue-500/30",
+  architectural: "bg-teal-500/15 text-teal-700 border-teal-500/30",
+  mechanical: "bg-orange-500/15 text-orange-700 border-orange-500/30",
+  mep: "bg-orange-500/15 text-orange-700 border-orange-500/30",
+  electrical: "bg-yellow-500/15 text-yellow-700 border-yellow-500/30",
+  fire: "bg-red-500/15 text-red-700 border-red-500/30",
+  general: "bg-gray-500/15 text-gray-600 border-gray-500/30",
+};
+
+function disciplineBadgeClass(discipline: string | null): string {
+  if (!discipline) return DISCIPLINE_COLORS.general;
+  const key = discipline.toLowerCase().replace(/\s+/g, "");
+  return DISCIPLINE_COLORS[key] ?? DISCIPLINE_COLORS.general;
+}
+
+function CodeRefChip({ value }: { value: string | null | undefined }) {
+  const text = value?.trim() ?? "";
+  const copy = () => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    toast.success("Code reference copied");
+  };
+  if (!text) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="group/code flex items-center gap-1 max-w-full">
+      <span className="text-xs font-mono text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 truncate">
+        {text}
+      </span>
+      <button
+        type="button"
+        onClick={copy}
+        className="opacity-0 group-hover/code:opacity-100 p-1 rounded hover:bg-muted transition-opacity shrink-0"
+        aria-label="Copy code reference"
+      >
+        <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+      </button>
+    </div>
+  );
+}
+
+function ResponseCell({
+  row,
+  draftingId,
+  onUpdate,
+}: {
+  row: ParsedCommentRow;
+  draftingId: string | null;
+  onUpdate: (value: string) => void;
+}) {
+  const isDrafting = draftingId === row.id;
+  const text = row.response_text ?? "";
+  const [justFilled, setJustFilled] = useState(false);
+  useEffect(() => {
+    if (!isDrafting && text.length > 0) {
+      setJustFilled(true);
+      const t = setTimeout(() => setJustFilled(false), 400);
+      return () => clearTimeout(t);
+    }
+  }, [isDrafting, text.length]);
+  return (
+    <div className={cn("space-y-1", justFilled && "response-text-fade-in")}>
+      <Textarea
+        value={text}
+        onChange={(e) => onUpdate(e.target.value)}
+        placeholder={isDrafting ? "Drafting..." : "Official response..."}
+        className={cn(
+          "min-h-[80px] resize-y transition-shadow duration-200 placeholder:text-muted-foreground/70",
+          "focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-1"
+        )}
+        disabled={isDrafting}
+      />
+      <p className="text-xs text-muted-foreground text-right tabular-nums">
+        {text.length} characters
+      </p>
+    </div>
+  );
 }
 
 export interface ParsedCommentRow {
@@ -101,6 +207,7 @@ export default function ResponseMatrix() {
   const [qualityCheckOpen, setQualityCheckOpen] = useState(false);
   const [qualityChecking, setQualityChecking] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [routing, setRouting] = useState(false);
   const [qualityCheckResult, setQualityCheckResult] = useState<{
     project_id: string;
     results: Array<{
@@ -173,15 +280,27 @@ export default function ResponseMatrix() {
       if (error) throw error;
       const payload = data as { suggested_response?: string } | null;
       const text = typeof payload?.suggested_response === "string" ? payload.suggested_response : "";
-      updateRow(row.id, "response_text", text);
-      toast.success("Response drafted");
+      if (!text) {
+        toast.error("No response generated");
+        return;
+      }
+      const { error: updateError } = await supabase
+        .from("parsed_comments")
+        .update({ response_text: text })
+        .eq("id", row.id);
+      if (updateError) throw updateError;
+      queryClient.setQueryData<ParsedCommentRow[]>(["parsed_comments", row.project_id], (prev) =>
+        (prev ?? []).map((r) => (r.id === row.id ? { ...r, response_text: text } : r))
+      );
+      const snippet = text.length > 60 ? `${text.slice(0, 60).trim()}…` : text;
+      toast.success(`Response drafted. ${snippet ? `"${snippet}"` : ""}`);
     } catch (err: unknown) {
       console.error(err);
-      toast.error(err instanceof Error ? err.message : "Auto-draft failed");
+      toast.error(err instanceof Error ? err.message : "Auto-draft failed. You can retry.");
     } finally {
       setDraftingId(null);
     }
-  }, []);
+  }, [queryClient]);
 
   const runValidateCompleteness = useCallback(async () => {
     if (!projectId) {
@@ -296,6 +415,33 @@ export default function ResponseMatrix() {
     }
   }, [projectId]);
 
+  const runRouteComments = useCallback(async () => {
+    if (!projectId) {
+      toast.error("Select a project first");
+      return;
+    }
+    setRouting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("auto-router-agent", {
+        body: { project_id: projectId },
+      });
+      if (error) throw error;
+      const payload = data as { routed_count?: number; error?: string };
+      if (payload?.error) {
+        toast.error(payload.error);
+        return;
+      }
+      const routedCount = payload?.routed_count ?? 0;
+      toast.success(`Routed ${routedCount} comments`);
+      queryClient.invalidateQueries({ queryKey: ["parsed_comments", projectId] });
+    } catch (e) {
+      console.warn("Route comments failed:", e);
+      toast.error("Route comments failed");
+    } finally {
+      setRouting(false);
+    }
+  }, [projectId, queryClient]);
+
   const applySuggestion = useCallback(
     (commentId: string, suggested_improvement: string) => {
       updateRow(commentId, "response_text", suggested_improvement);
@@ -339,71 +485,100 @@ export default function ResponseMatrix() {
   }
 
   return (
-    <div className="min-h-[80vh] p-4 md:p-6">
-      <div className="max-w-[1600px] mx-auto space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
+    <div className="min-h-[80vh] w-full min-w-0 p-4 md:p-6 overflow-x-hidden">
+      <style>{RESPONSE_MATRIX_STYLES}</style>
+      <div className="max-w-[1600px] mx-auto w-full min-w-0 space-y-4">
+        {/* Header: title block (no overlap with project or actions) */}
+        <header className="flex flex-col gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")} className="shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold">Response Matrix</h1>
-              <p className="text-muted-foreground text-sm">
+            <div className="min-w-0 border-l-4 border-emerald-500 pl-3">
+              <h1 className="text-2xl font-bold tracking-tight">Response Matrix</h1>
+              <p className="text-muted-foreground text-sm mt-0.5">
                 Manage and draft official responses to permit comments.
               </p>
+              <div className="h-0.5 w-16 mt-1 bg-gradient-to-r from-emerald-500 to-transparent rounded-full" />
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Label className="text-sm text-muted-foreground whitespace-nowrap">Project</Label>
-            <Select value={projectId ?? ""} onValueChange={setProjectId}>
-              <SelectTrigger className="w-[220px]">
-                <SelectValue placeholder="Select project" />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={runValidateCompleteness}
-              disabled={!projectId || validating}
-            >
-              {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-              Validate Completeness
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={runQualityCheck}
-              disabled={!projectId || qualityChecking}
-            >
-              {qualityChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
-              Quality Check
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={runExportResponsePackage}
-              disabled={!projectId || exporting}
-            >
-              {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
-              Export Response Package
-            </Button>
-            <Button
-              onClick={saveChanges}
-              disabled={saving || rows.length === 0}
-              className="bg-accent hover:bg-accent/90"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-              Save Changes
-            </Button>
+          {/* Project row: label + dropdown + badge */}
+          <div className="flex flex-wrap items-center gap-3 gap-y-2">
+            <div className="flex items-center gap-2 shrink-0 min-w-0">
+              <Label className="text-sm text-muted-foreground whitespace-nowrap">Project</Label>
+              <Select value={projectId ?? ""} onValueChange={setProjectId}>
+                <SelectTrigger className="w-[200px] sm:w-[220px]">
+                  <SelectValue placeholder="Select project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {projectId && (
+                <span className="inline-flex items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-xs font-medium h-6 min-w-[24px] px-2 border border-emerald-500/30 shrink-0">
+                  {withoutMetadata.length}
+                </span>
+              )}
+            </div>
+            {/* Action bar: justify-between, scrollable secondary, Save pinned right */}
+            <div className="flex justify-between items-center gap-4 flex-1 min-w-0">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-thin flex-1 min-w-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={runValidateCompleteness}
+                  disabled={!projectId || validating}
+                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                >
+                  {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                  Validate Completeness
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={runQualityCheck}
+                  disabled={!projectId || qualityChecking}
+                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                >
+                  {qualityChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
+                  Quality Check
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={runExportResponsePackage}
+                  disabled={!projectId || exporting}
+                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                >
+                  {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
+                  Export Response Package
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={runRouteComments}
+                  disabled={!projectId || routing}
+                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                >
+                  {routing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCheck className="h-4 w-4 mr-2" />}
+                  Route Comments
+                </Button>
+              </div>
+              <Button
+                onClick={saveChanges}
+                disabled={saving || rows.length === 0}
+                className="bg-accent hover:bg-accent/90 flex-shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md active:scale-[0.98] ml-2 pr-1"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                Save Changes
+              </Button>
+            </div>
           </div>
-        </div>
+        </header>
 
         <Dialog open={validateOpen} onOpenChange={setValidateOpen}>
           <DialogContent>
@@ -520,19 +695,37 @@ export default function ResponseMatrix() {
         </Dialog>
 
         {!projectId ? (
-          <p className="text-muted-foreground text-center py-12">
-            Select a project to load parsed comments.
-          </p>
+          <div className="flex flex-col items-center justify-center py-16 px-4 rounded-xl border border-dashed border-border bg-muted/20">
+            <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted/50 mb-4">
+              <FileQuestion className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <p className="text-lg font-medium text-foreground">No project selected</p>
+            <p className="text-sm text-muted-foreground mt-1 text-center max-w-sm">
+              Select a project from the dropdown above to load and manage parsed comments.
+            </p>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/dashboard")}>
+              Go to Dashboard
+            </Button>
+          </div>
         ) : loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : rows.length === 0 ? (
-          <p className="text-muted-foreground text-center py-12">
-            {filterPending
-              ? "No pending comments for this project."
-              : "No parsed comments for this project. Add comments from the Comment Review workspace."}
-          </p>
+          <div className="flex flex-col items-center justify-center py-16 px-4 rounded-xl border border-dashed border-border bg-muted/20">
+            <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted/50 mb-4">
+              <FileQuestion className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <p className="text-lg font-medium text-foreground">No comments found</p>
+            <p className="text-sm text-muted-foreground mt-1 text-center max-w-sm">
+              {filterPending
+                ? "No pending comments for this project."
+                : "Run the Comment Parser agent to extract comments from your portal reports."}
+            </p>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/dashboard")}>
+              Go to Dashboard
+            </Button>
+          </div>
         ) : (
           <>
           {filterPending && (
@@ -540,76 +733,86 @@ export default function ResponseMatrix() {
               <Badge variant="secondary">Showing pending comments only</Badge>
             </p>
           )}
-          <div className="border rounded-md overflow-auto">
-            <Table>
+          <div className="border rounded-lg overflow-auto shadow-sm">
+            <Table className="w-full min-w-[900px]">
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[120px]">Status</TableHead>
-                  <TableHead className="w-[100px]">Discipline</TableHead>
-                  <TableHead className="min-w-[220px]">City Comment</TableHead>
-                  <TableHead className="w-32">Code Ref.</TableHead>
-                  <TableHead className="min-w-[280px]">Response</TableHead>
-                  <TableHead className="w-[100px]">Auto-Draft</TableHead>
-                  <TableHead className="w-[140px]">Assigned To</TableHead>
-                  <TableHead className="w-[100px]">Sheet Ref.</TableHead>
+                <TableRow className="bg-muted/50 hover:bg-muted/50 border-b">
+                  <TableHead className="w-[120px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Status</TableHead>
+                  <TableHead className="w-[100px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Discipline</TableHead>
+                  <TableHead className="min-w-[220px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">City Comment</TableHead>
+                  <TableHead className="w-[140px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Code Ref.</TableHead>
+                  <TableHead className="min-w-[300px] w-full sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Response</TableHead>
+                  <TableHead className="w-[100px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Auto-Draft</TableHead>
+                  <TableHead className="w-[140px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Assigned To</TableHead>
+                  <TableHead className="w-[100px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Sheet Ref.</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>
+                {rows.map((row, idx) => (
+                  <TableRow
+                    key={row.id}
+                    className={cn(
+                      "border-l-4 transition-all duration-150 hover:bg-muted/30 hover:translate-x-px",
+                      idx % 2 === 0 ? "bg-background" : "bg-muted/10",
+                      statusBorderClass(row.status)
+                    )}
+                  >
+                    <TableCell className="align-middle w-[120px]">
                       <Select
                         value={row.status}
                         onValueChange={(v) => updateRow(row.id, "status", v)}
                       >
-                        <SelectTrigger className="h-8">
+                        <SelectTrigger className={cn("h-8 w-full max-w-full rounded-full border text-xs font-medium transition-colors duration-200", statusBadgeClass(row.status))}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           {STATUS_OPTIONS.map((s) => (
                             <SelectItem key={s} value={s}>
-                              {s}
+                              <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium border", statusBadgeClass(s))}>
+                                {s}
+                              </span>
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{row.discipline}</Badge>
+                    <TableCell className="align-middle">
+                      <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium border", disciplineBadgeClass(row.discipline))}>
+                        {row.discipline}
+                      </span>
                     </TableCell>
                     <TableCell className="align-top text-sm text-muted-foreground max-w-[280px]">
                       {row.original_text}
                     </TableCell>
-                    <TableCell className="align-top w-32">
+                    <TableCell className="align-top w-[140px] min-w-[140px]">
                       {row.code_reference?.trim() ? (
-                        <span className="text-xs font-mono text-blue-700 bg-blue-50 px-2 py-1 rounded">
-                          {row.code_reference}
-                        </span>
+                        <CodeRefChip value={row.code_reference} />
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
                     </TableCell>
-                    <TableCell className="align-top p-2">
-                      <Textarea
-                        value={row.response_text ?? ""}
-                        onChange={(e) => updateRow(row.id, "response_text", e.target.value)}
-                        placeholder="Official response..."
-                        className="min-h-[80px] resize-y"
+                    <TableCell className="align-top p-2 min-w-[300px]">
+                      <ResponseCell
+                        row={row}
+                        draftingId={draftingId}
+                        onUpdate={(v) => updateRow(row.id, "response_text", v)}
                       />
                     </TableCell>
-                    <TableCell className="align-top">
+                    <TableCell className="align-top w-[100px]">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => runAutoDraft(row)}
                         disabled={draftingId === row.id}
-                        className="shrink-0"
+                        className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md [&_svg]:shrink-0 inline-flex items-center"
                       >
-                        {draftingId === row.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Wand2 className="h-4 w-4" />
-                        )}
+                        <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
+                          {draftingId === row.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Wand2 className="h-4 w-4 auto-draft-icon" />
+                          )}
+                        </span>
                         <span className="ml-1 hidden sm:inline">Auto-Draft</span>
                       </Button>
                     </TableCell>

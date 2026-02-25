@@ -6,8 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const PARSER_TIMEOUT_MS = 20_000;
-const CLASSIFIER_TIMEOUT_MS = 30_000;
+const PARSER_TIMEOUT_MS = 60_000;
+const CLASSIFIER_TIMEOUT_MS = 60_000;
 
 async function fetchWithTimeout(
   url: string,
@@ -69,6 +69,8 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const projectId = body.project_id as string | undefined;
     const cursor = body.cursor as { pdfIndex?: number } | undefined;
+    const parserTimeout = (body.parser_timeout_ms as number | undefined) ?? PARSER_TIMEOUT_MS;
+    const classifierTimeout = (body.classifier_timeout_ms as number | undefined) ?? CLASSIFIER_TIMEOUT_MS;
     console.log("[intake-pipeline] project_id:", projectId ?? "(missing)", "user.id:", user.id, "cursor:", cursor ?? "none");
 
     if (!projectId) {
@@ -104,7 +106,7 @@ serve(async (req) => {
         method: "POST",
         headers,
         body: JSON.stringify({ project_id: projectId, cursor, max_pdfs: 2 }),
-        timeoutMs: PARSER_TIMEOUT_MS,
+        timeoutMs: parserTimeout,
       });
       const commentParserText = await commentParserRes.text();
       const bodyPreview = commentParserText.slice(0, 200);
@@ -149,7 +151,7 @@ serve(async (req) => {
           method: "POST",
           headers,
           body: JSON.stringify({ project_id: projectId }),
-          timeoutMs: CLASSIFIER_TIMEOUT_MS,
+          timeoutMs: classifierTimeout,
         });
         const disciplineClassifierText = await disciplineClassifierRes.text();
         const bodyPreview = disciplineClassifierText.slice(0, 200);
@@ -179,11 +181,20 @@ serve(async (req) => {
 
     console.log("[intake-pipeline] total duration ms:", Date.now() - startTime);
 
+    const classifierOk = !disciplineClassifierResult.error;
+    const next_action =
+      !parserDone || commentParserResult.error
+        ? "poll_again"
+        : classifierOk
+          ? "complete"
+          : "retry_classifier";
+
     return new Response(
       JSON.stringify({
         project_id: projectId,
         comment_parser: commentParserResult,
         discipline_classifier: disciplineClassifierResult,
+        next_action,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 3000,
+    allowedHosts: true, // allow ngrok and other tunnel hosts
   },
   plugins: [
     react(),

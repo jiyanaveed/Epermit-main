@@ -265,6 +265,69 @@
   .stagger-children > *:nth-child(6) { animation-delay: 0.6s; }
 }
 
+/* Dashboard & Toast animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.4); }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes fade-in-up {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes draw-circle {
+  from { stroke-dashoffset: 283; }
+  to { stroke-dashoffset: var(--target-offset); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes progress-shrink {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+@keyframes status-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-slide-in-right { animation: slide-in-right 0.3s ease-out; }
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 3s infinite;
+}
+.animate-progress-shrink { animation: progress-shrink var(--toast-duration, 4s) linear forwards; }
+.animate-status-shake { animation: status-shake 0.4s ease-in-out; }
+
+/* Sonner toast progress bar */
+[data-sonner-toast] {
+  --toast-duration: 4s;
+}
+[data-sonner-toast][data-type="success"] { --toast-accent: rgba(16, 185, 129, 0.9); }
+[data-sonner-toast][data-type="error"] { --toast-accent: rgba(239, 68, 68, 0.9); }
+[data-sonner-toast][data-type="info"] { --toast-accent: rgba(59, 130, 246, 0.9); }
+[data-sonner-toast][data-type="warning"] { --toast-accent: rgba(245, 158, 11, 0.9); }
+[data-sonner-toast]::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--toast-accent, rgba(16, 185, 129, 0.9));
+  transform-origin: left;
+  animation: progress-shrink var(--toast-duration, 4s) linear forwards;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;

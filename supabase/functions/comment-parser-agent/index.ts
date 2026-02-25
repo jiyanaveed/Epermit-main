@@ -328,10 +328,14 @@ serve(async (req) => {
     const portalData = (project.portal_data as PortalData | null) ?? {};
     const pdfs = portalData.tabs?.reports?.pdfs ?? [];
     const pdfsWithTextRaw = pdfs.filter((p): p is PortalPdf & { text: string } => !!p.text && p.text.trim().length > 0);
-    // Only extract from PDFs whose fileName contains "Review Comments" (real review comments, not metadata reports)
-    const pdfsWithText = pdfsWithTextRaw.filter((p) => (p.fileName ?? "").includes("Review Comments"));
+    // Only the single "Plan Review - Review Comments" report (exclude Review Details, Routing Slip)
+    const pdfsWithText = pdfsWithTextRaw.filter((p) => {
+      const name = (p.fileName ?? "").toLowerCase();
+      return name.includes("review comments") && !name.includes("review details") && !name.includes("routing slip");
+    });
+    const pdfsToProcess = pdfsWithText.slice(0, 1);
 
-    if (pdfsWithText.length === 0) {
+    if (pdfsToProcess.length === 0) {
       console.log("[DEBUG] comment-parser: no PDFs with 'Review Comments' in fileName, skipping");
       return new Response(
         JSON.stringify({
@@ -347,7 +351,7 @@ serve(async (req) => {
       );
     }
 
-    const totalPdfs = pdfsWithText.length;
+    const totalPdfs = pdfsToProcess.length;
 
     const savedCursor = portalData.meta?.comment_parse_cursor;
     const startPdfIndex = cursorBody?.pdfIndex ?? savedCursor?.pdfIndex ?? 0;
@@ -370,7 +374,7 @@ serve(async (req) => {
       );
     }
 
-    const firstPdf = pdfsWithText[0];
+    const firstPdf = pdfsToProcess[0];
     const firstText = (firstPdf.text ?? "").trim();
     if (firstText === "" || firstText.includes("No data found.")) {
       const mergedPortalData = {
@@ -393,6 +397,18 @@ serve(async (req) => {
     }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+    const { data: deletedRows, error: deleteError } = await supabase
+      .from("parsed_comments")
+      .delete()
+      .eq("project_id", projectId)
+      .select("id");
+    if (deleteError) {
+      console.error("[comment-parser] Failed to clear existing comments:", deleteError.message);
+    } else {
+      const clearedCount = (deletedRows ?? []).length;
+      console.log(`Cleared ${clearedCount} existing comments before re-parsing`);
+    }
 
     const existingRows = await supabase
       .from("parsed_comments")
@@ -417,7 +433,7 @@ serve(async (req) => {
 
     for (let i = 0; i < maxPdfs && safeStart + i < totalPdfs; i++) {
       const pdfIndex = safeStart + i;
-      const pdf = pdfsWithText[pdfIndex];
+      const pdf = pdfsToProcess[pdfIndex];
       const pageNumber = pdfIndex + 1;
       const blocks = filterNoiseBlocks(splitIntoCommentBlocks(pdf.text));
       console.log("[DEBUG] comment-parser: PDF index", pdfIndex + 1, "/", totalPdfs, "blocks extracted:", blocks.length);
@@ -430,11 +446,29 @@ serve(async (req) => {
 
       const classified = await classifyCommentBlocks(openai, blocks);
 
+      const SKIP_PHRASES = [
+        "Created in ProjectDox version",
+        "Report Generated:",
+        "Report date:",
+        "Project Name:",
+        "Workflow Started:",
+      ];
+      const DATE_ONLY_PATTERN = /^\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}/;
+
       let commentCountThisPdf = 0;
       for (const c of classified) {
         if (maxComments != null && parsedCount + skippedCount + insertErrorCount >= maxComments) break;
         const orig = c.original_text.trim();
         if (!orig) continue;
+
+        const origTrimmed = orig.trim();
+        if (
+          SKIP_PHRASES.some((phrase) => origTrimmed.includes(phrase)) ||
+          (origTrimmed.length < 30 && DATE_ONLY_PATTERN.test(origTrimmed))
+        ) {
+          skippedCount++;
+          continue;
+        }
 
         const key = normalizeText(orig);
         if (existingNormalized.has(key)) {

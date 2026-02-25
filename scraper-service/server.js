@@ -458,28 +458,23 @@ async function scrapeAll(session, projects, sessionId, tabsToUse, supabaseProjec
     const projectNum = project.projectNum;
     const currentData = session.data[project.id];
     if (!currentData) continue;
-    const useProjectId = supabaseProjectId && projects.length === 1 ? supabaseProjectId : null;
     let actualProjectId = null;
+
+    const updatePayload = {
+      ...updatePayloadFields(currentData),
+      permit_number: projectNum,
+    };
 
     try {
       console.log(`   🔄 Syncing ${projectNum} to Supabase...`);
-      if (useProjectId) {
-        console.log("   Supabase query: id =", useProjectId);
-      } else {
-        console.log("   Supabase query: permit_number =", project.projectNum);
-      }
 
-      const updatePayload = {
-        ...updatePayloadFields(currentData),
-        permit_number: projectNum,
-      };
-      let query = supabase.from("projects").update(updatePayload);
-      if (useProjectId) {
-        query = query.eq("id", useProjectId);
-      } else {
-        query = query.eq("permit_number", projectNum);
-      }
-      let { data, error } = await query.select();
+      // (a) Try UPDATE where permit_number = projectNum AND user_id = userId
+      let { data, error } = await supabase
+        .from("projects")
+        .update(updatePayload)
+        .eq("permit_number", projectNum)
+        .eq("user_id", userId)
+        .select();
 
       if (error) {
         console.error("   ❌ Supabase error:", error.message, error.details);
@@ -488,54 +483,23 @@ async function scrapeAll(session, projects, sessionId, tabsToUse, supabaseProjec
 
       if (data && Array.isArray(data) && data.length > 0) {
         actualProjectId = data[0].id;
-        console.log("   Supabase response data:", JSON.stringify(data));
-      } else if (data && Array.isArray(data) && data.length === 0) {
-        if (useProjectId) {
-          console.warn("   ⚠️ No match by project_id, trying permit_number...");
-          const { data: data2, error: err2 } = await supabase
-            .from("projects")
-            .update(updatePayload)
-            .eq("permit_number", projectNum)
-            .select();
-          if (err2) {
-            console.error("   ❌ Supabase error (permit_number fallback):", err2.message, err2.details);
-            continue;
-          }
-          if (data2 && data2.length > 0) {
-            actualProjectId = data2[0].id;
-            console.log("   Supabase response data:", JSON.stringify(data2));
-          } else {
-            console.warn("   ⚠️ No match by permit_number either, creating new project...");
-            if (!userId) {
-              console.error("   ❌ Cannot create project: userId not provided");
-              continue;
-            }
-            const { data: created, error: createError } = await supabase
-              .from("projects")
-              .insert({
-                user_id: userId,
-                name: currentData.projectNum || projectNum,
-                permit_number: projectNum,
-                description: currentData.description || "",
-                address: currentData.location || "",
-                jurisdiction: "Washington DC",
-                status: "draft",
-                portal_status: currentData.dashboardStatus || "Unknown",
-                last_checked_at: new Date().toISOString(),
-                portal_data: currentData,
-              })
-              .select();
-            if (createError) {
-              console.error("   ❌ Supabase create error:", createError.message, createError.details);
-              continue;
-            }
-            if (created && created.length > 0) {
-              actualProjectId = created[0].id;
-              console.log("   📝 Created new project:", actualProjectId, "for permit", projectNum);
-            }
-          }
+        console.log("   ✅ Updated existing project (user match):", actualProjectId);
+      } else {
+        // (b) No rows updated; try UPDATE where permit_number = projectNum (any user)
+        const { data: data2, error: err2 } = await supabase
+          .from("projects")
+          .update(updatePayload)
+          .eq("permit_number", projectNum)
+          .select();
+        if (err2) {
+          console.error("   ❌ Supabase error (permit_number fallback):", err2.message, err2.details);
+          continue;
+        }
+        if (data2 && Array.isArray(data2) && data2.length > 0) {
+          actualProjectId = data2[0].id;
+          console.log("   ✅ Updated existing project (permit_number match):", actualProjectId);
         } else {
-          console.warn("   ⚠️ No match by permit_number either, creating new project...");
+          // (c) Still no rows; INSERT new project
           if (!userId) {
             console.error("   ❌ Cannot create project: userId not provided");
             continue;
@@ -564,8 +528,6 @@ async function scrapeAll(session, projects, sessionId, tabsToUse, supabaseProjec
             console.log("   📝 Created new project:", actualProjectId, "for permit", projectNum);
           }
         }
-      } else {
-        console.log("   ✅ Saved to Supabase!");
       }
 
       if (actualProjectId) {

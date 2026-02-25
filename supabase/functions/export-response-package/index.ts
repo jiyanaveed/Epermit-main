@@ -104,9 +104,8 @@ serve(async (req) => {
     const rows = (allComments ?? []) as CommentRow[];
     const withResponse = rows.filter((r) => r.response_text != null && String(r.response_text).trim() !== "");
     const missingCount = rows.length - withResponse.length;
-    if (missingCount > 0) {
-      return json({ error: "Incomplete responses", missing_count: missingCount }, 400);
-    }
+    // Allow partial export — only export comments with responses
+    // Include missing_count in response so UI can show a warning
 
     let toExport = withResponse;
     if (includeOnlyStatuses?.length) {
@@ -192,7 +191,13 @@ serve(async (req) => {
       return json({ error: "Signed URL failed", file_path: filePath }, 500);
     }
 
-    return json({ url: signed.signedUrl, file_path: filePath });
+    return json({
+      url: signed.signedUrl,
+      file_path: filePath,
+      exported_count: toExport.length,
+      missing_count: missingCount,
+      total_count: rows.length,
+    });
   } catch (err) {
     console.error("export-response-package:", err);
     return json({ error: err instanceof Error ? err.message : "Unknown error" }, 500);
