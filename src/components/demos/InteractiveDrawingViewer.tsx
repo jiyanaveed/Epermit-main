@@ -294,7 +294,7 @@ export function InteractiveDrawingViewer() {
           </div>
 
           {/* Drawing Area */}
-          <div className="relative h-[calc(100%-60px)] bg-slate-100 overflow-auto">
+          <div className="relative h-[calc(100%-60px)] bg-[#091428] overflow-auto">
             <div
               className="relative w-full h-full min-h-[500px] transition-transform duration-200"
               style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}
@@ -426,7 +426,7 @@ export function InteractiveDrawingViewer() {
                     key={`resolved-${response.issueId}`}
                     className={cn(
                       "absolute w-6 h-6 -ml-3 -mt-3 rounded-full flex items-center justify-center",
-                      response.status === "rejected" ? "bg-gray-400" : "bg-emerald-500"
+                      response.status === "rejected" ? "bg-[#6B9AC4]" : "bg-emerald-500"
                     )}
                     style={{ left: `${issue.x}%`, top: `${issue.y}%` }}
                   >
@@ -450,7 +450,7 @@ export function InteractiveDrawingViewer() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold">Compliance Summary</h3>
             {issueResponses.length > 0 && (
-              <Badge variant="secondary" className="bg-emerald-100 text-emerald-700">
+              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400">
                 {issueResponses.length} addressed
               </Badge>
             )}
@@ -545,7 +545,7 @@ export function InteractiveDrawingViewer() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-amber-500 text-amber-600 hover:bg-amber-50"
+                    className="border-amber-500 text-amber-400 hover:bg-[#FF6B2B08]"
                     onClick={() => {
                       setModifiedResponse(selectedIssue.suggestedFix);
                       setShowModifyDialog(true);
@@ -715,9 +715,9 @@ export function InteractiveDrawingViewer() {
                             variant="secondary"
                             className={cn(
                               "text-[10px]",
-                              response.status === "accepted" && "bg-emerald-100 text-emerald-700",
-                              response.status === "modified" && "bg-amber-100 text-amber-700",
-                              response.status === "rejected" && "bg-gray-100 text-gray-700"
+                              response.status === "accepted" && "bg-emerald-500/10 text-emerald-400",
+                              response.status === "modified" && "bg-amber-500/10 text-amber-400",
+                              response.status === "rejected" && "bg-[#6B9AC4]/10 text-[#6B9AC4]"
                             )}
                           >
                             {response.status}

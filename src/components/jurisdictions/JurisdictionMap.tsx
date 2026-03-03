@@ -203,10 +203,10 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
 
   const getVolumeColor = (units: number | null) => {
     if (!units) return 'bg-muted text-muted-foreground';
-    if (units >= 10000) return 'bg-emerald-100 text-emerald-800';
-    if (units >= 5000) return 'bg-blue-100 text-blue-800';
-    if (units >= 1000) return 'bg-amber-100 text-amber-800';
-    return 'bg-slate-100 text-slate-800';
+    if (units >= 10000) return 'bg-emerald-500/10 text-emerald-400';
+    if (units >= 5000) return 'bg-blue-500/10 text-blue-400';
+    if (units >= 1000) return 'bg-amber-500/10 text-amber-400';
+    return 'bg-[#6B9AC4]/10 text-[#6B9AC4]';
   };
 
   return (
@@ -278,7 +278,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-2">
                 {selectedJurisdiction.is_high_volume && (
-                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
                     <TrendingUp className="h-3 w-3 mr-1" />
                     High Volume
                   </Badge>

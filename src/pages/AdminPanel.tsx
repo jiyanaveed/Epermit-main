@@ -982,7 +982,7 @@ export default function AdminPanel() {
                         {/* Live Preview */}
                         <div className="space-y-2">
                           <Label>Live Preview</Label>
-                          <div className="border rounded-lg overflow-hidden bg-white text-sm">
+                          <div className="border rounded-lg overflow-hidden bg-[#0D1E38] text-sm">
                             <div style={{ backgroundColor: editedBranding.primary_color }} className="px-4 py-3 text-center">
                               {editedBranding.logo_url && (
                                 <img 
@@ -996,7 +996,7 @@ export default function AdminPanel() {
                             </div>
                             <div className="p-4 space-y-2">
                               <p className="text-xs text-gray-500">Jurisdiction Code Update</p>
-                              <p className="font-bold text-gray-900">Sample Notification Title</p>
+                              <p className="font-bold text-[#F0F6FF]">Sample Notification Title</p>
                               <span 
                                 className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
                                 style={{ 
@@ -1016,7 +1016,7 @@ export default function AdminPanel() {
                                 Sample notification message content...
                               </div>
                             </div>
-                            <div className="bg-gray-100 px-4 py-2 text-center">
+                            <div className="bg-[#091428] px-4 py-2 text-center">
                               <p className="text-xs text-gray-500">{editedBranding.footer_text}</p>
                               <p className="mt-1">
                                 <span 
@@ -1157,7 +1157,7 @@ export default function AdminPanel() {
             </DialogDescription>
           </DialogHeader>
           
-          <div className="border rounded-lg overflow-hidden bg-white">
+          <div className="border rounded-lg overflow-hidden bg-[#0D1E38]">
             {/* Email Header */}
             <div style={{ backgroundColor: currentBranding.primary_color }} className="px-6 py-4 text-center">
               {currentBranding.logo_url && (
