@@ -33,7 +33,9 @@ Preferred communication style: Simple, everyday language.
 - **Routing:** React Router 6 with two route categories:
   - Public marketing routes (landing, pricing, demos, FAQ, contact)
   - Protected app routes (dashboard, projects, analytics, tools) wrapped in `ProtectedRoute` which redirects unauthenticated users to `/auth`
-- **UI layer:** shadcn/ui (built on Radix UI primitives) + Tailwind CSS. Theme tokens are CSS variables defined in `src/index.css`. Dark mode is supported via `ThemeProvider`.
+- **UI layer:** shadcn/ui (built on Radix UI primitives) + Tailwind CSS. Theme tokens are CSS variables defined in `src/index.css`. Dark obsidian theme (#050E1F) is the default with gold (#FF6B2B) accent.
+- **Design system:** Commun-ET dark obsidian theme. Fonts: Cormorant Garamond (headings), DM Mono (labels/tags), Barlow (body). Colors: obsidian #050E1F, slate #091428, panel #0D1E38, gold #FF6B2B, fog #6B9AC4, teal #38BDF8.
+- **Landing page:** `src/pages/CommunETLanding.tsx` — self-contained marketing page with inline styles, rendered at `/` for unauthenticated users via `src/pages/LandingPage.tsx`.
 - **State management:** TanStack React Query v5 for server state. Local state via React hooks. Selected project persisted in localStorage via `SelectedProjectContext`.
 - **Forms:** React Hook Form + Zod for validation.
 - **Key contexts:**

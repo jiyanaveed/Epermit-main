@@ -129,9 +129,10 @@ export default {
         "float": "float 3s ease-in-out infinite",
       },
       fontFamily: {
-        sans: ["Plus Jakarta Sans", "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"],
-        display: ["Plus Jakarta Sans", "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"],
-        jakarta: ["Plus Jakarta Sans", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["Barlow", "Trebuchet MS", "sans-serif"],
+        display: ["Cormorant Garamond", "Georgia", "serif"],
+        heading: ["Cormorant Garamond", "Georgia", "serif"],
+        mono: ["DM Mono", "Courier New", "monospace"],
       },
     },
   },
