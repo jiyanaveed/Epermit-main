@@ -66,7 +66,7 @@ export default function CommunETLanding() {
   const navigate = useNavigate();
   const competitiveMatrixRef = useRef<HTMLElement | null>(null);
   const [activeModule, setActiveModule] = useState(0);
-  const [activeWave, setActiveWave] = useState(0);
+  
   const [, setScrollY] = useState(0);
   const [heroVisible, setHeroVisible] = useState(false);
 
@@ -84,39 +84,6 @@ export default function CommunETLanding() {
     { id: "04", name: "CommentTrace™", tag: "WAVE 2", desc: "Historical comment intelligence. Mines proprietary comment database to predict agency objections before submission and surfaces resolution precedents.", icon: "◉", color: "#FF6B2B" },
     { id: "05", name: "AgencyPulse™", tag: "WAVE 2", desc: "Real-time agency relationship monitoring. Tracks reviewer preferences, turnaround velocity, and jurisdictional pattern shifts across all active projects.", icon: "◎", color: "#38BDF8" },
     { id: "06", name: "ConstructionOS™", tag: "WAVE 3", desc: "Unified construction management platform. Integrates all 12 Insight modules into a single command interface with project health scoring and cascading delay forecasts.", icon: "⬛", color: "#FB7185" },
-  ];
-
-  const waves = [
-    {
-      label: "Wave 1", period: "Q1–Q2 2026", theme: "Prove the Intelligence",
-      color: COLORS.gold,
-      items: [
-        { phase: "Shadow Mode Launch", weeks: "Weeks 1–6", detail: "AI agents observe live workflows, build baseline metrics without disruption. Zero client-facing change." },
-        { phase: "DesignCheck Beta", weeks: "Weeks 7–12", detail: "3–5 pilot clients. $500–$1,500/mo. Validate 90% time reduction claim. Collect 100+ graded interactions." },
-        { phase: "SubmitIQ Soft Launch", weeks: "Weeks 13–20", detail: "Layer pre-submission QA onto existing workflow. Position as 'first-pass guarantee.'" },
-        { phase: "Revenue Milestone", weeks: "Month 6", detail: "Target: +$250K ARR. DesignCheck fully validated. Client testimonials secured. Investor narrative locked." },
-      ]
-    },
-    {
-      label: "Wave 2", period: "Q3–Q4 2026", theme: "Scale the Platform",
-      color: COLORS.teal,
-      items: [
-        { phase: "Full Market Launch", weeks: "Weeks 1–4", detail: "DesignCheck opens to all qualified clients. Tiered pricing: $500 / $1,500 / $3,000/mo. Referral program activates." },
-        { phase: "UtilitySync + CommentTrace", weeks: "Weeks 5–16", detail: "Two new modules launch. Bundle pricing introduced. Existing clients auto-upgraded to platform view." },
-        { phase: "Enterprise Tier", weeks: "Weeks 12–20", detail: "Custom SLAs for GCs and large A/E firms. White-label Insight Portal. Dedicated success manager assigned." },
-        { phase: "Revenue Milestone", weeks: "Month 12", detail: "Target: $5M total revenue. DesignCheck contributing ~$1M ARR. Platform positioned for institutional raise." },
-      ]
-    },
-    {
-      label: "Wave 3", period: "2027+", theme: "Own the Category",
-      color: "#818CF8",
-      items: [
-        { phase: "AgencyPulse + ConstructionOS", weeks: "Q1 2027", detail: "Full 12-module Insight platform complete. Announce category leadership in AI-powered permit intelligence." },
-        { phase: "Data Licensing", weeks: "Q2 2027", detail: "Monetize proprietary comment repository as industry benchmark dataset. License to municipalities and code bodies." },
-        { phase: "Franchise/Network Model", weeks: "Q3 2027", detail: "License Insight platform to regional expediting firms. Commun-ET becomes infrastructure for the industry." },
-        { phase: "Revenue Milestone", weeks: "2027", detail: "Target: $10M+ ARR. Market position: the definitive technology layer for permit intelligence nationwide." },
-      ]
-    }
   ];
 
   const infographicSteps = [
@@ -162,8 +129,6 @@ export default function CommunETLanding() {
         .fade-up.visible { opacity: 1; transform: translateY(0); }
         .module-card { transition: all 0.4s cubic-bezier(0.16,1,0.3,1); cursor: pointer; }
         .module-card:hover { transform: translateY(-4px); }
-        .wave-tab { transition: all 0.3s ease; cursor: pointer; }
-        .wave-tab:hover { opacity: 1 !important; }
         .gold-hover { transition: color 0.3s ease; }
         .gold-hover:hover { color: #FF6B2B; }
         .grid-bg {
@@ -372,19 +337,18 @@ export default function CommunETLanding() {
           position: "absolute", bottom: 0, left: 0, right: 0,
           borderTop: `1px solid ${COLORS.border}`,
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(3, 1fr)",
           background: "rgba(9,20,40,0.85)",
           backdropFilter: "blur(20px)",
         }}>
           {[
             { val: 90, suffix: "%", label: "Reduction in Review Time" },
-            { val: 3, suffix: "M+", label: "Annual Revenue Managed" },
             { val: 12, suffix: " Modules", label: "Insight™ Platform Roadmap" },
             { val: 8, suffix: " Agents", label: "AI Agents in DesignCheck" },
           ].map((s, i) => (
             <div key={i} style={{
               padding: "28px 24px",
-              borderRight: i < 3 ? `1px solid ${COLORS.border}` : "none",
+              borderRight: i < 2 ? `1px solid ${COLORS.border}` : "none",
               textAlign: "center",
             }}>
               <div className="stat-number" data-testid={`text-stat-${i}`}><AnimCounter target={s.val} suffix={s.suffix} /></div>
@@ -495,7 +459,6 @@ export default function CommunETLanding() {
               { val: "8 hrs → 45 min", label: "Comment Resolution Time" },
               { val: "90%", label: "Efficiency Gain Per Project" },
               { val: "$1M+", label: "DesignCheck ARR Projection" },
-              { val: "3 Waves", label: "Platform Rollout Architecture" },
             ].map((item, i) => (
               <div key={i} style={{ textAlign: "center", flex: "1 1 150px" }}>
                 <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.8rem", color: COLORS.gold, fontWeight: 300 }}>{item.val}</div>
@@ -613,97 +576,6 @@ export default function CommunETLanding() {
               <p className="body-text" style={{ fontSize: "0.82rem", lineHeight: 1.6 }}>{m.desc}</p>
             </div>
           ))}
-        </div>
-      </section>
-
-      {/* ROLLOUT STRATEGY */}
-      <section style={{ padding: "120px clamp(24px, 5vw, 80px)", background: COLORS.obsidian }}>
-        <div style={{ textAlign: "center", marginBottom: 80 }}>
-          <div className="section-eyebrow" style={{ marginBottom: 16 }}>Strategic Deployment</div>
-          <h2 className="display-headline" style={{ fontSize: "clamp(2rem, 4vw, 3rem)", color: COLORS.white }}>
-            Rollout Architecture<br /><span style={{ color: COLORS.gold }}>$3M → $5M → Market Leader</span>
-          </h2>
-        </div>
-
-        {/* Wave tabs */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 60, borderBottom: `1px solid ${COLORS.border}` }}>
-          {waves.map((w, i) => (
-            <button
-              key={i}
-              className="wave-tab"
-              data-testid={`button-wave-${i}`}
-              onClick={() => setActiveWave(i)}
-              style={{
-                flex: 1,
-                padding: "20px 24px",
-                background: "transparent",
-                border: "none",
-                borderBottom: activeWave === i ? `2px solid ${w.color}` : "2px solid transparent",
-                color: activeWave === i ? w.color : COLORS.fog,
-                opacity: activeWave === i ? 1 : 0.6,
-                cursor: "pointer",
-              }}
-            >
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: "0.65rem", letterSpacing: "0.15em", marginBottom: 6 }}>{w.label} · {w.period}</div>
-              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", fontWeight: 400 }}>{w.theme}</div>
-            </button>
-          ))}
-        </div>
-
-        {/* Active wave content */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 24 }}>
-          {waves[activeWave].items.map((item, i) => (
-            <div key={i} style={{
-              padding: "32px 28px",
-              background: `${waves[activeWave].color}08`,
-              border: `1px solid ${waves[activeWave].color}33`,
-              position: "relative",
-              overflow: "hidden",
-            }}>
-              <div style={{
-                position: "absolute", top: 0, right: 0,
-                width: 60, height: 60,
-                background: `${waves[activeWave].color}06`,
-                borderBottom: `1px solid ${waves[activeWave].color}22`,
-                borderLeft: `1px solid ${waves[activeWave].color}22`,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: "'DM Mono', monospace",
-                fontSize: "0.7rem",
-                color: waves[activeWave].color,
-              }}>{String(i + 1).padStart(2, "0")}</div>
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: "0.6rem", letterSpacing: "0.15em", color: waves[activeWave].color, marginBottom: 12 }}>{item.weeks}</div>
-              <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: COLORS.white, marginBottom: 12, fontWeight: 400, paddingRight: 50 }}>{item.phase}</h3>
-              <p className="body-text" style={{ fontSize: "0.8rem" }}>{item.detail}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Revenue timeline visual */}
-        <div style={{ marginTop: 80, padding: "48px 40px", background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
-          <div className="section-eyebrow" style={{ marginBottom: 32, textAlign: "center" }}>Revenue Trajectory</div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 0, height: 120, position: "relative" }}>
-            {[
-              { label: "2024", val: 3, h: 50, color: COLORS.steel },
-              { label: "Q1 '26", val: 3.25, h: 55, color: COLORS.goldDim },
-              { label: "Q2 '26", val: 3.5, h: 60, color: COLORS.goldDim },
-              { label: "Q3 '26", val: 4, h: 75, color: COLORS.gold },
-              { label: "Q4 '26", val: 4.5, h: 85, color: COLORS.gold },
-              { label: "2027", val: 5, h: 100, color: COLORS.teal },
-              { label: "2027+", val: 10, h: 115, color: COLORS.teal },
-            ].map((bar, i) => (
-              <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: "0.55rem", color: bar.color, marginBottom: 4 }}>${bar.val}M</div>
-                <div style={{
-                  width: "70%",
-                  height: `${bar.h}%`,
-                  background: `linear-gradient(180deg, ${bar.color}, ${bar.color}44)`,
-                  borderRadius: "2px 2px 0 0",
-                  transition: "height 1s cubic-bezier(0.16,1,0.3,1)",
-                }} />
-                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: "0.5rem", color: COLORS.fog, marginTop: 8 }}>{bar.label}</div>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
