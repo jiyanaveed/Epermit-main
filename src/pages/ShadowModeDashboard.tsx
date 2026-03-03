@@ -166,78 +166,12 @@ export default function ShadowModeDashboard() {
     setError(null);
 
     try {
-      const [predictionsRes, baselineRes, auditRes] = await Promise.all([
-        supabase.from("shadow_predictions").select("*"),
-        supabase.from("baseline_actions").select("*"),
-        supabase.from("audit_trail").select("id, action_type, routing_decision, created_at").order("created_at", { ascending: false }).limit(50),
-      ]);
-
-      if (predictionsRes.error) throw predictionsRes.error;
-      if (baselineRes.error) throw baselineRes.error;
-      if (auditRes.error) throw auditRes.error;
-
-      const predictions = predictionsRes.data ?? [];
-      const baselineRows = baselineRes.data ?? [];
-      const auditRows = auditRes.data ?? [];
-
-      const matches = predictions.filter((p: any) => p.match_status === "match").length;
-      const partials = predictions.filter((p: any) => p.match_status === "partial").length;
-      const mismatches = predictions.filter((p: any) => p.match_status === "mismatch").length;
-      const pending = predictions.filter((p: any) => !p.match_status || p.match_status === "pending").length;
-      const totalPredictions = predictions.length;
-      const evaluated = matches + partials + mismatches;
-      const accuracyPercent = evaluated > 0 ? Math.round(((matches + partials * 0.5) / evaluated) * 100) : 0;
-      const avgConfidence = totalPredictions > 0
-        ? predictions.reduce((sum: number, p: any) => sum + (p.confidence_score ?? 0), 0) / totalPredictions
-        : 0;
-
-      const agentMap = new Map<string, { predictions: number; matches: number; partials: number; mismatches: number; pending: number; totalConf: number }>();
-      for (const p of predictions) {
-        const name = (p as any).agent_name ?? "unknown";
-        const entry = agentMap.get(name) ?? { predictions: 0, matches: 0, partials: 0, mismatches: 0, pending: 0, totalConf: 0 };
-        entry.predictions++;
-        if (p.match_status === "match") entry.matches++;
-        else if (p.match_status === "partial") entry.partials++;
-        else if (p.match_status === "mismatch") entry.mismatches++;
-        else entry.pending++;
-        entry.totalConf += (p as any).confidence_score ?? 0;
-        agentMap.set(name, entry);
-      }
-      const agentPerformance: AgentPerformance[] = Array.from(agentMap.entries()).map(([agent_name, a]) => {
-        const ev = a.matches + a.partials + a.mismatches;
-        return {
-          agent_name,
-          ...a,
-          accuracy: ev > 0 ? Math.round(((a.matches + a.partials * 0.5) / ev) * 100) : 0,
-          avg_confidence: a.predictions > 0 ? a.totalConf / a.predictions : 0,
-        };
-      });
-
-      const totalActions = baselineRows.length;
-      const totalDuration = baselineRows.reduce((s: number, b: any) => s + (b.duration_minutes ?? 0), 0);
-      const uniqueExpeditors = new Set(baselineRows.map((b: any) => b.expeditor_id)).size;
-
-      const result: ShadowMetricsData = {
-        overall: {
-          total_predictions: totalPredictions,
-          matches,
-          partials,
-          mismatches,
-          pending,
-          accuracy_percent: accuracyPercent,
-          avg_confidence: avgConfidence,
-        },
-        agent_performance: agentPerformance,
-        baseline: {
-          total_actions: totalActions,
-          avg_time_per_comment_minutes: totalActions > 0 ? Math.round(totalDuration / totalActions) : 0,
-          total_duration_minutes: Math.round(totalDuration),
-          unique_expeditors: uniqueExpeditors,
-        },
-        recent_audit: auditRows as AuditEntry[],
-      };
-
-      setData(result);
+      const { data: result, error: fnError } = await supabase.functions.invoke(
+        "shadow-metrics",
+        { body: {} }
+      );
+      if (fnError) throw fnError;
+      setData(result as ShadowMetricsData);
     } catch (err) {
       console.error("Failed to fetch shadow metrics:", err);
       setError(
