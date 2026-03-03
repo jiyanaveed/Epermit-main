@@ -81,6 +81,10 @@ Preferred communication style: Simple, everyday language.
 | `project_invitations` | Email-based project invitations with token and expiry |
 | `portal_credentials` | Stored portal login credentials per project |
 | `parsed_comments` | Plan review comments parsed from portal reports |
+| `shadow_predictions` | Shadow Mode: background AI predictions logged without affecting production |
+| `baseline_actions` | Shadow Mode: tracks human expeditor performance for baseline metrics |
+| `audit_trail` | Shadow Mode: immutable ESG-compliant audit logging |
+| `comment_quality_checks` | Guardian QA agent results (scores, flags, suggested improvements) |
 | `inspections` | Inspection records per project |
 | `project_documents` | Uploaded documents stored in Supabase Storage |
 | `scheduled_reports` | Automated report delivery schedules |
