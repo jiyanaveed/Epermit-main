@@ -1,12 +1,26 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Loader2, RefreshCw, ExternalLink, XCircle, Workflow } from "lucide-react";
+import {
+  CheckCircle2,
+  Circle,
+  Loader2,
+  RefreshCw,
+  ExternalLink,
+  XCircle,
+  Workflow,
+} from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
 const SCRAPE_KEYFRAMES = `
@@ -55,9 +69,15 @@ type PipelineResult = {
   discipline_classifier?: { classified_count?: number; error?: string };
 };
 
-const SCRAPER_URL = "http://localhost:3000";
+const SCRAPER_URL = "";
 
-type StepStatus = "idle" | "checking" | "waiting" | "pending" | "done" | "failed";
+type StepStatus =
+  | "idle"
+  | "checking"
+  | "waiting"
+  | "pending"
+  | "done"
+  | "failed";
 
 export function AgentWorkflowStatus() {
   const { user, session } = useAuth();
@@ -67,13 +87,25 @@ export function AgentWorkflowStatus() {
 
   const [portalStatus, setPortalStatus] = useState<StepStatus>("idle");
   const [portalStatusText, setPortalStatusText] = useState<string | null>(null);
-  const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
+  const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(
+    null,
+  );
   const [parserRunning, setParserRunning] = useState(false);
-  const [parserProgress, setParserProgress] = useState<{ pdfIndex: number; totalPdfs: number } | null>(null);
-  const [firstJurisdiction, setFirstJurisdiction] = useState<string | null>(null);
+  const [parserProgress, setParserProgress] = useState<{
+    pdfIndex: number;
+    totalPdfs: number;
+  } | null>(null);
+  const [firstJurisdiction, setFirstJurisdiction] = useState<string | null>(
+    null,
+  );
   const [latestProjectId, setLatestProjectId] = useState<string | null>(null);
-  const [latestPermitNumber, setLatestPermitNumber] = useState<string | null>(null);
-  const [projectBySelectedId, setProjectBySelectedId] = useState<{ id: string; permit_number: string | null } | null>(null);
+  const [latestPermitNumber, setLatestPermitNumber] = useState<string | null>(
+    null,
+  );
+  const [projectBySelectedId, setProjectBySelectedId] = useState<{
+    id: string;
+    permit_number: string | null;
+  } | null>(null);
 
   const [scrapingOverlay, setScrapingOverlay] = useState<{
     phase: "scraping" | "done";
@@ -85,10 +117,14 @@ export function AgentWorkflowStatus() {
     currentStepKey: string | null;
   } | null>(null);
   const [scrapingElapsed, setScrapingElapsed] = useState(0);
-  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
   const eventSourceRef = useRef<EventSource | null>(null);
   const onScrapingCompleteRef = useRef<(() => void) | null>(null);
-  const doneDismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const doneDismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
     if (scrapingOverlay?.phase !== "done") return;
@@ -120,25 +156,30 @@ export function AgentWorkflowStatus() {
         ? "done"
         : "waiting";
 
-  const commentParserDescription =
-    commentParserFailed
-      ? "Failed"
-      : parserRunning && parserProgress
-        ? `Running… PDF ${parserProgress.pdfIndex}/${parserProgress.totalPdfs}`
-        : parserSucceeded
-          ? (cp && (cp.parsed_count ?? 0) > 0)
-            ? `Complete (${cp.parsed_count} parsed / ${cp.skipped_count ?? 0} skipped)`
-            : "Complete (No comments found)"
-          : "Waiting for Doc";
+  const commentParserDescription = commentParserFailed
+    ? "Failed"
+    : parserRunning && parserProgress
+      ? `Running… PDF ${parserProgress.pdfIndex}/${parserProgress.totalPdfs}`
+      : parserSucceeded
+        ? cp && (cp.parsed_count ?? 0) > 0
+          ? `Complete (${cp.parsed_count} parsed / ${cp.skipped_count ?? 0} skipped)`
+          : "Complete (No comments found)"
+        : "Waiting for Doc";
 
-  const classifierStatus: StepStatus = classifierFailed ? "failed" : classifierDone ? "done" : "pending";
+  const classifierStatus: StepStatus = classifierFailed
+    ? "failed"
+    : classifierDone
+      ? "done"
+      : "pending";
 
   const [enrichmentRunning, setEnrichmentRunning] = useState(false);
   const [enrichmentResult, setEnrichmentResult] = useState<number | null>(null);
 
   const { data: commentsForEnrichmentCheck } = useQuery({
     queryKey: ["parsed_comments_code_ref_check", selectedProjectId],
-    queryFn: async (): Promise<{ id: string; code_reference: string | null }[]> => {
+    queryFn: async (): Promise<
+      { id: string; code_reference: string | null }[]
+    > => {
       if (!selectedProjectId) return [];
       const { data, error } = await supabase
         .from("parsed_comments")
@@ -152,22 +193,29 @@ export function AgentWorkflowStatus() {
 
   const allCommentsHaveCodeRef =
     (commentsForEnrichmentCheck?.length ?? 0) > 0 &&
-    (commentsForEnrichmentCheck ?? []).every((r) => (r.code_reference ?? "").trim().length > 0);
+    (commentsForEnrichmentCheck ?? []).every(
+      (r) => (r.code_reference ?? "").trim().length > 0,
+    );
 
-  const enrichmentStatus: StepStatus =
-    allCommentsHaveCodeRef ? "done" : enrichmentRunning ? "checking" : enrichmentResult != null ? "done" : "pending";
+  const enrichmentStatus: StepStatus = allCommentsHaveCodeRef
+    ? "done"
+    : enrichmentRunning
+      ? "checking"
+      : enrichmentResult != null
+        ? "done"
+        : "pending";
 
-  const enrichmentDescription =
-    allCommentsHaveCodeRef
-      ? "Complete (all have code refs)"
-      : enrichmentRunning
-        ? "Running…"
-        : enrichmentResult != null
-          ? `Done (${enrichmentResult} enriched)`
-          : "Enriches comments with code references and draft responses";
+  const enrichmentDescription = allCommentsHaveCodeRef
+    ? "Complete (all have code refs)"
+    : enrichmentRunning
+      ? "Running…"
+      : enrichmentResult != null
+        ? `Done (${enrichmentResult} enriched)`
+        : "Enriches comments with code references and draft responses";
 
   const runEnrichment = useCallback(async () => {
-    const projectIdToUse = selectedProjectId ?? projectBySelectedId?.id ?? latestProjectId;
+    const projectIdToUse =
+      selectedProjectId ?? projectBySelectedId?.id ?? latestProjectId;
     if (!projectIdToUse || !session?.access_token) {
       toast.error("Select a project and ensure you are logged in.");
       return;
@@ -175,14 +223,19 @@ export function AgentWorkflowStatus() {
     setEnrichmentRunning(true);
     setEnrichmentResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke("context-reference-engine", {
-        body: { projectId: projectIdToUse },
-      });
+      const { data, error } = await supabase.functions.invoke(
+        "context-reference-engine",
+        {
+          body: { projectId: projectIdToUse },
+        },
+      );
       if (error) throw error;
       const count = (data as { enriched_count?: number })?.enriched_count ?? 0;
       setEnrichmentResult(count);
       await queryClient.invalidateQueries({ queryKey: ["parsed_comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["parsed_comments_code_ref_check"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["parsed_comments_code_ref_check"],
+      });
       toast.success(`${count} comment(s) enriched`);
     } catch (e) {
       console.warn("Context reference engine failed:", e);
@@ -190,14 +243,22 @@ export function AgentWorkflowStatus() {
     } finally {
       setEnrichmentRunning(false);
     }
-  }, [selectedProjectId, projectBySelectedId?.id, latestProjectId, session?.access_token, queryClient]);
+  }, [
+    selectedProjectId,
+    projectBySelectedId?.id,
+    latestProjectId,
+    session?.access_token,
+    queryClient,
+  ]);
 
   const [routerRunning, setRouterRunning] = useState(false);
   const [routerResult, setRouterResult] = useState<number | null>(null);
 
   const { data: commentsForRouterCheck } = useQuery({
     queryKey: ["parsed_comments_assigned_check", selectedProjectId],
-    queryFn: async (): Promise<{ id: string; assigned_to: string | null }[]> => {
+    queryFn: async (): Promise<
+      { id: string; assigned_to: string | null }[]
+    > => {
       if (!selectedProjectId) return [];
       const { data, error } = await supabase
         .from("parsed_comments")
@@ -211,22 +272,29 @@ export function AgentWorkflowStatus() {
 
   const allCommentsHaveAssigned =
     (commentsForRouterCheck?.length ?? 0) > 0 &&
-    (commentsForRouterCheck ?? []).every((r) => (r.assigned_to ?? "").trim().length > 0);
+    (commentsForRouterCheck ?? []).every(
+      (r) => (r.assigned_to ?? "").trim().length > 0,
+    );
 
-  const routerStatus: StepStatus =
-    allCommentsHaveAssigned ? "done" : routerRunning ? "checking" : routerResult != null ? "done" : "pending";
+  const routerStatus: StepStatus = allCommentsHaveAssigned
+    ? "done"
+    : routerRunning
+      ? "checking"
+      : routerResult != null
+        ? "done"
+        : "pending";
 
-  const routerDescription =
-    allCommentsHaveAssigned
-      ? "Complete (all assigned)"
-      : routerRunning
-        ? "Running…"
-        : routerResult != null
-          ? `Done (${routerResult} routed)`
-          : "Assigns comments to team members by discipline";
+  const routerDescription = allCommentsHaveAssigned
+    ? "Complete (all assigned)"
+    : routerRunning
+      ? "Running…"
+      : routerResult != null
+        ? `Done (${routerResult} routed)`
+        : "Assigns comments to team members by discipline";
 
   const runAutoRoute = useCallback(async () => {
-    const projectIdToUse = selectedProjectId ?? projectBySelectedId?.id ?? latestProjectId;
+    const projectIdToUse =
+      selectedProjectId ?? projectBySelectedId?.id ?? latestProjectId;
     if (!projectIdToUse || !session?.access_token) {
       toast.error("Select a project and ensure you are logged in.");
       return;
@@ -234,14 +302,19 @@ export function AgentWorkflowStatus() {
     setRouterRunning(true);
     setRouterResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke("auto-router-agent", {
-        body: { projectId: projectIdToUse },
-      });
+      const { data, error } = await supabase.functions.invoke(
+        "auto-router-agent",
+        {
+          body: { projectId: projectIdToUse },
+        },
+      );
       if (error) throw error;
       const count = (data as { routed_count?: number })?.routed_count ?? 0;
       setRouterResult(count);
       await queryClient.invalidateQueries({ queryKey: ["parsed_comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["parsed_comments_assigned_check"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["parsed_comments_assigned_check"],
+      });
       toast.success(`${count} comment(s) routed`);
     } catch (e) {
       console.warn("Auto-router agent failed:", e);
@@ -249,16 +322,21 @@ export function AgentWorkflowStatus() {
     } finally {
       setRouterRunning(false);
     }
-  }, [selectedProjectId, projectBySelectedId?.id, latestProjectId, session?.access_token, queryClient]);
+  }, [
+    selectedProjectId,
+    projectBySelectedId?.id,
+    latestProjectId,
+    session?.access_token,
+    queryClient,
+  ]);
 
-  const classifierDescription =
-    classifierFailed
-      ? "Failed"
-      : classifierDone
-        ? (dc && (dc.classified_count ?? 0) > 0)
-          ? `Complete (${dc.classified_count} classified)`
-          : "Complete (Nothing to classify)"
-        : "Pending";
+  const classifierDescription = classifierFailed
+    ? "Failed"
+    : classifierDone
+      ? dc && (dc.classified_count ?? 0) > 0
+        ? `Complete (${dc.classified_count} classified)`
+        : "Complete (Nothing to classify)"
+      : "Pending";
 
   const loadDashboardData = useCallback(async () => {
     if (!user) return;
@@ -293,7 +371,14 @@ export function AgentWorkflowStatus() {
         .eq("id", selectedProjectId)
         .eq("user_id", user.id)
         .maybeSingle();
-      setProjectBySelectedId(sel ? { id: sel.id as string, permit_number: (sel.permit_number as string) ?? null } : null);
+      setProjectBySelectedId(
+        sel
+          ? {
+              id: sel.id as string,
+              permit_number: (sel.permit_number as string) ?? null,
+            }
+          : null,
+      );
     } else {
       setProjectBySelectedId(null);
     }
@@ -305,10 +390,13 @@ export function AgentWorkflowStatus() {
 
   const runManualCheck = async () => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
-    const permitNumberToUse = projectBySelectedId?.permit_number ?? latestPermitNumber;
+    const permitNumberToUse =
+      projectBySelectedId?.permit_number ?? latestPermitNumber;
 
     if (!projectIdToUse) {
-      toast.error("No project found. Select a project in the sidebar or create one first.");
+      toast.error(
+        "No project found. Select a project in the sidebar or create one first.",
+      );
       return;
     }
 
@@ -318,7 +406,9 @@ export function AgentWorkflowStatus() {
     }
 
     if (!permitNumberToUse || String(permitNumberToUse).trim() === "") {
-      toast.error("Permit # is required. Set it in the sidebar: select the project, then enter Permit # under the project dropdown.");
+      toast.error(
+        "Permit # is required. Set it in the sidebar: select the project, then enter Permit # under the project dropdown.",
+      );
       return;
     }
 
@@ -334,11 +424,16 @@ export function AgentWorkflowStatus() {
         .eq("user_id", user!.id);
 
       if (credError) throw new Error("Failed to load portal credentials");
-      if (!credentials?.length) throw new Error("No portal credentials found. Add credentials in Settings.");
+      if (!credentials?.length)
+        throw new Error(
+          "No portal credentials found. Add credentials in Settings.",
+        );
 
       const cred =
         credentials.find((c) => c.project_id === projectIdToUse) ??
-        (permitNumberToUse ? credentials.find((c) => c.permit_number === permitNumberToUse) : null) ??
+        (permitNumberToUse
+          ? credentials.find((c) => c.permit_number === permitNumberToUse)
+          : null) ??
         credentials[0];
       const username = cred.portal_username;
       const password = cred.portal_password;
@@ -360,7 +455,9 @@ export function AgentWorkflowStatus() {
 
       if (!loginRes.ok) {
         const errData = await loginRes.json().catch(() => ({}));
-        throw new Error(errData.error || `Scraper login failed (${loginRes.status})`);
+        throw new Error(
+          errData.error || `Scraper login failed (${loginRes.status})`,
+        );
       }
 
       const loginData = (await loginRes.json()) as { sessionId: string };
@@ -415,24 +512,27 @@ export function AgentWorkflowStatus() {
               stepText = "Saving to database...";
             } else if (msg) {
               if (msg.includes("→ Info")) stepText = "Scraping Info tab...";
-              else if (msg.includes("→ Reports")) stepText = "Scraping Reports tab...";
-              else if (msg.includes("→ Status")) stepText = "Scraping Status tab...";
-              else if (msg.includes("→ Files")) stepText = "Scraping Files tab...";
-              else if (msg.includes("→ Tasks")) stepText = "Scraping Tasks tab...";
+              else if (msg.includes("→ Reports"))
+                stepText = "Scraping Reports tab...";
+              else if (msg.includes("→ Status"))
+                stepText = "Scraping Status tab...";
+              else if (msg.includes("→ Files"))
+                stepText = "Scraping Files tab...";
+              else if (msg.includes("→ Tasks"))
+                stepText = "Scraping Tasks tab...";
               else stepText = msg;
             }
-            const currentKey =
-              msg.includes("→ Reports")
-                ? "reports"
-                : msg.includes("→ Info")
-                  ? "info"
-                  : msg.includes("→ Status")
-                    ? "status"
-                    : msg.includes("→ Files")
-                      ? "files"
-                      : msg.includes("→ Tasks")
-                        ? "tasks"
-                        : prev.currentStepKey;
+            const currentKey = msg.includes("→ Reports")
+              ? "reports"
+              : msg.includes("→ Info")
+                ? "info"
+                : msg.includes("→ Status")
+                  ? "status"
+                  : msg.includes("→ Files")
+                    ? "files"
+                    : msg.includes("→ Tasks")
+                      ? "tasks"
+                      : prev.currentStepKey;
             return {
               ...prev,
               stepText,
@@ -503,12 +603,14 @@ export function AgentWorkflowStatus() {
                   completedSteps: new Set(TAB_STEPS.map((t) => t.key)),
                   currentStepKey: null,
                 }
-              : null
+              : null,
           );
           onScrapingCompleteRef.current = async () => {
             setPortalStatusText("Done");
             setPortalStatus("done");
-            toast.success(`🎉 Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`);
+            toast.success(
+              `🎉 Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
+            );
             await loadDashboardData();
             setParserRunning(true);
             setParserProgress(null);
@@ -520,10 +622,13 @@ export function AgentWorkflowStatus() {
             let round = 0;
             try {
               while (round < maxRounds) {
-                const { data: pipelineData, error: pipelineError } = await supabase.functions.invoke(
-                  "intake-pipeline-agent",
-                  { body: { project_id: projectIdToUse, ...(cursor && { cursor }) } }
-                );
+                const { data: pipelineData, error: pipelineError } =
+                  await supabase.functions.invoke("intake-pipeline-agent", {
+                    body: {
+                      project_id: projectIdToUse,
+                      ...(cursor && { cursor }),
+                    },
+                  });
                 if (pipelineError) {
                   console.warn("Intake pipeline error:", pipelineError);
                   break;
@@ -535,11 +640,18 @@ export function AgentWorkflowStatus() {
                 totalParsed += cp?.parsed_count ?? 0;
                 totalSkipped += cp?.skipped_count ?? 0;
                 setPipelineResult({
-                  comment_parser: { ...cp, parsed_count: totalParsed, skipped_count: totalSkipped },
+                  comment_parser: {
+                    ...cp,
+                    parsed_count: totalParsed,
+                    skipped_count: totalSkipped,
+                  },
                   discipline_classifier: dc,
                 });
 
-                if (cp?.total_pdfs != null && (cp.next_cursor?.pdfIndex ?? 0) >= 0) {
+                if (
+                  cp?.total_pdfs != null &&
+                  (cp.next_cursor?.pdfIndex ?? 0) >= 0
+                ) {
                   setParserProgress({
                     pdfIndex: cp.next_cursor?.pdfIndex ?? 0,
                     totalPdfs: cp.total_pdfs,
@@ -547,15 +659,22 @@ export function AgentWorkflowStatus() {
                 }
 
                 if (cp?.done === true && !cp?.error) {
-                  await queryClient.invalidateQueries({ queryKey: ["parsed_comments"] });
+                  await queryClient.invalidateQueries({
+                    queryKey: ["parsed_comments"],
+                  });
                   const classified = dc?.classified_count ?? 0;
                   if (totalParsed > 0 || classified > 0) {
-                    toast.success(`Comment Parser · ${totalParsed} parsed, ${classified} classified.`);
+                    toast.success(
+                      `Comment Parser · ${totalParsed} parsed, ${classified} classified.`,
+                    );
                   }
                   break;
                 }
 
-                if (cp?.error === "timeout" || (cp?.next_cursor != null && !cp?.done)) {
+                if (
+                  cp?.error === "timeout" ||
+                  (cp?.next_cursor != null && !cp?.done)
+                ) {
                   cursor = cp?.error === "timeout" ? undefined : cp.next_cursor;
                   await new Promise((r) => setTimeout(r, pollIntervalMs));
                   round++;
@@ -564,13 +683,19 @@ export function AgentWorkflowStatus() {
                 break;
               }
             } catch (e) {
-              console.warn("Intake pipeline (comment parser + classifier) failed:", e);
+              console.warn(
+                "Intake pipeline (comment parser + classifier) failed:",
+                e,
+              );
             } finally {
               setParserRunning(false);
               setParserProgress(null);
             }
             toast.info("View scraped data on the Portal Data page.", {
-              action: { label: "View", onClick: () => navigate("/portal-data") },
+              action: {
+                label: "View",
+                onClick: () => navigate("/portal-data"),
+              },
             });
             onScrapingCompleteRef.current = null;
           };
@@ -583,7 +708,9 @@ export function AgentWorkflowStatus() {
         const total = data.total ?? 0;
         const progress = data.progress ?? 0;
         const pct = total > 0 ? Math.round((progress / total) * 100) : 0;
-        setPortalStatusText(pct > 0 ? `Scraping... ${pct}%` : (data.message || "Scraping..."));
+        setPortalStatusText(
+          pct > 0 ? `Scraping... ${pct}%` : data.message || "Scraping...",
+        );
         return false;
       };
 
@@ -626,17 +753,21 @@ export function AgentWorkflowStatus() {
         msg.includes("Network request failed");
       if (isOffline) {
         toast.error(
-          "Local Scraper is not running. Run 'node server.js' in the scraper-service folder, then retry."
+          "Local Scraper is not running. Run 'node server.js' in the scraper-service folder, then retry.",
         );
       } else {
-        toast.error(msg ? `${msg} Try again or check your connection.` : "Something went wrong. Try again.");
+        toast.error(
+          msg
+            ? `${msg} Try again or check your connection.`
+            : "Something went wrong. Try again.",
+        );
       }
     }
   };
 
   // ... (Rest of the UI render code remains the same)
   // Just pasting the return block to be safe:
-  
+
   const steps = [
     {
       title: "Portal Monitor Agent",
@@ -651,7 +782,7 @@ export function AgentWorkflowStatus() {
               : "Idle",
       action: (
         <div className="flex flex-col gap-2 mt-2">
-           <Button
+          <Button
             size="sm"
             variant="outline"
             onClick={runManualCheck}
@@ -665,7 +796,12 @@ export function AgentWorkflowStatus() {
             )}
             Run Manual Check
           </Button>
-          <Button size="sm" variant="outline" asChild className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]">
+          <Button
+            size="sm"
+            variant="outline"
+            asChild
+            className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+          >
             <Link to="/portal-data" className="flex items-center">
               <ExternalLink className="h-4 w-4 mr-2 transition-transform duration-300 group-hover/btn:scale-110" />
               View Portal Data
@@ -771,7 +907,8 @@ export function AgentWorkflowStatus() {
             <div
               className="absolute inset-0 opacity-30 pointer-events-none"
               style={{
-                background: "radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.15) 0%, transparent 60%)",
+                background:
+                  "radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.15) 0%, transparent 60%)",
                 animation: "scrape-pulse-glow 2s ease-in-out infinite",
               }}
             />
@@ -780,16 +917,27 @@ export function AgentWorkflowStatus() {
               {scrapingOverlay.phase === "scraping" ? (
                 <>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-white">Scraping portal</h3>
-                    <span className="text-sm font-mono text-emerald-400 tabular-nums">{formatElapsed(scrapingElapsed)}</span>
+                    <h3 className="text-lg font-semibold text-white">
+                      Scraping portal
+                    </h3>
+                    <span className="text-sm font-mono text-emerald-400 tabular-nums">
+                      {formatElapsed(scrapingElapsed)}
+                    </span>
                   </div>
-                  <p className="text-sm text-zinc-400">Project: <span className="font-medium text-emerald-400">{scrapingOverlay.projectNum}</span></p>
+                  <p className="text-sm text-zinc-400">
+                    Project:{" "}
+                    <span className="font-medium text-emerald-400">
+                      {scrapingOverlay.projectNum}
+                    </span>
+                  </p>
                   <div className="flex items-center gap-3">
                     <div
                       className="h-5 w-5 shrink-0 rounded-full border-2 border-emerald-500 border-t-transparent"
                       style={{ animation: "scrape-spin 0.8s linear infinite" }}
                     />
-                    <p className="text-sm text-zinc-300">{scrapingOverlay.stepText}</p>
+                    <p className="text-sm text-zinc-300">
+                      {scrapingOverlay.stepText}
+                    </p>
                   </div>
                   <div className="space-y-1">
                     <div className="h-2 rounded-full bg-zinc-700 overflow-hidden">
@@ -797,7 +945,8 @@ export function AgentWorkflowStatus() {
                         className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500 ease-out"
                         style={{
                           width: `${scrapingOverlay.total > 0 ? Math.round((scrapingOverlay.progress / scrapingOverlay.total) * 100) : 0}%`,
-                          animation: "scrape-pulse-glow 1.5s ease-in-out infinite",
+                          animation:
+                            "scrape-pulse-glow 1.5s ease-in-out infinite",
                         }}
                       />
                     </div>
@@ -805,14 +954,18 @@ export function AgentWorkflowStatus() {
                   <ul className="space-y-2">
                     {TAB_STEPS.map((tab) => {
                       const done = scrapingOverlay.completedSteps.has(tab.key);
-                      const current = scrapingOverlay.currentStepKey === tab.key;
+                      const current =
+                        scrapingOverlay.currentStepKey === tab.key;
                       return (
                         <li
                           key={tab.key}
                           className="flex items-center gap-3 text-sm"
                           style={
                             done
-                              ? { animation: "scrape-fade-in-up 0.3s ease-out forwards" }
+                              ? {
+                                  animation:
+                                    "scrape-fade-in-up 0.3s ease-out forwards",
+                                }
                               : undefined
                           }
                         >
@@ -821,12 +974,23 @@ export function AgentWorkflowStatus() {
                           ) : current ? (
                             <span
                               className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500"
-                              style={{ animation: "scrape-pulse-dot 1s ease-in-out infinite" }}
+                              style={{
+                                animation:
+                                  "scrape-pulse-dot 1s ease-in-out infinite",
+                              }}
                             />
                           ) : (
                             <Circle className="h-5 w-5 shrink-0 text-zinc-500" />
                           )}
-                          <span className={done ? "text-zinc-300" : current ? "text-emerald-400 font-medium" : "text-zinc-500"}>
+                          <span
+                            className={
+                              done
+                                ? "text-zinc-300"
+                                : current
+                                  ? "text-emerald-400 font-medium"
+                                  : "text-zinc-500"
+                            }
+                          >
                             {tab.label}
                           </span>
                         </li>
@@ -838,18 +1002,49 @@ export function AgentWorkflowStatus() {
                 <div className="text-center py-2">
                   <div
                     className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500"
-                    style={{ animation: "scrape-scale-check 0.4s ease-out forwards" }}
+                    style={{
+                      animation: "scrape-scale-check 0.4s ease-out forwards",
+                    }}
                   >
                     <CheckCircle2 className="h-10 w-10" strokeWidth={2} />
                   </div>
                   <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-xl">
-                    <span className="absolute top-1/4 left-1/4 w-2 h-2 rounded-full bg-emerald-400" style={{ animation: "scrape-sparkle 0.6s ease-out 0.1s forwards", opacity: 0 }} />
-                    <span className="absolute top-1/3 right-1/3 w-1.5 h-1.5 rounded-full bg-emerald-300" style={{ animation: "scrape-sparkle 0.6s ease-out 0.2s forwards", opacity: 0 }} />
-                    <span className="absolute bottom-1/3 left-1/3 w-2 h-2 rounded-full bg-emerald-500" style={{ animation: "scrape-sparkle 0.6s ease-out 0.3s forwards", opacity: 0 }} />
-                    <span className="absolute bottom-1/4 right-1/4 w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ animation: "scrape-sparkle 0.6s ease-out 0.25s forwards", opacity: 0 }} />
+                    <span
+                      className="absolute top-1/4 left-1/4 w-2 h-2 rounded-full bg-emerald-400"
+                      style={{
+                        animation: "scrape-sparkle 0.6s ease-out 0.1s forwards",
+                        opacity: 0,
+                      }}
+                    />
+                    <span
+                      className="absolute top-1/3 right-1/3 w-1.5 h-1.5 rounded-full bg-emerald-300"
+                      style={{
+                        animation: "scrape-sparkle 0.6s ease-out 0.2s forwards",
+                        opacity: 0,
+                      }}
+                    />
+                    <span
+                      className="absolute bottom-1/3 left-1/3 w-2 h-2 rounded-full bg-emerald-500"
+                      style={{
+                        animation: "scrape-sparkle 0.6s ease-out 0.3s forwards",
+                        opacity: 0,
+                      }}
+                    />
+                    <span
+                      className="absolute bottom-1/4 right-1/4 w-1.5 h-1.5 rounded-full bg-emerald-400"
+                      style={{
+                        animation:
+                          "scrape-sparkle 0.6s ease-out 0.25s forwards",
+                        opacity: 0,
+                      }}
+                    />
                   </div>
-                  <h3 className="text-lg font-semibold text-white mb-1">Scraping complete!</h3>
-                  <p className="text-sm text-zinc-400 mb-4">{scrapingOverlay.stepText}</p>
+                  <h3 className="text-lg font-semibold text-white mb-1">
+                    Scraping complete!
+                  </h3>
+                  <p className="text-sm text-zinc-400 mb-4">
+                    {scrapingOverlay.stepText}
+                  </p>
                   <Button
                     size="sm"
                     variant="outline"
@@ -870,7 +1065,10 @@ export function AgentWorkflowStatus() {
         <CardHeader className="relative">
           <CardTitle className="flex items-center gap-2 text-lg flex-wrap">
             <span className="flex items-center gap-2">
-              <Workflow className="h-5 w-5 text-emerald-400 animate-pulse-glow" style={{ boxShadow: "0 0 12px rgba(16, 185, 129, 0.3)" }} />
+              <Workflow
+                className="h-5 w-5 text-emerald-400 animate-pulse-glow"
+                style={{ boxShadow: "0 0 12px rgba(16, 185, 129, 0.3)" }}
+              />
               DesignCheck Intake Pipeline
             </span>
             <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
@@ -878,7 +1076,8 @@ export function AgentWorkflowStatus() {
             </span>
           </CardTitle>
           <CardDescription>
-            Agentic workflow status (Steps 1–5). Run a manual portal check to simulate the Portal Monitor Agent.
+            Agentic workflow status (Steps 1–5). Run a manual portal check to
+            simulate the Portal Monitor Agent.
           </CardDescription>
         </CardHeader>
         <CardContent className="relative space-y-0">
@@ -886,7 +1085,11 @@ export function AgentWorkflowStatus() {
             <div
               key={i}
               className="flex gap-4 group transition-transform duration-200 hover:scale-[1.02]"
-              style={{ animation: "fade-in-up 0.4s ease-out forwards", animationDelay: `${i * 100}ms`, opacity: 0 }}
+              style={{
+                animation: "fade-in-up 0.4s ease-out forwards",
+                animationDelay: `${i * 100}ms`,
+                opacity: 0,
+              }}
             >
               <div className="flex flex-col items-center shrink-0">
                 <div
@@ -899,12 +1102,19 @@ export function AgentWorkflowStatus() {
                           ? "border-red-500 bg-red-500/10 text-red-500 animate-status-shake"
                           : "border-muted-foreground/40 bg-muted/50 text-muted-foreground animate-pulse-glow"
                   }`}
-                  style={step.status === "checking" ? { animation: "scrape-spin 0.8s linear infinite" } : undefined}
+                  style={
+                    step.status === "checking"
+                      ? { animation: "scrape-spin 0.8s linear infinite" }
+                      : undefined
+                  }
                 >
                   {step.status === "checking" ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : step.status === "done" ? (
-                    <CheckCircle2 className="h-4 w-4" style={{ animation: "scrape-scale-check 0.3s ease-out" }} />
+                    <CheckCircle2
+                      className="h-4 w-4"
+                      style={{ animation: "scrape-scale-check 0.3s ease-out" }}
+                    />
                   ) : step.status === "failed" ? (
                     <XCircle className="h-4 w-4" />
                   ) : (
@@ -936,18 +1146,46 @@ export function AgentWorkflowStatus() {
                               : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                     }`}
                   >
-                    {step.status === "checking" && <span className="inline-flex gap-0.5 mr-1"><span className="animate-pulse">.</span><span className="animate-pulse" style={{ animationDelay: "0.2s" }}>.</span><span className="animate-pulse" style={{ animationDelay: "0.4s" }}>.</span></span>}
-                    {step.status === "done" && <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />}
-                    {step.status === "failed" && <XCircle className="h-3 w-3 mr-1 shrink-0" />}
+                    {step.status === "checking" && (
+                      <span className="inline-flex gap-0.5 mr-1">
+                        <span className="animate-pulse">.</span>
+                        <span
+                          className="animate-pulse"
+                          style={{ animationDelay: "0.2s" }}
+                        >
+                          .
+                        </span>
+                        <span
+                          className="animate-pulse"
+                          style={{ animationDelay: "0.4s" }}
+                        >
+                          .
+                        </span>
+                      </span>
+                    )}
+                    {step.status === "done" && (
+                      <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
+                    )}
+                    {step.status === "failed" && (
+                      <XCircle className="h-3 w-3 mr-1 shrink-0" />
+                    )}
                     {step.status === "waiting" && "Waiting for Doc"}
                     {step.status === "pending" && "Pending"}
                     {step.status === "checking" && "Running"}
                     {step.status === "done" && "Complete"}
                     {step.status === "failed" && "Error"}
-                    {!["checking", "done", "failed", "waiting", "pending"].includes(step.status) && "Idle"}
+                    {![
+                      "checking",
+                      "done",
+                      "failed",
+                      "waiting",
+                      "pending",
+                    ].includes(step.status) && "Idle"}
                   </span>
                 </div>
-                <p className="text-sm text-muted-foreground mt-0.5">{step.description}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {step.description}
+                </p>
                 <div className="mt-2 [&_button]:transition-all [&_button]:duration-200 [&_button:hover]:-translate-y-0.5 [&_button:hover]:shadow-md [&_button:active]:scale-[0.98]">
                   {"action" in step && step.action}
                 </div>

@@ -9,7 +9,14 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 5000,
-    allowedHosts: true, // allow ngrok and other tunnel hosts
+    allowedHosts: true,
+    proxy: {
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
   plugins: [
     react(),
