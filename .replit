@@ -3,7 +3,7 @@ run = "cd scraper-service && node server.js & npx vite --host 0.0.0.0 --port 808
 
 [nix]
 channel = "stable-24_05"
-packages = ["chromium", "glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "dbus", "expat", "libdrm", "libxkbcommon", "pango", "cairo", "alsa-lib", "mesa"]
+packages = ["chromium", "glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "dbus", "expat", "libdrm", "libxkbcommon", "pango", "cairo", "alsa-lib", "mesa", "supabase-cli"]
 
 [deployment]
 build = ["sh", "-c", "bun install --no-frozen-lockfile && cd scraper-service && bun install --no-frozen-lockfile && cd .. && npx vite build"]

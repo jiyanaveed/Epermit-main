@@ -44,6 +44,7 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!supabaseUrl || !anonKey) {
       return new Response(
         JSON.stringify({ code: 500, message: "SUPABASE_URL or SUPABASE_ANON_KEY not configured" }),
@@ -81,16 +82,22 @@ serve(async (req) => {
     }
     console.log("JWT validated, user.id:", user.id);
 
+    const adminClient = serviceRoleKey
+      ? createClient(supabaseUrl, serviceRoleKey)
+      : supabase;
+
     const body = await req.json().catch(() => ({}));
     const projectId = body.project_id as string | undefined;
     const batchLimit = typeof body.batch_limit === "number" && body.batch_limit > 0
       ? Math.min(body.batch_limit, 200)
       : BATCH_SIZE;
 
+    let isShadowMode = false;
+
     if (projectId) {
       const { data: project } = await supabase
         .from("projects")
-        .select("id, user_id")
+        .select("id, user_id, is_shadow_mode")
         .eq("id", projectId)
         .single();
       if (!project || project.user_id !== user.id) {
@@ -99,6 +106,8 @@ serve(async (req) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      isShadowMode = project.is_shadow_mode === true;
+      console.log("discipline-classifier: shadow_mode =", isShadowMode, "for project", projectId);
     }
 
     const projectIdsResult = await supabase.from("projects").select("id").eq("user_id", user.id);
@@ -143,7 +152,7 @@ serve(async (req) => {
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    const systemPrompt = `Classify each building permit review comment into exactly one discipline.
+    const systemPrompt = `Classify each building permit review comment into exactly one discipline and provide a confidence score.
 
 Available disciplines and what they cover:
 
@@ -179,7 +188,12 @@ IMPORTANT: Prefer specific disciplines over 'Other'. For example:
 - Demo permit → Administrative or Environmental depending on context
 - DOEE permit → Environmental
 
-Return a JSON object with a single key "classifications": an array of objects with "index" (0-based position in the list) and "discipline" (exactly one of: Architectural, Structural, Mechanical, Electrical, Plumbing, Fire, Civil, Energy, Zoning, Environmental, Administrative, Other). One object per comment in the same order as provided.`;
+Return a JSON object with a single key "classifications": an array of objects with:
+- "index" (0-based position in the list)
+- "discipline" (exactly one of: Architectural, Structural, Mechanical, Electrical, Plumbing, Fire, Civil, Energy, Zoning, Environmental, Administrative, Other)
+- "confidence_score" (a numeric value between 0.00 and 1.00 indicating your certainty in the classification. Use 0.95+ for clear-cut cases, 0.70-0.94 for likely matches, and below 0.70 for uncertain/ambiguous comments)
+
+One object per comment in the same order as provided.`;
 
     const userContent = comments.map((c, i) => `[${i}] ${c.original_text}`).join("\n\n");
 
@@ -201,7 +215,7 @@ Return a JSON object with a single key "classifications": an array of objects wi
       );
     }
 
-    let data: { classifications?: { index: number; discipline: string }[] };
+    let data: { classifications?: { index: number; discipline: string; confidence_score?: number }[] };
     try {
       data = JSON.parse(content);
     } catch {
@@ -213,29 +227,81 @@ Return a JSON object with a single key "classifications": an array of objects wi
 
     const classifications = Array.isArray(data.classifications) ? data.classifications : [];
     let classifiedCount = 0;
+    let shadowLoggedCount = 0;
     let otherCount = 0;
+
+    const routingDecision = isShadowMode ? "shadow_logged" : "live_update";
 
     for (const c of classifications) {
       const i = c.index;
       if (i < 0 || i >= comments.length) continue;
       const row = comments[i];
       const discipline = isDiscipline(c.discipline) ? c.discipline : "Other";
+      const confidenceScore = typeof c.confidence_score === "number"
+        ? Math.max(0, Math.min(1, c.confidence_score))
+        : 0.5;
       if (discipline === "Other") otherCount++;
-      const { error: updateError } = await supabase
-        .from("parsed_comments")
-        .update({ discipline })
-        .eq("id", row.id)
-        .or(orDiscipline);
 
-      if (!updateError) classifiedCount++;
+      if (isShadowMode) {
+        try {
+          const { error: shadowErr } = await adminClient
+            .from("shadow_predictions")
+            .insert({
+              project_id: row.project_id,
+              comment_id: row.id,
+              agent_name: "Discipline Classifier",
+              prediction_data: { discipline },
+              confidence_score: confidenceScore,
+              match_status: "pending",
+            });
+          if (shadowErr) {
+            console.warn("shadow_predictions insert failed for comment", row.id, shadowErr.message);
+          } else {
+            shadowLoggedCount++;
+          }
+        } catch (err) {
+          console.warn("shadow_predictions insert exception for comment", row.id, err);
+        }
+      } else {
+        const { error: updateError } = await supabase
+          .from("parsed_comments")
+          .update({ discipline })
+          .eq("id", row.id)
+          .or(orDiscipline);
+
+        if (!updateError) classifiedCount++;
+      }
+
+      try {
+        const { error: auditErr } = await adminClient
+          .from("audit_trail")
+          .insert({
+            project_id: row.project_id,
+            actor_id: "Discipline Classifier",
+            action_type: "classification",
+            routing_decision: routingDecision,
+          });
+        if (auditErr) {
+          console.warn("audit_trail insert failed for comment", row.id, auditErr.message);
+        }
+      } catch (err) {
+        console.warn("audit_trail insert exception for comment", row.id, err);
+      }
     }
 
     if (classifications.length > 0 && otherCount / classifications.length > 0.5) {
       console.log("[WARN] Over 50% classified as Other — prompt may need tuning");
     }
-    console.log("discipline-classifier: rows updated:", classifiedCount);
+
+    const mode = isShadowMode ? "shadow" : "live";
+    console.log(`discipline-classifier [${mode}]: classified=${classifiedCount}, shadow_logged=${shadowLoggedCount}`);
+
     return new Response(
-      JSON.stringify({ classified_count: classifiedCount }),
+      JSON.stringify({
+        classified_count: classifiedCount,
+        shadow_logged_count: shadowLoggedCount,
+        mode,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
