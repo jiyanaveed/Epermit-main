@@ -93,7 +93,7 @@ Preferred communication style: Simple, everyday language.
 - **Dashboard:** `/admin/shadow-mode` — React page at `src/pages/ShadowModeDashboard.tsx` showing accuracy, agent performance, baseline metrics, and audit trail.
 - **Metrics Edge Function:** `supabase/functions/shadow-metrics/index.ts` — aggregates data from `shadow_predictions`, `baseline_actions`, and `audit_trail`.
 - **Flag:** `projects.is_shadow_mode` (boolean) — when true, AI agents log predictions to `shadow_predictions` instead of updating `parsed_comments`.
-- **Supported agents:** `discipline-classifier-agent` (writes confidence scores + shadow predictions when shadow mode is on).
+- **Supported agents:** `discipline-classifier-agent` — In shadow mode, fetches ALL comments (including already-classified ones from the portal), classifies via LLM, and writes to `shadow_predictions` with `prediction_data: { ai_discipline, portal_discipline }`. Auto-computes `match_status` ("match"/"mismatch") when portal discipline exists, or "pending" when no baseline. Audit trail entries use `shadow_match`/`shadow_mismatch`/`shadow_no_baseline` routing decisions.
 
 ### Agent Chain Mechanism
 

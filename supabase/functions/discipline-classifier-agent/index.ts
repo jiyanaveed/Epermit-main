@@ -121,15 +121,19 @@ serve(async (req) => {
 
     const orDiscipline = "discipline.is.null,discipline.eq.General,discipline.eq.";
     const projectFilter = projectId ? [projectId] : projectIds;
-    console.log("[DEBUG] discipline-classifier query: table=parsed_comments, filter=(discipline IS NULL OR discipline='General' OR discipline=''), status=Pending, project_id in", projectFilter.length, "projects, limit=", batchLimit);
 
     let query = supabase
       .from("parsed_comments")
       .select("id, original_text, project_id, discipline")
-      .or(orDiscipline)
-      .eq("status", "Pending")
-      .in("project_id", projectId ? [projectId] : projectIds)
+      .in("project_id", projectFilter)
       .limit(batchLimit);
+
+    if (isShadowMode) {
+      console.log("[DEBUG] discipline-classifier query: shadow mode — fetching ALL comments (including already-classified), project_id in", projectFilter.length, "projects, limit=", batchLimit);
+    } else {
+      query = query.or(orDiscipline).eq("status", "Pending");
+      console.log("[DEBUG] discipline-classifier query: live mode — filter=(discipline IS NULL OR discipline='General' OR discipline=''), status=Pending, project_id in", projectFilter.length, "projects, limit=", batchLimit);
+    }
 
     const { data: rows, error: fetchError } = await query;
 
@@ -243,6 +247,10 @@ One object per comment in the same order as provided.`;
       if (discipline === "Other") otherCount++;
 
       if (isShadowMode) {
+        const portalDiscipline = row.discipline ?? null;
+        const matchStatus = portalDiscipline && portalDiscipline !== "General" && portalDiscipline !== ""
+          ? (discipline === portalDiscipline ? "match" : "mismatch")
+          : "pending";
         try {
           const { error: shadowErr } = await adminClient
             .from("shadow_predictions")
@@ -250,9 +258,12 @@ One object per comment in the same order as provided.`;
               project_id: row.project_id,
               comment_id: row.id,
               agent_name: "Discipline Classifier",
-              prediction_data: { discipline },
+              prediction_data: {
+                ai_discipline: discipline,
+                portal_discipline: portalDiscipline,
+              },
               confidence_score: confidenceScore,
-              match_status: "pending",
+              match_status: matchStatus,
             });
           if (shadowErr) {
             console.warn("shadow_predictions insert failed for comment", row.id, shadowErr.message);
@@ -273,14 +284,22 @@ One object per comment in the same order as provided.`;
       }
 
       try {
+        const auditPayload: Record<string, unknown> = {
+          project_id: row.project_id,
+          actor_id: "Discipline Classifier",
+          action_type: "classification",
+          routing_decision: routingDecision,
+          input_hash: row.id,
+        };
+        if (isShadowMode) {
+          const portalDiscipline = row.discipline ?? null;
+          auditPayload.routing_decision = portalDiscipline && portalDiscipline !== "General" && portalDiscipline !== ""
+            ? (discipline === portalDiscipline ? "shadow_match" : "shadow_mismatch")
+            : "shadow_no_baseline";
+        }
         const { error: auditErr } = await adminClient
           .from("audit_trail")
-          .insert({
-            project_id: row.project_id,
-            actor_id: "Discipline Classifier",
-            action_type: "classification",
-            routing_decision: routingDecision,
-          });
+          .insert(auditPayload);
         if (auditErr) {
           console.warn("audit_trail insert failed for comment", row.id, auditErr.message);
         }
