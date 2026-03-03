@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableCombobox, ComboboxOption } from "@/components/ui/searchable-combobox";
 import { Switch } from "@/components/ui/switch";
@@ -36,6 +37,7 @@ import {
   Scale,
   ToggleLeft,
   FolderKanban,
+  Plus,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/lib/supabase";
@@ -165,8 +167,11 @@ interface ComplianceAnnotationData {
 
 export function AIComplianceAnalyzer() {
   const { user } = useAuth();
-  const { projects, loading: projectsLoading } = useProjects();
+  const { projects, loading: projectsLoading, createProject } = useProjects();
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [showNewProjectInput, setShowNewProjectInput] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
   const { documents, uploadDocument, fetchDocuments } = useProjectDocuments(selectedProjectId);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [loadingExisting, setLoadingExisting] = useState(false);
@@ -351,6 +356,24 @@ export function AIComplianceAnalyzer() {
   const { recentItems: recentProjectTypes, addRecentItem: addRecentProjectType } = useRecentlyUsed(
     "compliance-recent-project-types",
   );
+
+  const handleCreateNewProject = async () => {
+    if (!newProjectName.trim() || !user) return;
+    setCreatingProject(true);
+    try {
+      const newProject = await createProject({ name: newProjectName.trim() });
+      if (newProject) {
+        setSelectedProjectId(newProject.id);
+        setSelectedDocumentId(null);
+        setIbcResult(null);
+        setLocalResult(null);
+        setShowNewProjectInput(false);
+        setNewProjectName("");
+      }
+    } finally {
+      setCreatingProject(false);
+    }
+  };
 
   // Handle jurisdiction change with recent tracking
   const handleJurisdictionChange = useCallback(
@@ -1277,18 +1300,29 @@ export function AIComplianceAnalyzer() {
             <Select
               value={selectedProjectId ?? "__none__"}
               onValueChange={(v) => {
+                if (v === "__create_new__") {
+                  setShowNewProjectInput(true);
+                  return;
+                }
+                setShowNewProjectInput(false);
                 setSelectedProjectId(v === "__none__" ? null : v);
                 setSelectedDocumentId(null);
                 setIbcResult(null);
                 setLocalResult(null);
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger data-testid="select-project">
                 <SelectValue placeholder="Select project to save analysis..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">
                   <span className="text-muted-foreground">No project (analysis won&apos;t be saved)</span>
+                </SelectItem>
+                <SelectItem value="__create_new__">
+                  <span className="flex items-center gap-1.5 text-[#FF6B2B]">
+                    <Plus className="h-3.5 w-3.5" />
+                    Create new project
+                  </span>
                 </SelectItem>
                 {(projects ?? []).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
@@ -1297,7 +1331,48 @@ export function AIComplianceAnalyzer() {
                 ))}
               </SelectContent>
             </Select>
-            {!selectedProjectId && (
+            {showNewProjectInput && (
+              <div className="flex items-center gap-2 mt-2">
+                <Input
+                  data-testid="input-new-project-name"
+                  placeholder="Enter new project name..."
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newProjectName.trim()) {
+                      e.preventDefault();
+                      handleCreateNewProject();
+                    }
+                  }}
+                  disabled={creatingProject}
+                  autoFocus
+                />
+                <Button
+                  data-testid="button-create-project"
+                  size="sm"
+                  disabled={!newProjectName.trim() || creatingProject}
+                  onClick={handleCreateNewProject}
+                >
+                  {creatingProject ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Create"
+                  )}
+                </Button>
+                <Button
+                  data-testid="button-cancel-create-project"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setShowNewProjectInput(false);
+                    setNewProjectName("");
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            {!selectedProjectId && !showNewProjectInput && (
               <p className="text-xs text-muted-foreground mt-1">
                 Select a project to save the file and AI results to the database
               </p>
