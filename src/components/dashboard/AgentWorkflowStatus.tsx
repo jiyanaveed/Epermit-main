@@ -55,7 +55,7 @@ type PipelineResult = {
   discipline_classifier?: { classified_count?: number; error?: string };
 };
 
-const SCRAPER_URL = "http://localhost:3001";
+const SCRAPER_URL = "http://localhost:3000";
 
 type StepStatus = "idle" | "checking" | "waiting" | "pending" | "done" | "failed";
 
