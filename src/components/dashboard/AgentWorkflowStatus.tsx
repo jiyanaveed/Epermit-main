@@ -255,7 +255,7 @@ export function AgentWorkflowStatus() {
               : "Complete (No comments found)"
             : "Waiting for Doc";
 
-  const classifierStatus: StepStatus =
+  const rawClassifierStatus: StepStatus =
     chainPhase === "classifier"
       ? "checking"
       : classifierFailed
@@ -263,6 +263,13 @@ export function AgentWorkflowStatus() {
         : classifierDone
           ? "done"
           : "pending";
+
+  const classifierStatus: StepStatus =
+    commentParserStatus !== "done" && rawClassifierStatus === "done"
+      ? "pending"
+      : commentParserStatus !== "done" && rawClassifierStatus === "checking" && chainPhase !== "classifier"
+        ? "pending"
+        : rawClassifierStatus;
 
   const [enrichmentRunning, setEnrichmentRunning] = useState(false);
   const [enrichmentResult, setEnrichmentResult] = useState<number | null>(null);
@@ -289,7 +296,7 @@ export function AgentWorkflowStatus() {
       (r) => (r.code_reference ?? "").trim().length > 0,
     );
 
-  const enrichmentStatus: StepStatus =
+  const rawEnrichmentStatus: StepStatus =
     chainPhase === "enrichment"
       ? "checking"
       : allCommentsHaveCodeRef
@@ -300,16 +307,23 @@ export function AgentWorkflowStatus() {
             ? "done"
             : "pending";
 
+  const enrichmentStatus: StepStatus =
+    classifierStatus !== "done" && (rawEnrichmentStatus === "done" || (rawEnrichmentStatus === "checking" && chainPhase !== "enrichment"))
+      ? "pending"
+      : rawEnrichmentStatus;
+
   const enrichmentDescription =
-    chainPhase === "enrichment"
-      ? "Running (chained)..."
-      : allCommentsHaveCodeRef
-        ? "Complete (all have code refs)"
-        : enrichmentRunning
-          ? "Running..."
-          : enrichmentResult != null
-            ? `Done (${enrichmentResult} enriched)`
-            : "Enriches comments with code references and draft responses";
+    enrichmentStatus === "pending" && rawEnrichmentStatus !== "pending"
+      ? "Waiting for upstream steps"
+      : chainPhase === "enrichment"
+        ? "Running (chained)..."
+        : allCommentsHaveCodeRef && enrichmentStatus === "done"
+          ? "Complete (all have code refs)"
+          : enrichmentRunning && enrichmentStatus === "checking"
+            ? "Running..."
+            : enrichmentResult != null && enrichmentStatus === "done"
+              ? `Done (${enrichmentResult} enriched)`
+              : "Enriches comments with code references and draft responses";
 
   const runEnrichment = useCallback(async () => {
     const projectIdToUse =
@@ -382,7 +396,7 @@ export function AgentWorkflowStatus() {
       (r) => (r.assigned_to ?? "").trim().length > 0,
     );
 
-  const routerStatus: StepStatus =
+  const rawRouterStatus: StepStatus =
     chainPhase === "router"
       ? "checking"
       : allCommentsHaveAssigned
@@ -393,16 +407,23 @@ export function AgentWorkflowStatus() {
             ? "done"
             : "pending";
 
+  const routerStatus: StepStatus =
+    enrichmentStatus !== "done" && (rawRouterStatus === "done" || (rawRouterStatus === "checking" && chainPhase !== "router"))
+      ? "pending"
+      : rawRouterStatus;
+
   const routerDescription =
-    chainPhase === "router"
-      ? "Running (chained)..."
-      : allCommentsHaveAssigned
-        ? "Complete (all assigned)"
-        : routerRunning
-          ? "Running..."
-          : routerResult != null
-            ? `Done (${routerResult} routed)`
-            : "Assigns comments to team members by discipline";
+    routerStatus === "pending" && rawRouterStatus !== "pending"
+      ? "Waiting for upstream steps"
+      : chainPhase === "router"
+        ? "Running (chained)..."
+        : allCommentsHaveAssigned && routerStatus === "done"
+          ? "Complete (all assigned)"
+          : routerRunning && routerStatus === "checking"
+            ? "Running..."
+            : routerResult != null && routerStatus === "done"
+              ? `Done (${routerResult} routed)`
+              : "Assigns comments to team members by discipline";
 
   const runAutoRoute = useCallback(async () => {
     const projectIdToUse =
@@ -451,15 +472,17 @@ export function AgentWorkflowStatus() {
   ]);
 
   const classifierDescription =
-    chainPhase === "classifier"
-      ? "Running (chained)..."
-      : classifierFailed
-        ? "Failed"
-        : classifierDone
-          ? dc && (dc.classified_count ?? 0) > 0
-            ? `Complete (${dc.classified_count} classified)`
-            : "Complete (Nothing to classify)"
-          : "Pending";
+    classifierStatus === "pending" && rawClassifierStatus === "done"
+      ? "Waiting for upstream steps"
+      : chainPhase === "classifier"
+        ? "Running (chained)..."
+        : classifierFailed
+          ? "Failed"
+          : classifierDone && classifierStatus === "done"
+            ? dc && (dc.classified_count ?? 0) > 0
+              ? `Complete (${dc.classified_count} classified)`
+              : "Complete (Nothing to classify)"
+            : "Pending";
 
   const loadDashboardData = useCallback(async () => {
     if (!user) return;
