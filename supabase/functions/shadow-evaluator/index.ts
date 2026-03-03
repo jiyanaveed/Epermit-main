@@ -49,6 +49,55 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const action = body.action as string | undefined;
+
+    if (action === "log_failure") {
+      const pid = body.project_id as string | undefined;
+      const agentName = body.agent_name as string | undefined;
+      const errorMessage = body.error_message as string | undefined;
+
+      if (!pid || !agentName) {
+        return jsonResponse(
+          { code: 400, message: "log_failure requires project_id and agent_name" },
+          400,
+        );
+      }
+
+      const { error: spError } = await supabase
+        .from("shadow_predictions")
+        .insert({
+          project_id: pid,
+          agent_name: agentName,
+          prediction_data: { status: "fail", error: errorMessage ?? "Unknown error" },
+          match_status: "fail",
+          confidence_score: 0,
+        });
+
+      if (spError) {
+        console.error("shadow-evaluator: shadow_predictions fail insert error", JSON.stringify(spError));
+      }
+
+      const { error: auditErr } = await supabase.from("audit_trail").insert({
+        project_id: pid,
+        actor_id: "system",
+        action_type: "chain_agent_failure",
+        routing_decision: agentName,
+        input_hash: errorMessage ?? "Unknown error",
+      });
+
+      if (auditErr) {
+        console.error("shadow-evaluator: audit_trail fail insert error", JSON.stringify(auditErr));
+      }
+
+      return jsonResponse({
+        success: true,
+        action: "log_failure",
+        agent_name: agentName,
+        shadow_logged: !spError,
+        audit_logged: !auditErr,
+      });
+    }
+
     const projectId = body.projectId as string | undefined;
     const commentId = body.commentId as string | undefined;
     const expeditorId = body.expeditorId as string | undefined;

@@ -80,6 +80,34 @@ type StepStatus =
   | "done"
   | "failed";
 
+type ChainPhase =
+  | "idle"
+  | "scraping"
+  | "intake"
+  | "classifier"
+  | "enrichment"
+  | "router"
+  | "complete";
+
+async function logChainFailure(
+  projectId: string,
+  agentName: string,
+  errorMsg: string,
+) {
+  try {
+    await supabase.functions.invoke("shadow-evaluator", {
+      body: {
+        action: "log_failure",
+        project_id: projectId,
+        agent_name: agentName,
+        error_message: errorMsg,
+      },
+    });
+  } catch (e) {
+    console.error(`Failed to log chain failure for ${agentName}:`, e);
+  }
+}
+
 export function AgentWorkflowStatus() {
   const { user, session } = useAuth();
   const navigate = useNavigate();
@@ -127,6 +155,10 @@ export function AgentWorkflowStatus() {
     null,
   );
 
+  const [chainPhase, setChainPhase] = useState<ChainPhase>("idle");
+  const [chainError, setChainError] = useState<string | null>(null);
+  const [isShadowMode, setIsShadowMode] = useState(false);
+
   useEffect(() => {
     if (scrapingOverlay?.phase !== "done") return;
     doneDismissTimeoutRef.current = setTimeout(() => {
@@ -149,29 +181,38 @@ export function AgentWorkflowStatus() {
   const classifierDone = dc != null && !dc.error;
   const classifierFailed = dc != null && !!dc.error;
 
-  const commentParserStatus: StepStatus = commentParserFailed
-    ? "failed"
-    : parserRunning
+  const commentParserStatus: StepStatus =
+    chainPhase === "intake"
       ? "checking"
-      : parserSucceeded
-        ? "done"
-        : "waiting";
+      : commentParserFailed
+        ? "failed"
+        : parserRunning
+          ? "checking"
+          : parserSucceeded
+            ? "done"
+            : "waiting";
 
-  const commentParserDescription = commentParserFailed
-    ? "Failed"
-    : parserRunning && parserProgress
-      ? `Running… PDF ${parserProgress.pdfIndex}/${parserProgress.totalPdfs}`
-      : parserSucceeded
-        ? cp && (cp.parsed_count ?? 0) > 0
-          ? `Complete (${cp.parsed_count} parsed / ${cp.skipped_count ?? 0} skipped)`
-          : "Complete (No comments found)"
-        : "Waiting for Doc";
+  const commentParserDescription =
+    chainPhase === "intake"
+      ? "Running (chained)..."
+      : commentParserFailed
+        ? "Failed"
+        : parserRunning && parserProgress
+          ? `Running... PDF ${parserProgress.pdfIndex}/${parserProgress.totalPdfs}`
+          : parserSucceeded
+            ? cp && (cp.parsed_count ?? 0) > 0
+              ? `Complete (${cp.parsed_count} parsed / ${cp.skipped_count ?? 0} skipped)`
+              : "Complete (No comments found)"
+            : "Waiting for Doc";
 
-  const classifierStatus: StepStatus = classifierFailed
-    ? "failed"
-    : classifierDone
-      ? "done"
-      : "pending";
+  const classifierStatus: StepStatus =
+    chainPhase === "classifier"
+      ? "checking"
+      : classifierFailed
+        ? "failed"
+        : classifierDone
+          ? "done"
+          : "pending";
 
   const [enrichmentRunning, setEnrichmentRunning] = useState(false);
   const [enrichmentResult, setEnrichmentResult] = useState<number | null>(null);
@@ -198,21 +239,27 @@ export function AgentWorkflowStatus() {
       (r) => (r.code_reference ?? "").trim().length > 0,
     );
 
-  const enrichmentStatus: StepStatus = allCommentsHaveCodeRef
-    ? "done"
-    : enrichmentRunning
+  const enrichmentStatus: StepStatus =
+    chainPhase === "enrichment"
       ? "checking"
-      : enrichmentResult != null
+      : allCommentsHaveCodeRef
         ? "done"
-        : "pending";
+        : enrichmentRunning
+          ? "checking"
+          : enrichmentResult != null
+            ? "done"
+            : "pending";
 
-  const enrichmentDescription = allCommentsHaveCodeRef
-    ? "Complete (all have code refs)"
-    : enrichmentRunning
-      ? "Running…"
-      : enrichmentResult != null
-        ? `Done (${enrichmentResult} enriched)`
-        : "Enriches comments with code references and draft responses";
+  const enrichmentDescription =
+    chainPhase === "enrichment"
+      ? "Running (chained)..."
+      : allCommentsHaveCodeRef
+        ? "Complete (all have code refs)"
+        : enrichmentRunning
+          ? "Running..."
+          : enrichmentResult != null
+            ? `Done (${enrichmentResult} enriched)`
+            : "Enriches comments with code references and draft responses";
 
   const runEnrichment = useCallback(async () => {
     const projectIdToUse =
@@ -224,10 +271,18 @@ export function AgentWorkflowStatus() {
     setEnrichmentRunning(true);
     setEnrichmentResult(null);
     try {
+      const { data: projRow } = await supabase
+        .from("projects")
+        .select("is_shadow_mode")
+        .eq("id", projectIdToUse)
+        .maybeSingle();
       const { data, error } = await supabase.functions.invoke(
         "context-reference-engine",
         {
-          body: { projectId: projectIdToUse },
+          body: {
+            projectId: projectIdToUse,
+            is_shadow_mode: projRow?.is_shadow_mode === true,
+          },
         },
       );
       if (error) throw error;
@@ -277,21 +332,27 @@ export function AgentWorkflowStatus() {
       (r) => (r.assigned_to ?? "").trim().length > 0,
     );
 
-  const routerStatus: StepStatus = allCommentsHaveAssigned
-    ? "done"
-    : routerRunning
+  const routerStatus: StepStatus =
+    chainPhase === "router"
       ? "checking"
-      : routerResult != null
+      : allCommentsHaveAssigned
         ? "done"
-        : "pending";
+        : routerRunning
+          ? "checking"
+          : routerResult != null
+            ? "done"
+            : "pending";
 
-  const routerDescription = allCommentsHaveAssigned
-    ? "Complete (all assigned)"
-    : routerRunning
-      ? "Running…"
-      : routerResult != null
-        ? `Done (${routerResult} routed)`
-        : "Assigns comments to team members by discipline";
+  const routerDescription =
+    chainPhase === "router"
+      ? "Running (chained)..."
+      : allCommentsHaveAssigned
+        ? "Complete (all assigned)"
+        : routerRunning
+          ? "Running..."
+          : routerResult != null
+            ? `Done (${routerResult} routed)`
+            : "Assigns comments to team members by discipline";
 
   const runAutoRoute = useCallback(async () => {
     const projectIdToUse =
@@ -303,10 +364,18 @@ export function AgentWorkflowStatus() {
     setRouterRunning(true);
     setRouterResult(null);
     try {
+      const { data: projRow } = await supabase
+        .from("projects")
+        .select("is_shadow_mode")
+        .eq("id", projectIdToUse)
+        .maybeSingle();
       const { data, error } = await supabase.functions.invoke(
         "auto-router-agent",
         {
-          body: { projectId: projectIdToUse },
+          body: {
+            projectId: projectIdToUse,
+            is_shadow_mode: projRow?.is_shadow_mode === true,
+          },
         },
       );
       if (error) throw error;
@@ -331,13 +400,16 @@ export function AgentWorkflowStatus() {
     queryClient,
   ]);
 
-  const classifierDescription = classifierFailed
-    ? "Failed"
-    : classifierDone
-      ? dc && (dc.classified_count ?? 0) > 0
-        ? `Complete (${dc.classified_count} classified)`
-        : "Complete (Nothing to classify)"
-      : "Pending";
+  const classifierDescription =
+    chainPhase === "classifier"
+      ? "Running (chained)..."
+      : classifierFailed
+        ? "Failed"
+        : classifierDone
+          ? dc && (dc.classified_count ?? 0) > 0
+            ? `Complete (${dc.classified_count} classified)`
+            : "Complete (Nothing to classify)"
+          : "Pending";
 
   const loadDashboardData = useCallback(async () => {
     if (!user) return;
@@ -389,6 +461,301 @@ export function AgentWorkflowStatus() {
     loadDashboardData();
   }, [loadDashboardData]);
 
+  const runChainedPipeline = useCallback(
+    async (projectId: string) => {
+      setChainError(null);
+
+      const { data: projectRow } = await supabase
+        .from("projects")
+        .select("is_shadow_mode")
+        .eq("id", projectId)
+        .maybeSingle();
+      const shadowActive = projectRow?.is_shadow_mode === true;
+      setIsShadowMode(shadowActive);
+      if (shadowActive) {
+        toast.info("Shadow Mode active — all results will be logged to shadow tables.");
+      }
+
+      setChainPhase("intake");
+      toast.info("Chain Step 2/5: Intake Pipeline (parsing PDFs)...");
+      setParserRunning(true);
+      setParserProgress(null);
+      let cursor: { pdfIndex: number } | undefined;
+      const pollIntervalMs = 2500;
+      const maxRounds = 60;
+      let totalParsed = 0;
+      let totalSkipped = 0;
+      let round = 0;
+      let intakeFailed = false;
+      try {
+        while (round < maxRounds) {
+          const { data: pipelineData, error: pipelineError } =
+            await supabase.functions.invoke("intake-pipeline-agent", {
+              body: {
+                project_id: projectId,
+                is_shadow_mode: shadowActive,
+                ...(cursor && { cursor }),
+              },
+            });
+          if (pipelineError) {
+            console.warn("Intake pipeline error:", pipelineError);
+            intakeFailed = true;
+            const errMsg =
+              typeof pipelineError === "string"
+                ? pipelineError
+                : pipelineError?.message ?? "Unknown intake error";
+            setChainError(`Intake: ${errMsg}`);
+            await logChainFailure(projectId, "intake-pipeline-agent", errMsg);
+            break;
+          }
+          if (pipelineData == null) break;
+
+          const cpData = pipelineData.comment_parser;
+          const dcData = pipelineData.discipline_classifier;
+          totalParsed += cpData?.parsed_count ?? 0;
+          totalSkipped += cpData?.skipped_count ?? 0;
+          setPipelineResult({
+            comment_parser: {
+              ...cpData,
+              parsed_count: totalParsed,
+              skipped_count: totalSkipped,
+            },
+            discipline_classifier: dcData,
+          });
+
+          if (
+            cpData?.total_pdfs != null &&
+            (cpData.next_cursor?.pdfIndex ?? 0) >= 0
+          ) {
+            setParserProgress({
+              pdfIndex: cpData.next_cursor?.pdfIndex ?? 0,
+              totalPdfs: cpData.total_pdfs,
+            });
+          }
+
+          if (cpData?.done === true && !cpData?.error) {
+            await queryClient.invalidateQueries({
+              queryKey: ["parsed_comments"],
+            });
+            const classified = dcData?.classified_count ?? 0;
+            if (totalParsed > 0 || classified > 0) {
+              toast.success(
+                `Intake complete: ${totalParsed} parsed, ${classified} classified.`,
+              );
+            }
+            break;
+          }
+
+          if (cpData?.error && cpData.error !== "timeout") {
+            intakeFailed = true;
+            setChainError(`Parser: ${cpData.error}`);
+            await logChainFailure(
+              projectId,
+              "comment-parser-agent",
+              cpData.error,
+            );
+            break;
+          }
+
+          if (
+            cpData?.error === "timeout" ||
+            (cpData?.next_cursor != null && !cpData?.done)
+          ) {
+            cursor = cpData?.error === "timeout" ? undefined : cpData.next_cursor;
+            await new Promise((r) => setTimeout(r, pollIntervalMs));
+            round++;
+            continue;
+          }
+          break;
+        }
+      } catch (e) {
+        intakeFailed = true;
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.warn("Intake pipeline failed:", errMsg);
+        setChainError(`Intake: ${errMsg}`);
+        await logChainFailure(projectId, "intake-pipeline-agent", errMsg);
+      } finally {
+        setParserRunning(false);
+        setParserProgress(null);
+      }
+
+      if (intakeFailed) {
+        toast.error("Chain stopped: Intake Pipeline failed. Error logged.");
+        setTimeout(() => setChainPhase("idle"), 8000);
+        return;
+      }
+
+      setChainPhase("classifier");
+      toast.info("Chain Step 3/5: Discipline Classifier...");
+      let classifierFailed2 = false;
+      try {
+        const { data: classData, error: classError } =
+          await supabase.functions.invoke("discipline-classifier-agent", {
+            body: {
+              project_id: projectId,
+              is_shadow_mode: shadowActive,
+            },
+          });
+        if (classError) {
+          classifierFailed2 = true;
+          const errMsg =
+            typeof classError === "string"
+              ? classError
+              : classError?.message ?? "Unknown classifier error";
+          setChainError(`Classifier: ${errMsg}`);
+          await logChainFailure(
+            projectId,
+            "discipline-classifier-agent",
+            errMsg,
+          );
+        } else {
+          const classified =
+            (classData as { classified_count?: number })?.classified_count ?? 0;
+          setPipelineResult((prev) => ({
+            ...prev,
+            discipline_classifier: {
+              classified_count: classified,
+            },
+          }));
+          toast.success(`Classifier complete: ${classified} classified.`);
+        }
+      } catch (e) {
+        classifierFailed2 = true;
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.warn("Discipline classifier failed:", errMsg);
+        setChainError(`Classifier: ${errMsg}`);
+        await logChainFailure(
+          projectId,
+          "discipline-classifier-agent",
+          errMsg,
+        );
+      }
+
+      if (classifierFailed2) {
+        toast.error("Chain stopped: Classifier failed. Error logged.");
+        setTimeout(() => setChainPhase("idle"), 8000);
+        return;
+      }
+
+      setChainPhase("enrichment");
+      toast.info("Chain Step 4/5: Context & Reference Engine...");
+      setEnrichmentRunning(true);
+      setEnrichmentResult(null);
+      let enrichFailed = false;
+      try {
+        const { data: enrichData, error: enrichError } =
+          await supabase.functions.invoke("context-reference-engine", {
+            body: {
+              projectId: projectId,
+              is_shadow_mode: shadowActive,
+            },
+          });
+        if (enrichError) {
+          enrichFailed = true;
+          const errMsg =
+            typeof enrichError === "string"
+              ? enrichError
+              : enrichError?.message ?? "Unknown enrichment error";
+          setChainError(`Enrichment: ${errMsg}`);
+          await logChainFailure(
+            projectId,
+            "context-reference-engine",
+            errMsg,
+          );
+        } else {
+          const count =
+            (enrichData as { enriched_count?: number })?.enriched_count ?? 0;
+          setEnrichmentResult(count);
+          await queryClient.invalidateQueries({
+            queryKey: ["parsed_comments"],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["parsed_comments_code_ref_check"],
+          });
+          toast.success(`Enrichment complete: ${count} enriched.`);
+        }
+      } catch (e) {
+        enrichFailed = true;
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.warn("Context reference engine failed:", errMsg);
+        setChainError(`Enrichment: ${errMsg}`);
+        await logChainFailure(projectId, "context-reference-engine", errMsg);
+      } finally {
+        setEnrichmentRunning(false);
+      }
+
+      if (enrichFailed) {
+        toast.error("Chain stopped: Enrichment failed. Error logged.");
+        setTimeout(() => setChainPhase("idle"), 8000);
+        return;
+      }
+
+      setChainPhase("router");
+      toast.info("Chain Step 5/5: Auto-Router Agent...");
+      setRouterRunning(true);
+      setRouterResult(null);
+      let routeFailed = false;
+      try {
+        const { data: routeData, error: routeError } =
+          await supabase.functions.invoke("auto-router-agent", {
+            body: {
+              projectId: projectId,
+              is_shadow_mode: shadowActive,
+            },
+          });
+        if (routeError) {
+          routeFailed = true;
+          const errMsg =
+            typeof routeError === "string"
+              ? routeError
+              : routeError?.message ?? "Unknown router error";
+          setChainError(`Router: ${errMsg}`);
+          await logChainFailure(projectId, "auto-router-agent", errMsg);
+        } else {
+          const count =
+            (routeData as { routed_count?: number })?.routed_count ?? 0;
+          setRouterResult(count);
+          await queryClient.invalidateQueries({
+            queryKey: ["parsed_comments"],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["parsed_comments_assigned_check"],
+          });
+          toast.success(`Auto-Router complete: ${count} routed.`);
+        }
+      } catch (e) {
+        routeFailed = true;
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.warn("Auto-router agent failed:", errMsg);
+        setChainError(`Router: ${errMsg}`);
+        await logChainFailure(projectId, "auto-router-agent", errMsg);
+      } finally {
+        setRouterRunning(false);
+      }
+
+      if (routeFailed) {
+        toast.error("Chain stopped: Auto-Router failed. Error logged.");
+        setTimeout(() => setChainPhase("idle"), 8000);
+        return;
+      }
+
+      setChainPhase("complete");
+      toast.success(
+        shadowActive
+          ? "Full chain complete! All results logged to shadow tables."
+          : "Full chain complete! All agents finished successfully.",
+      );
+      toast.info("View scraped data on the Portal Data page.", {
+        action: {
+          label: "View",
+          onClick: () => navigate("/portal-data"),
+        },
+      });
+      setTimeout(() => setChainPhase("idle"), 5000);
+    },
+    [queryClient, navigate],
+  );
+
   const runManualCheck = async () => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
     const permitNumberToUse =
@@ -413,12 +780,16 @@ export function AgentWorkflowStatus() {
       return;
     }
 
+    setChainPhase("scraping");
+    setChainError(null);
+    setPipelineResult(null);
+    setEnrichmentResult(null);
+    setRouterResult(null);
     setPortalStatus("checking");
     setPortalStatusText("Connecting...");
-    toast.info("Fetching credentials...");
+    toast.info("Chain Step 1/5: Portal Scraping...");
 
     try {
-      // 1. Fetch portal credentials (prefer match by project_id; fallback permit_number)
       const { data: credentials, error: credError } = await supabase
         .from("portal_credentials")
         .select("portal_username, portal_password, permit_number, project_id")
@@ -441,7 +812,6 @@ export function AgentWorkflowStatus() {
 
       toast.info("Logging into portal...");
 
-      // 2. Call local scraper login
       let loginRes: Response;
       try {
         loginRes = await fetch(`${SCRAPER_URL}/api/login`, {
@@ -450,7 +820,6 @@ export function AgentWorkflowStatus() {
           body: JSON.stringify({ username, password }),
         });
       } catch (fetchErr) {
-        // Network error: scraper unreachable
         throw new Error("SCRAPER_OFFLINE");
       }
 
@@ -549,7 +918,6 @@ export function AgentWorkflowStatus() {
 
       toast.success("Scraping started");
 
-      // 3. Trigger scrape with permit number from project (source of truth)
       const scrapeRes = await fetch(`${SCRAPER_URL}/api/scrape`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -567,9 +935,8 @@ export function AgentWorkflowStatus() {
         throw new Error(errData.error || "Failed to start scrape");
       }
 
-      // 4. Poll for progress (every 1 second)
       const pollInterval = 1000;
-      const maxAttempts = 180; // ~3 minutes
+      const maxAttempts = 180;
       let attempts = 0;
 
       const checkDone = async (): Promise<boolean> => {
@@ -610,102 +977,16 @@ export function AgentWorkflowStatus() {
             setPortalStatusText("Done");
             setPortalStatus("done");
             toast.success(
-              `🎉 Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
+              `Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
             );
             await loadDashboardData();
-            setParserRunning(true);
-            setParserProgress(null);
-            let cursor: { pdfIndex: number } | undefined;
-            const pollIntervalMs = 2500;
-            const maxRounds = 60;
-            let totalParsed = 0;
-            let totalSkipped = 0;
-            let round = 0;
-            try {
-              while (round < maxRounds) {
-                const { data: pipelineData, error: pipelineError } =
-                  await supabase.functions.invoke("intake-pipeline-agent", {
-                    body: {
-                      project_id: projectIdToUse,
-                      ...(cursor && { cursor }),
-                    },
-                  });
-                if (pipelineError) {
-                  console.warn("Intake pipeline error:", pipelineError);
-                  break;
-                }
-                if (pipelineData == null) break;
-
-                const cp = pipelineData.comment_parser;
-                const dc = pipelineData.discipline_classifier;
-                totalParsed += cp?.parsed_count ?? 0;
-                totalSkipped += cp?.skipped_count ?? 0;
-                setPipelineResult({
-                  comment_parser: {
-                    ...cp,
-                    parsed_count: totalParsed,
-                    skipped_count: totalSkipped,
-                  },
-                  discipline_classifier: dc,
-                });
-
-                if (
-                  cp?.total_pdfs != null &&
-                  (cp.next_cursor?.pdfIndex ?? 0) >= 0
-                ) {
-                  setParserProgress({
-                    pdfIndex: cp.next_cursor?.pdfIndex ?? 0,
-                    totalPdfs: cp.total_pdfs,
-                  });
-                }
-
-                if (cp?.done === true && !cp?.error) {
-                  await queryClient.invalidateQueries({
-                    queryKey: ["parsed_comments"],
-                  });
-                  const classified = dc?.classified_count ?? 0;
-                  if (totalParsed > 0 || classified > 0) {
-                    toast.success(
-                      `Comment Parser · ${totalParsed} parsed, ${classified} classified.`,
-                    );
-                  }
-                  break;
-                }
-
-                if (
-                  cp?.error === "timeout" ||
-                  (cp?.next_cursor != null && !cp?.done)
-                ) {
-                  cursor = cp?.error === "timeout" ? undefined : cp.next_cursor;
-                  await new Promise((r) => setTimeout(r, pollIntervalMs));
-                  round++;
-                  continue;
-                }
-                break;
-              }
-            } catch (e) {
-              console.warn(
-                "Intake pipeline (comment parser + classifier) failed:",
-                e,
-              );
-            } finally {
-              setParserRunning(false);
-              setParserProgress(null);
-            }
-            toast.info("View scraped data on the Portal Data page.", {
-              action: {
-                label: "View",
-                onClick: () => navigate("/portal-data"),
-              },
-            });
-            onScrapingCompleteRef.current = null;
+            await runChainedPipeline(projectIdToUse);
           };
           return true;
         }
         if (data.status === "error") {
           throw new Error(data.message || "Scraping failed");
         }
-        // Show progress percentage when available
         const total = data.total ?? 0;
         const progress = data.progress ?? 0;
         const pct = total > 0 ? Math.round((progress / total) * 100) : 0;
@@ -724,6 +1005,7 @@ export function AgentWorkflowStatus() {
       setPortalStatus("idle");
       setPortalStatusText("Timeout");
       setScrapingOverlay(null);
+      setChainPhase("idle");
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -738,6 +1020,7 @@ export function AgentWorkflowStatus() {
       setPortalStatus("idle");
       setPortalStatusText("Error");
       setScrapingOverlay(null);
+      setChainPhase("idle");
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -747,6 +1030,10 @@ export function AgentWorkflowStatus() {
         elapsedIntervalRef.current = null;
       }
       const msg = error instanceof Error ? error.message : String(error);
+      const projectId = projectBySelectedId?.id ?? latestProjectId;
+      if (projectId) {
+        await logChainFailure(projectId, "portal-scraper", msg);
+      }
       const isOffline =
         msg === "SCRAPER_OFFLINE" ||
         msg.includes("Failed to fetch") ||
@@ -766,8 +1053,7 @@ export function AgentWorkflowStatus() {
     }
   };
 
-  // ... (Rest of the UI render code remains the same)
-  // Just pasting the return block to be safe:
+  const chainRunning = chainPhase !== "idle" && chainPhase !== "complete";
 
   const steps = [
     {
@@ -775,7 +1061,9 @@ export function AgentWorkflowStatus() {
       status: portalStatus,
       description:
         portalStatus === "checking"
-          ? "Running"
+          ? chainPhase === "scraping"
+            ? "Scraping (Step 1/5)"
+            : "Running"
           : portalStatus === "done"
             ? "Complete"
             : portalStatusText
@@ -787,15 +1075,16 @@ export function AgentWorkflowStatus() {
             size="sm"
             variant="outline"
             onClick={runManualCheck}
-            disabled={portalStatus === "checking"}
+            disabled={portalStatus === "checking" || chainRunning}
+            data-testid="button-run-manual-check"
             className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
           >
-            {portalStatus === "checking" ? (
+            {portalStatus === "checking" || chainRunning ? (
               <Loader2 className="h-4 w-4 animate-spin mr-2" />
             ) : (
               <RefreshCw className="h-4 w-4 mr-2 transition-transform duration-300 group-hover/btn:rotate-180" />
             )}
-            Run Manual Check
+            {chainRunning ? "Chain Running..." : "Run Manual Check"}
           </Button>
           <Button
             size="sm"
@@ -816,7 +1105,7 @@ export function AgentWorkflowStatus() {
       status: commentParserStatus,
       description: commentParserDescription,
       action: (
-        <Button size="sm" variant="outline" asChild className="mt-2">
+        <Button size="sm" variant="outline" asChild className="mt-2" data-testid="link-comment-review">
           <Link to="/comment-review">
             <ExternalLink className="h-4 w-4 mr-2" />
             Open Comment Review
@@ -829,7 +1118,7 @@ export function AgentWorkflowStatus() {
       status: classifierStatus,
       description: classifierDescription,
       action: (
-        <Button size="sm" variant="outline" asChild className="mt-2">
+        <Button size="sm" variant="outline" asChild className="mt-2" data-testid="link-classified-comments">
           <Link to="/classified-comments">
             <ExternalLink className="h-4 w-4 mr-2" />
             View Classified Comments
@@ -847,7 +1136,8 @@ export function AgentWorkflowStatus() {
           variant="outline"
           className="mt-2"
           onClick={runEnrichment}
-          disabled={enrichmentRunning || !selectedProjectId}
+          disabled={enrichmentRunning || !selectedProjectId || chainRunning}
+          data-testid="button-run-enrichment"
         >
           {enrichmentRunning ? (
             <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -866,7 +1156,8 @@ export function AgentWorkflowStatus() {
           variant="outline"
           className="mt-2"
           onClick={runAutoRoute}
-          disabled={routerRunning || !selectedProjectId}
+          disabled={routerRunning || !selectedProjectId || chainRunning}
+          data-testid="button-run-auto-route"
         >
           {routerRunning ? (
             <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -903,7 +1194,6 @@ export function AgentWorkflowStatus() {
           aria-label="Scraping progress"
         >
           <div className="relative w-full max-w-md rounded-xl border border-emerald-500/30 bg-zinc-900/95 shadow-2xl shadow-emerald-900/20 overflow-hidden">
-            {/* Subtle pulse background */}
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-emerald-600/5 pointer-events-none" />
             <div
               className="absolute inset-0 opacity-30 pointer-events-none"
@@ -1043,14 +1333,18 @@ export function AgentWorkflowStatus() {
                   <h3 className="text-lg font-semibold text-white mb-1">
                     Scraping complete!
                   </h3>
-                  <p className="text-sm text-zinc-400 mb-4">
+                  <p className="text-sm text-zinc-400 mb-1">
                     {scrapingOverlay.stepText}
+                  </p>
+                  <p className="text-xs text-emerald-400 mb-4">
+                    Launching agent chain...
                   </p>
                   <Button
                     size="sm"
                     variant="outline"
                     className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10"
                     onClick={handleDismissScrapingOverlay}
+                    data-testid="button-dismiss-scraping"
                   >
                     Dismiss
                   </Button>
@@ -1075,11 +1369,32 @@ export function AgentWorkflowStatus() {
             <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
               AI-Powered
             </span>
+            {chainRunning && (
+              <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400 animate-pulse" data-testid="badge-chain-running">
+                Chain Active
+              </span>
+            )}
+            {chainPhase === "complete" && (
+              <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400" data-testid="badge-chain-complete">
+                Chain Complete
+              </span>
+            )}
+            {isShadowMode && chainPhase !== "idle" && (
+              <span className="inline-flex items-center rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-400" data-testid="badge-shadow-mode">
+                Shadow Mode
+              </span>
+            )}
           </CardTitle>
           <CardDescription>
-            Agentic workflow status (Steps 1–5). Run a manual portal check to
-            simulate the Portal Monitor Agent.
+            {chainRunning
+              ? `Agent chain in progress — ${chainPhase} step active. All agents fire sequentially.`
+              : "Agentic workflow status (Steps 1-5). Run a manual portal check to trigger the full chain."}
           </CardDescription>
+          {chainError && (
+            <p className="text-xs text-red-400 mt-1" data-testid="text-chain-error">
+              Last error: {chainError}
+            </p>
+          )}
         </CardHeader>
         <CardContent className="relative space-y-0">
           {steps.map((step, i) => (

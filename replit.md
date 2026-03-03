@@ -94,6 +94,16 @@ Preferred communication style: Simple, everyday language.
 - **Metrics Edge Function:** `supabase/functions/shadow-metrics/index.ts` — aggregates data from `shadow_predictions`, `baseline_actions`, and `audit_trail`.
 - **Flag:** `projects.is_shadow_mode` (boolean) — when true, AI agents log predictions to `shadow_predictions` instead of updating `parsed_comments`.
 - **Supported agents:** `discipline-classifier-agent` (writes confidence scores + shadow predictions when shadow mode is on).
+
+### Agent Chain Mechanism
+
+- **Location:** `src/components/dashboard/AgentWorkflowStatus.tsx` — `runChainedPipeline()` function.
+- **Trigger:** Clicking "Run Manual Check" starts the full chain automatically.
+- **Sequence:** Scrape (Step 1) → Intake Pipeline (Step 2) → Discipline Classifier (Step 3) → Context & Reference Engine (Step 4) → Auto-Router (Step 5).
+- **Shadow Mode Enforcement:** Before the chain starts, `is_shadow_mode` is read from the project row and passed to every agent invocation (both chained and manual).
+- **Error Handling:** If any agent fails, the error is logged to `shadow_predictions` (with `match_status: "fail"`) and `audit_trail` via `shadow-evaluator` Edge Function's `log_failure` action. The chain halts at the failed step (visible in UI for 8 seconds).
+- **UI State:** `chainPhase` state drives step status badges ("Chain Active", "Chain Complete", "Shadow Mode") and disables manual buttons while the chain is running.
+- **Individual agent buttons:** Each agent can still be run manually outside the chain; manual runs also check `is_shadow_mode`.
 | `inspections` | Inspection records per project |
 | `project_documents` | Uploaded documents stored in Supabase Storage |
 | `scheduled_reports` | Automated report delivery schedules |
