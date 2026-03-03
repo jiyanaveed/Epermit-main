@@ -98,6 +98,11 @@ export function ProjectHealthCard({ projectId }: ProjectHealthCardProps) {
     enabled: !!projectId,
   });
 
+  const healthPercent = data
+    ? (data.total_comments > 0 ? Math.round(((data.total_comments - data.pending_comments) / data.total_comments) * 100) : 100)
+    : 100;
+  const strokeOffset = useMemo(() => 283 - (283 * healthPercent) / 100, [healthPercent]);
+
   if (!projectId) return null;
   if (isLoading) {
     return (
@@ -123,9 +128,7 @@ export function ProjectHealthCard({ projectId }: ProjectHealthCardProps) {
     hasReviewCommentsReport,
   } = data;
 
-  const healthPercent = total_comments > 0 ? Math.round(((total_comments - pending_comments) / total_comments) * 100) : 100;
   const ringColor = healthPercent > 70 ? "emerald" : healthPercent >= 30 ? "amber" : "red";
-  const strokeOffset = useMemo(() => 283 - (283 * healthPercent) / 100, [healthPercent]);
 
   const lastCheckText =
     lastCheckedAt == null
