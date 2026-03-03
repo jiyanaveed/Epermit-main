@@ -69,7 +69,8 @@ type PipelineResult = {
   discipline_classifier?: { classified_count?: number; error?: string };
 };
 
-const SCRAPER_URL = "";
+const SCRAPER_URL =
+  "https://60319c1c-9adb-4aa0-a7f5-cc9fa75759e9-00-23cha9g730ax7.janeway.replit.dev";
 
 type StepStatus =
   | "idle"

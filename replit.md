@@ -66,7 +66,9 @@ Preferred communication style: Simple, everyday language.
 - **Location:** `scraper-service/` — separate Node.js/Express app (CommonJS).
 - **Port:** 3001.
 - **Purpose:** Logs into DC ProjectDox/Avolve portal using Playwright (Chromium), extracts project data and report PDFs, writes results back to Supabase (`projects.portal_data` JSONB field).
-- **Started with:** `npm run dev:scraper` (or concurrently with frontend via `npm run dev`).
+- **Started with:** `dev.sh` launches scraper as a background process and Vite as the foreground process.
+- **Proxy:** Vite proxies `/api/*` requests to `http://127.0.0.1:3001` so the frontend uses relative URLs (`SCRAPER_URL = ""`).
+- **Playwright:** Uses Nix-installed system libraries (chromium, libXcomposite, libXdamage, etc.). Launches in `headless: true` mode.
 - **Dependencies:** `playwright`, `express`, `cors`, `@supabase/supabase-js`, `exceljs`, `dotenv`.
 - **Config:** Requires `.env` with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 
