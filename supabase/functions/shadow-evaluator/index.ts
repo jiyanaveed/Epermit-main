@@ -1,15 +1,15 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-serve(async (req) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   const jsonResponse = (body: Record<string, unknown>, status = 200) =>
@@ -27,16 +27,22 @@ serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !serviceRoleKey) {
+      console.error("shadow-evaluator: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing");
       return jsonResponse(
-        { code: 500, message: "Missing Supabase config" },
+        { code: 500, message: "Missing Supabase environment config" },
         500,
       );
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
 
-    const body = await req.json().catch(() => null);
-    if (!body) {
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      console.error("shadow-evaluator: failed to parse request body");
       return jsonResponse(
         { code: 400, message: "Invalid or missing JSON body" },
         400,
@@ -78,7 +84,7 @@ serve(async (req) => {
       });
 
     if (baselineError) {
-      console.error("shadow-evaluator: baseline insert error", baselineError);
+      console.error("shadow-evaluator: baseline insert error", JSON.stringify(baselineError));
       return jsonResponse(
         { code: 500, message: `Baseline insert failed: ${baselineError.message}` },
         500,
@@ -92,10 +98,7 @@ serve(async (req) => {
       .eq("match_status", "pending");
 
     if (fetchError) {
-      console.error(
-        "shadow-evaluator: predictions fetch error",
-        fetchError,
-      );
+      console.error("shadow-evaluator: predictions fetch error", JSON.stringify(fetchError));
       return jsonResponse(
         { code: 500, message: `Predictions fetch failed: ${fetchError.message}` },
         500,
@@ -129,7 +132,7 @@ serve(async (req) => {
       if (updateError) {
         console.error(
           `shadow-evaluator: update prediction ${prediction.id} error`,
-          updateError,
+          JSON.stringify(updateError),
         );
       }
 
@@ -157,7 +160,7 @@ serve(async (req) => {
     });
 
     if (auditError) {
-      console.error("shadow-evaluator: audit insert error", auditError);
+      console.error("shadow-evaluator: audit insert error", JSON.stringify(auditError));
     }
 
     return jsonResponse({
@@ -169,7 +172,7 @@ serve(async (req) => {
       match_summary: matchSummary,
     });
   } catch (error) {
-    console.error("shadow-evaluator error:", error);
+    console.error("shadow-evaluator: unhandled error", error instanceof Error ? error.stack : String(error));
     return jsonResponse(
       {
         code: 500,

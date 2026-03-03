@@ -1,13 +1,16 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
 
   const jsonResponse = (body: Record<string, unknown>, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -18,32 +21,23 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
-    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
-      return jsonResponse({ code: 500, message: "Missing Supabase config" }, 500);
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error("shadow-metrics: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing");
+      return jsonResponse({ code: 500, message: "Missing Supabase environment config" }, 500);
     }
 
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return jsonResponse({ code: 401, message: "Missing or invalid Authorization" }, 401);
-    }
-    const token = authHeader.replace(/^\s*Bearer\s+/i, "").trim();
-    if (!token) return jsonResponse({ code: 401, message: "Invalid JWT" }, 401);
-
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
-    if (userError || !user) {
-      return jsonResponse({ code: 401, message: "Invalid JWT" }, 401);
+
+    let projectId: string | undefined;
+    try {
+      const body = await req.json();
+      projectId = (body?.project_id ?? body?.projectId) as string | undefined;
+    } catch {
+      console.error("shadow-metrics: failed to parse request body, continuing without projectId filter");
     }
-
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
-
-    const body = await req.json().catch(() => ({}));
-    const projectId = (body.project_id ?? body.projectId) as string | undefined;
 
     let predictionsQuery = supabase
       .from("shadow_predictions")
@@ -52,12 +46,11 @@ serve(async (req) => {
 
     const { data: predictions, error: predErr } = await predictionsQuery;
     if (predErr) {
-      console.error("shadow-metrics: predictions fetch error", predErr);
-      return jsonResponse({ code: 500, message: predErr.message }, 500);
+      console.error("shadow-metrics: predictions fetch error", JSON.stringify(predErr));
+      return jsonResponse({ code: 500, message: `Predictions query failed: ${predErr.message}` }, 500);
     }
 
     const allPredictions = predictions ?? [];
-
     const totalPredictions = allPredictions.length;
     const matchCount = allPredictions.filter((p) => p.match_status === "match").length;
     const partialCount = allPredictions.filter((p) => p.match_status === "partial").length;
@@ -74,10 +67,15 @@ serve(async (req) => {
         ) / 1000
       : 0;
 
-    const agentMap = new Map<string, { predictions: number; matches: number; partials: number; mismatches: number; pending: number; totalConfidence: number }>();
+    const agentMap = new Map<
+      string,
+      { predictions: number; matches: number; partials: number; mismatches: number; pending: number; totalConfidence: number }
+    >();
     for (const p of allPredictions) {
       const name = p.agent_name ?? "Unknown";
-      const entry = agentMap.get(name) ?? { predictions: 0, matches: 0, partials: 0, mismatches: 0, pending: 0, totalConfidence: 0 };
+      const entry = agentMap.get(name) ?? {
+        predictions: 0, matches: 0, partials: 0, mismatches: 0, pending: 0, totalConfidence: 0,
+      };
       entry.predictions++;
       if (p.match_status === "match") entry.matches++;
       else if (p.match_status === "partial") entry.partials++;
@@ -109,7 +107,7 @@ serve(async (req) => {
 
     const { data: baselineRows, error: baseErr } = await baselineQuery;
     if (baseErr) {
-      console.error("shadow-metrics: baseline fetch error", baseErr);
+      console.error("shadow-metrics: baseline fetch error", JSON.stringify(baseErr));
     }
 
     const allBaseline = baselineRows ?? [];
@@ -127,7 +125,10 @@ serve(async (req) => {
       .limit(50);
     if (projectId) auditQuery = auditQuery.eq("project_id", projectId);
 
-    const { data: recentAudit } = await auditQuery;
+    const { data: recentAudit, error: auditErr } = await auditQuery;
+    if (auditErr) {
+      console.error("shadow-metrics: audit trail fetch error", JSON.stringify(auditErr));
+    }
 
     return jsonResponse({
       overall: {
@@ -149,10 +150,10 @@ serve(async (req) => {
       recent_audit: recentAudit ?? [],
     });
   } catch (error) {
-    console.error("shadow-metrics error:", error);
+    console.error("shadow-metrics: unhandled error", error instanceof Error ? error.stack : String(error));
     return jsonResponse(
       { code: 500, message: error instanceof Error ? error.message : "Unknown error" },
-      500
+      500,
     );
   }
 });
