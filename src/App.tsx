@@ -32,6 +32,7 @@ import Analytics from "./pages/Analytics";
 import AdminPanel from "./pages/AdminPanel";
 import JurisdictionAdmin from "./pages/JurisdictionAdmin";
 import FeatureFlagsAdmin from "./pages/FeatureFlagsAdmin";
+import ShadowModeDashboard from "./pages/ShadowModeDashboard";
 import JurisdictionComparison from "./pages/JurisdictionComparison";
 import JurisdictionMapPage from "./pages/JurisdictionMapPage";
 import PermitIntelligence from "./pages/PermitIntelligence";
@@ -228,6 +229,14 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <FeatureFlagsAdmin />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/shadow-mode"
+                  element={
+                    <ProtectedRoute>
+                      <ShadowModeDashboard />
                     </ProtectedRoute>
                   }
                 />

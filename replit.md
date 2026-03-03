@@ -85,6 +85,13 @@ Preferred communication style: Simple, everyday language.
 | `baseline_actions` | Shadow Mode: tracks human expeditor performance for baseline metrics |
 | `audit_trail` | Shadow Mode: immutable ESG-compliant audit logging |
 | `comment_quality_checks` | Guardian QA agent results (scores, flags, suggested improvements) |
+
+### Shadow Mode
+
+- **Dashboard:** `/admin/shadow-mode` — React page at `src/pages/ShadowModeDashboard.tsx` showing accuracy, agent performance, baseline metrics, and audit trail.
+- **Metrics Edge Function:** `supabase/functions/shadow-metrics/index.ts` — aggregates data from `shadow_predictions`, `baseline_actions`, and `audit_trail`.
+- **Flag:** `projects.is_shadow_mode` (boolean) — when true, AI agents log predictions to `shadow_predictions` instead of updating `parsed_comments`.
+- **Supported agents:** `discipline-classifier-agent` (writes confidence scores + shadow predictions when shadow mode is on).
 | `inspections` | Inspection records per project |
 | `project_documents` | Uploaded documents stored in Supabase Storage |
 | `scheduled_reports` | Automated report delivery schedules |

@@ -590,10 +590,16 @@ export default function AdminPanel() {
               <Shield className="h-8 w-8 text-primary" />
               <h1 className="text-3xl font-bold">Admin Panel</h1>
             </div>
-            <Button variant="outline" onClick={() => navigate('/admin/jurisdictions')}>
-              <Building2 className="mr-2 h-4 w-4" />
-              Manage Jurisdictions
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => navigate('/admin/shadow-mode')}>
+                <Shield className="mr-2 h-4 w-4" />
+                Shadow Mode
+              </Button>
+              <Button variant="outline" onClick={() => navigate('/admin/jurisdictions')}>
+                <Building2 className="mr-2 h-4 w-4" />
+                Manage Jurisdictions
+              </Button>
+            </div>
           </div>
 
           <Tabs defaultValue="notifications" className="space-y-6">
