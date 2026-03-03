@@ -8,7 +8,7 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 3000,
+    port: 5000,
     allowedHosts: true, // allow ngrok and other tunnel hosts
   },
   plugins: [
