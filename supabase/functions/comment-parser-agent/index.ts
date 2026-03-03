@@ -398,31 +398,19 @@ serve(async (req) => {
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    const { data: deletedRows, error: deleteError } = await supabase
-      .from("parsed_comments")
-      .delete()
-      .eq("project_id", projectId)
-      .select("id");
-    if (deleteError) {
-      console.error("[comment-parser] Failed to clear existing comments:", deleteError.message);
-    } else {
-      const clearedCount = (deletedRows ?? []).length;
-      console.log(`Cleared ${clearedCount} existing comments before re-parsing`);
-    }
-
     const existingRows = await supabase
       .from("parsed_comments")
-      .select("original_text")
+      .select("id, original_text")
       .eq("project_id", projectId);
 
     const existingData = existingRows.data ?? [];
     const existingCount = existingData.length;
     console.log("[DEBUG] comment-parser: existing rows for project:", existingCount);
 
-    const existingNormalized = new Set<string>();
+    const existingNormalized = new Map<string, string>();
     for (const row of existingData) {
-      const ot = (row as { original_text?: string }).original_text;
-      if (ot) existingNormalized.add(normalizeText(ot));
+      const r = row as { id: string; original_text?: string };
+      if (r.original_text) existingNormalized.set(normalizeText(r.original_text), r.id);
     }
 
     let parsedCount = 0;
@@ -476,14 +464,14 @@ serve(async (req) => {
           continue;
         }
 
-        const { error: insertError } = await supabase.from("parsed_comments").insert({
+        const { data: inserted, error: insertError } = await supabase.from("parsed_comments").insert({
           project_id: projectId,
           original_text: orig,
           discipline: null,
           code_reference: c.code_reference ?? null,
           page_number: pageNumber,
           status: "Pending",
-        });
+        }).select("id").single();
 
         if (insertError) {
           console.error("Insert parsed_comment error:", insertError.message, insertError);
@@ -491,7 +479,7 @@ serve(async (req) => {
           continue;
         }
 
-        existingNormalized.add(key);
+        existingNormalized.set(key, inserted?.id ?? "");
         parsedCount++;
         commentCountThisPdf++;
       }

@@ -158,6 +158,56 @@ export function AgentWorkflowStatus() {
   const [chainPhase, setChainPhase] = useState<ChainPhase>("idle");
   const [chainError, setChainError] = useState<string | null>(null);
   const [isShadowMode, setIsShadowMode] = useState(false);
+  const realtimeTriggeredRef = useRef(false);
+  const chainPipelineRef = useRef<((projectId: string) => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    const projectId = projectBySelectedId?.id ?? latestProjectId;
+    if (!projectId) return;
+
+    realtimeTriggeredRef.current = false;
+
+    const channel = supabase
+      .channel(`project-portal-${projectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "projects",
+          filter: `id=eq.${projectId}`,
+        },
+        (payload) => {
+          const oldHash = (payload.old as Record<string, unknown>)?.portal_data_hash;
+          const newHash = (payload.new as Record<string, unknown>)?.portal_data_hash;
+
+          if (newHash && oldHash !== newHash && !realtimeTriggeredRef.current) {
+            realtimeTriggeredRef.current = true;
+            console.log("[Realtime] portal_data changed, auto-triggering chain for project:", projectId);
+            toast.info("Portal data updated — auto-triggering agent chain...");
+            loadDashboardData()
+              .then(() => {
+                if (chainPipelineRef.current) {
+                  return chainPipelineRef.current(projectId);
+                }
+              })
+              .catch((err) => {
+                console.error("[Realtime] chain trigger failed:", err);
+                toast.error("Auto-triggered chain failed. Try running manually.");
+              })
+              .finally(() => {
+                realtimeTriggeredRef.current = false;
+              });
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      realtimeTriggeredRef.current = false;
+      supabase.removeChannel(channel);
+    };
+  }, [projectBySelectedId?.id, latestProjectId]);
 
   useEffect(() => {
     if (scrapingOverlay?.phase !== "done") return;
@@ -755,6 +805,10 @@ export function AgentWorkflowStatus() {
     },
     [queryClient, navigate],
   );
+
+  useEffect(() => {
+    chainPipelineRef.current = runChainedPipeline;
+  }, [runChainedPipeline]);
 
   const runManualCheck = async () => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;

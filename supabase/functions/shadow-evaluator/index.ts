@@ -51,6 +51,88 @@ Deno.serve(async (req: Request) => {
 
     const action = body.action as string | undefined;
 
+    if (action === "evaluate_new_prediction") {
+      const predictionId = body.prediction_id as string | undefined;
+      const pid = body.project_id as string | undefined;
+      const agentName = body.agent_name as string | undefined;
+
+      if (!predictionId || !pid) {
+        return jsonResponse(
+          { code: 400, message: "evaluate_new_prediction requires prediction_id and project_id" },
+          400,
+        );
+      }
+
+      const { data: prediction, error: predErr } = await supabase
+        .from("shadow_predictions")
+        .select("id, comment_id, prediction_data, match_status")
+        .eq("id", predictionId)
+        .single();
+
+      if (predErr || !prediction) {
+        return jsonResponse({ code: 404, message: "Prediction not found" }, 404);
+      }
+
+      if (prediction.match_status !== "pending") {
+        return jsonResponse({ success: true, skipped: true, reason: "already_evaluated" });
+      }
+
+      const commentId = prediction.comment_id as string | undefined;
+      let autoMatchStatus = "pending";
+
+      if (commentId) {
+        const { data: baseline } = await supabase
+          .from("baseline_actions")
+          .select("action_type")
+          .eq("comment_id", commentId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (baseline) {
+          const normalise = (v: unknown): string => {
+            if (v === null || v === undefined) return "";
+            if (typeof v === "string") return v.trim().toLowerCase();
+            return JSON.stringify(v);
+          };
+
+          autoMatchStatus =
+            normalise(prediction.prediction_data) === normalise(baseline.action_type)
+              ? "match"
+              : "mismatch";
+
+          await supabase
+            .from("shadow_predictions")
+            .update({ match_status: autoMatchStatus })
+            .eq("id", predictionId);
+        }
+      }
+
+      const auditAction = autoMatchStatus === "pending"
+        ? "auto_evaluate_no_baseline"
+        : "auto_evaluate_prediction";
+
+      const { error: auditErr } = await supabase.from("audit_trail").insert({
+        project_id: pid,
+        actor_id: "system",
+        action_type: auditAction,
+        routing_decision: autoMatchStatus,
+        input_hash: predictionId,
+      });
+
+      if (auditErr) {
+        console.error("shadow-evaluator: auto-evaluate audit insert error", JSON.stringify(auditErr));
+      }
+
+      return jsonResponse({
+        success: true,
+        prediction_id: predictionId,
+        auto_match_status: autoMatchStatus,
+        has_baseline: autoMatchStatus !== "pending",
+        audit_logged: !auditErr,
+      });
+    }
+
     if (action === "log_failure") {
       const pid = body.project_id as string | undefined;
       const agentName = body.agent_name as string | undefined;

@@ -98,12 +98,16 @@ Preferred communication style: Simple, everyday language.
 ### Agent Chain Mechanism
 
 - **Location:** `src/components/dashboard/AgentWorkflowStatus.tsx` — `runChainedPipeline()` function.
-- **Trigger:** Clicking "Run Manual Check" starts the full chain automatically.
+- **Trigger:** Two paths: (1) Clicking "Run Manual Check" starts scrape + chain automatically; (2) Supabase Realtime listener on `projects` table detects `portal_data_hash` changes and auto-triggers the chain.
 - **Sequence:** Scrape (Step 1) → Intake Pipeline (Step 2) → Discipline Classifier (Step 3) → Context & Reference Engine (Step 4) → Auto-Router (Step 5).
 - **Shadow Mode Enforcement:** Before the chain starts, `is_shadow_mode` is read from the project row and passed to every agent invocation (both chained and manual).
 - **Error Handling:** If any agent fails, the error is logged to `shadow_predictions` (with `match_status: "fail"`) and `audit_trail` via `shadow-evaluator` Edge Function's `log_failure` action. The chain halts at the failed step (visible in UI for 8 seconds).
 - **UI State:** `chainPhase` state drives step status badges ("Chain Active", "Chain Complete", "Shadow Mode") and disables manual buttons while the chain is running.
 - **Individual agent buttons:** Each agent can still be run manually outside the chain; manual runs also check `is_shadow_mode`.
+- **Data Hashing:** Scraper computes SHA-256 hash of `portal_data` JSON before writing to Supabase. If hash matches existing `portal_data_hash`, only `last_checked_at` is updated (no chain triggered). Column: `projects.portal_data_hash`.
+- **Smart Diff Parsing:** `comment-parser-agent` no longer deletes all existing comments before reparsing. Instead, it compares new blocks against existing `parsed_comments` by normalized text and only inserts genuinely new comments.
+- **Auto Shadow Evaluation:** Database trigger `trg_shadow_prediction_auto_evaluate` fires on INSERT to `shadow_predictions` with `match_status = 'pending'`, calling `shadow-evaluator` Edge Function's `evaluate_new_prediction` action via `pg_net`.
+- **Realtime:** `projects` table has `REPLICA IDENTITY FULL` set to ensure `old` payload includes `portal_data_hash` for diff detection.
 | `inspections` | Inspection records per project |
 | `project_documents` | Uploaded documents stored in Supabase Storage |
 | `scheduled_reports` | Automated report delivery schedules |
