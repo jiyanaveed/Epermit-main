@@ -337,18 +337,19 @@ export default function CommunETLanding() {
           position: "absolute", bottom: 0, left: 0, right: 0,
           borderTop: `1px solid ${COLORS.border}`,
           display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
+          gridTemplateColumns: "repeat(4, 1fr)",
           background: "rgba(9,20,40,0.85)",
           backdropFilter: "blur(20px)",
         }}>
           {[
             { val: 90, suffix: "%", label: "Reduction in Review Time" },
+            { val: 50, suffix: "+", label: "Jurisdictions Covered" },
             { val: 12, suffix: " Modules", label: "Insight™ Platform Roadmap" },
             { val: 8, suffix: " Agents", label: "AI Agents in DesignCheck" },
           ].map((s, i) => (
             <div key={i} style={{
               padding: "28px 24px",
-              borderRight: i < 2 ? `1px solid ${COLORS.border}` : "none",
+              borderRight: i < 3 ? `1px solid ${COLORS.border}` : "none",
               textAlign: "center",
             }}>
               <div className="stat-number" data-testid={`text-stat-${i}`}><AnimCounter target={s.val} suffix={s.suffix} /></div>
