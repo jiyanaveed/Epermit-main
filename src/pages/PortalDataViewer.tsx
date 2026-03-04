@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { supabase } from "@/lib/supabase";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut } from "lucide-react";
 
 interface KeyValue {
   key: string;
@@ -73,8 +73,17 @@ export default function PortalDataViewer() {
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [noPermitConfigured, setNoPermitConfigured] = useState(false);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
-  const [rawTextByReport, setRawTextByReport] = useState<Record<string, boolean>>({});
-  const [showRawText, setShowRawText] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(100);
+
+  useEffect(() => {
+    if (!lightboxImage) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxImage(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [lightboxImage]);
 
   const fetchData = useCallback(async () => {
     if (!user) return;
@@ -1202,18 +1211,6 @@ export default function PortalDataViewer() {
                                                 Open Comment Review
                                               </Button>
                                             )}
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              onClick={() =>
-                                                setRawTextByReport((prev) => ({
-                                                  ...prev,
-                                                  [reportName]: !prev[reportName],
-                                                }))
-                                              }
-                                            >
-                                              {rawTextByReport[reportName] ? "Table view" : "Raw text"}
-                                            </Button>
                                           </div>
                                         </div>
                                       </CardHeader>
@@ -1224,11 +1221,19 @@ export default function PortalDataViewer() {
                                           </p>
                                         ) : pdf?.screenshot ? (
                                           <div>
-                                            <div className="overflow-auto rounded border" style={{ maxHeight: "700px" }}>
+                                            <div
+                                              className="overflow-auto rounded border cursor-pointer transition-all duration-200 hover:border-[#FF6B2B40] hover:shadow-[0_0_8px_#FF6B2B40] hover:brightness-105"
+                                              style={{ maxHeight: "700px" }}
+                                              onClick={() => {
+                                                setLightboxImage({ src: `data:image/png;base64,${pdf.screenshot}`, alt: reportName });
+                                                setLightboxZoom(100);
+                                              }}
+                                              data-testid={`img-report-${reportName}`}
+                                            >
                                               <img
                                                 src={`data:image/png;base64,${pdf.screenshot}`}
                                                 alt={reportName}
-                                                className="w-full"
+                                                className="w-full pointer-events-none"
                                               />
                                             </div>
                                             {pdf.text && (
@@ -1272,6 +1277,58 @@ export default function PortalDataViewer() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center"
+          style={{ backgroundColor: "#050E1FCC", backdropFilter: "blur(8px)" }}
+          onClick={() => setLightboxImage(null)}
+          data-testid="modal-lightbox"
+        >
+          <button
+            className="fixed top-4 right-4 z-[60] p-2 rounded-full bg-black/40 hover:bg-black/60 transition-colors"
+            onClick={(e) => { e.stopPropagation(); setLightboxImage(null); }}
+            data-testid="button-lightbox-close"
+          >
+            <X className="h-6 w-6" style={{ color: "#F0F6FF" }} />
+          </button>
+
+          <div className="fixed bottom-4 right-4 z-[60] flex items-center gap-2">
+            <span className="text-xs font-mono px-2 py-1 rounded bg-black/40" style={{ color: "#F0F6FF" }}>
+              {lightboxZoom}%
+            </span>
+            <button
+              className="p-2 rounded-full bg-black/40 hover:bg-black/60 transition-colors disabled:opacity-40"
+              onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.max(50, z - 25)); }}
+              disabled={lightboxZoom <= 50}
+              data-testid="button-lightbox-zoom-out"
+            >
+              <ZoomOut className="h-5 w-5" style={{ color: "#F0F6FF" }} />
+            </button>
+            <button
+              className="p-2 rounded-full bg-black/40 hover:bg-black/60 transition-colors disabled:opacity-40"
+              onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.min(200, z + 25)); }}
+              disabled={lightboxZoom >= 200}
+              data-testid="button-lightbox-zoom-in"
+            >
+              <ZoomIn className="h-5 w-5" style={{ color: "#F0F6FF" }} />
+            </button>
+          </div>
+
+          <div
+            className="overflow-auto w-full h-full flex justify-center p-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightboxImage.src}
+              alt={lightboxImage.alt}
+              className="h-auto block"
+              style={{ width: `${lightboxZoom}%`, maxWidth: "none" }}
+              data-testid="img-lightbox-full"
+            />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
