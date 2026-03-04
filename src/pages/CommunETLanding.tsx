@@ -297,6 +297,7 @@ export default function CommunETLanding() {
 
           <div style={{
             display: "flex", gap: 16, flexWrap: "wrap",
+            marginBottom: 40,
             opacity: heroVisible ? 1 : 0,
             transform: heroVisible ? "none" : "translateY(20px)",
             transition: "all 1s cubic-bezier(0.16,1,0.3,1) 0.7s",
