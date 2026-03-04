@@ -81,6 +81,7 @@ interface ShadowPrediction {
   id: string;
   comment_id: string;
   agent_name: string;
+  project_id: string;
   prediction_data: {
     ai_discipline?: string;
     portal_discipline?: string;
@@ -93,6 +94,8 @@ interface ShadowPrediction {
     original_text?: string;
   };
 }
+
+type ActiveFilter = "total" | "accuracy" | "confidence" | "mismatches";
 
 interface ShadowMetricsData {
   overall: OverallMetrics;
@@ -107,12 +110,18 @@ function StatCard({
   subtitle,
   icon: Icon,
   variant = "default",
+  active = false,
+  glowColor,
+  onClick,
 }: {
   title: string;
   value: string | number;
   subtitle?: string;
   icon: typeof Activity;
   variant?: "default" | "success" | "warning" | "danger";
+  active?: boolean;
+  glowColor?: string;
+  onClick?: () => void;
 }) {
   const variantStyles = {
     default: "border-border",
@@ -128,7 +137,11 @@ function StatCard({
   };
 
   return (
-    <Card className={variantStyles[variant]} data-testid={`stat-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
+    <Card
+      className={`${variantStyles[variant]} cursor-pointer transition-transform duration-150 hover:scale-[1.03] ${active && glowColor ? `ring-2 ${glowColor} shadow-lg` : ""}`}
+      data-testid={`stat-card-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      onClick={onClick}
+    >
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {title}
@@ -179,6 +192,7 @@ export default function ShadowModeDashboard() {
   const navigate = useNavigate();
   const { projects } = useProjects();
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("total");
   const [data, setData] = useState<ShadowMetricsData | null>(null);
   const [predictions, setPredictions] = useState<ShadowPrediction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,7 +203,7 @@ export default function ShadowModeDashboard() {
     try {
       let query = supabase
         .from("shadow_predictions")
-        .select("id, comment_id, agent_name, prediction_data, match_status, confidence_score, created_at, parsed_comments(original_text)")
+        .select("id, comment_id, agent_name, project_id, prediction_data, match_status, confidence_score, created_at, parsed_comments(original_text)")
         .order("created_at", { ascending: false })
         .limit(100);
       if (projectId) query = query.eq("project_id", projectId);
@@ -316,6 +330,24 @@ export default function ShadowModeDashboard() {
   };
   const recentAudit = data?.recent_audit ?? [];
 
+  const toggleFilter = (filter: ActiveFilter) => {
+    setActiveFilter((prev) => (prev === filter ? "total" : filter));
+  };
+
+  const displayedPredictions = (() => {
+    let result = [...predictions];
+    if (activeFilter === "mismatches") {
+      result = result.filter((p) => p.match_status === "mismatch");
+    } else if (activeFilter === "accuracy") {
+      result = result.filter((p) => p.match_status === "match");
+    } else if (activeFilter === "confidence") {
+      result.sort((a, b) => (a.confidence_score ?? 0) - (b.confidence_score ?? 0));
+    }
+    return result;
+  })();
+
+  const projectNameMap = new Map((projects ?? []).map((p) => [p.id, p.name]));
+
   return (
     <div className="container mx-auto p-6 max-w-7xl space-y-6" data-testid="shadow-mode-dashboard">
       <div className="flex items-center justify-between">
@@ -410,6 +442,9 @@ export default function ShadowModeDashboard() {
           value={overall.total_predictions}
           subtitle={`Processed ${overall.total_predictions} comments, with ${overall.pending} currently awaiting a human baseline.`}
           icon={Activity}
+          active={activeFilter === "total"}
+          glowColor="ring-blue-500/60"
+          onClick={() => toggleFilter("total")}
         />
         <StatCard
           title="Overall Accuracy"
@@ -423,6 +458,9 @@ export default function ShadowModeDashboard() {
                 ? "warning"
                 : "danger"
           }
+          active={activeFilter === "accuracy"}
+          glowColor="ring-[#FF6B2B]/60"
+          onClick={() => toggleFilter("accuracy")}
         />
         <StatCard
           title="Avg Confidence"
@@ -436,6 +474,9 @@ export default function ShadowModeDashboard() {
                 ? "warning"
                 : "danger"
           }
+          active={activeFilter === "confidence"}
+          glowColor="ring-green-500/60"
+          onClick={() => toggleFilter("confidence")}
         />
         <StatCard
           title="Mismatches"
@@ -443,6 +484,9 @@ export default function ShadowModeDashboard() {
           subtitle={`The AI had ${overall.mismatches} direct disagreement${overall.mismatches !== 1 ? "s" : ""} with the human expeditor.`}
           icon={AlertTriangle}
           variant={overall.mismatches > 0 ? "danger" : "success"}
+          active={activeFilter === "mismatches"}
+          glowColor="ring-red-500/60"
+          onClick={() => toggleFilter("mismatches")}
         />
       </div>
 
@@ -575,25 +619,39 @@ export default function ShadowModeDashboard() {
 
       <Card data-testid="card-prediction-comparison">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Target className="h-5 w-5" />
-            Prediction Comparison
-          </CardTitle>
-          <CardDescription>
-            Side-by-side view of AI predictions vs. human expeditor decisions
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="h-5 w-5" />
+                Prediction Comparison
+              </CardTitle>
+              <CardDescription>
+                Side-by-side view of AI predictions vs. human expeditor decisions
+              </CardDescription>
+            </div>
+            {activeFilter !== "total" && (
+              <Badge variant="outline" className="text-xs" data-testid="badge-active-filter">
+                {activeFilter === "mismatches" && "Showing Mismatches Only"}
+                {activeFilter === "accuracy" && "Showing Matches Only"}
+                {activeFilter === "confidence" && "Sorted by Confidence ↑"}
+              </Badge>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          {predictions.length === 0 ? (
+          {displayedPredictions.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
-              No predictions recorded yet. Enable Shadow Mode on a project and run the pipeline to see results.
+              {predictions.length === 0
+                ? "No predictions recorded yet. Enable Shadow Mode on a project and run the pipeline to see results."
+                : "No rows match the active filter."}
             </p>
           ) : (
             <div className="rounded-md border overflow-auto max-h-[500px]">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[240px]">Comment Snippet</TableHead>
+                    <TableHead className="min-w-[200px]">Comment Snippet</TableHead>
+                    <TableHead>Project</TableHead>
                     <TableHead>AI Prediction</TableHead>
                     <TableHead>Human Baseline</TableHead>
                     <TableHead>Confidence</TableHead>
@@ -601,12 +659,15 @@ export default function ShadowModeDashboard() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {predictions.map((pred) => (
+                  {displayedPredictions.map((pred) => (
                     <TableRow key={pred.id} data-testid={`prediction-row-${pred.id}`}>
-                      <TableCell className="text-sm max-w-[300px]">
+                      <TableCell className="text-sm max-w-[280px]">
                         <span className="line-clamp-2" data-testid={`text-comment-snippet-${pred.id}`}>
                           {pred.parsed_comments?.original_text || "—"}
                         </span>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap" data-testid={`text-project-${pred.id}`}>
+                        {projectNameMap.get(pred.project_id) || pred.project_id?.slice(0, 8) || "—"}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="font-mono text-xs" data-testid={`text-ai-prediction-${pred.id}`}>
@@ -622,8 +683,8 @@ export default function ShadowModeDashboard() {
                           <span className="text-xs text-muted-foreground" data-testid={`text-human-baseline-${pred.id}`}>No baseline</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm" data-testid={`text-confidence-${pred.id}`}>
-                        {(pred.confidence_score * 100).toFixed(0)}%
+                      <TableCell className="text-sm font-mono" data-testid={`text-confidence-${pred.id}`}>
+                        {(pred.confidence_score * 100).toFixed(1)}%
                       </TableCell>
                       <TableCell data-testid={`badge-status-${pred.id}`}>
                         <MatchStatusBadge status={pred.match_status} />
