@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useProjects } from "@/hooks/useProjects";
 import { supabase } from "@/lib/supabase";
 import {
   Card,
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -37,6 +39,7 @@ import {
   TrendingUp,
   FileDown,
   Info,
+  FolderKanban,
 } from "lucide-react";
 
 interface OverallMetrics {
@@ -174,19 +177,23 @@ function MatchStatusBadge({ status }: { status: string }) {
 export default function ShadowModeDashboard() {
   useAuth();
   const navigate = useNavigate();
+  const { projects } = useProjects();
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [data, setData] = useState<ShadowMetricsData | null>(null);
   const [predictions, setPredictions] = useState<ShadowPrediction[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchPredictions = useCallback(async () => {
+  const fetchPredictions = useCallback(async (projectId: string | null) => {
     try {
-      const { data: rows, error: fetchErr } = await supabase
+      let query = supabase
         .from("shadow_predictions")
         .select("id, comment_id, agent_name, prediction_data, match_status, confidence_score, created_at, parsed_comments(original_text)")
         .order("created_at", { ascending: false })
         .limit(100);
+      if (projectId) query = query.eq("project_id", projectId);
+      const { data: rows, error: fetchErr } = await query;
       if (fetchErr) throw fetchErr;
       setPredictions((rows as unknown as ShadowPrediction[]) ?? []);
     } catch (err) {
@@ -194,15 +201,17 @@ export default function ShadowModeDashboard() {
     }
   }, []);
 
-  const fetchMetrics = useCallback(async (isRefresh = false) => {
+  const fetchMetrics = useCallback(async (projectId: string | null, isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
 
     try {
+      const body: Record<string, string> = {};
+      if (projectId) body.project_id = projectId;
       const { data: result, error: fnError } = await supabase.functions.invoke(
         "shadow-metrics",
-        { body: {} }
+        { body }
       );
       if (fnError) throw fnError;
       setData(result as ShadowMetricsData);
@@ -218,9 +227,9 @@ export default function ShadowModeDashboard() {
   }, []);
 
   useEffect(() => {
-    fetchMetrics();
-    fetchPredictions();
-  }, [fetchMetrics, fetchPredictions]);
+    fetchMetrics(selectedProjectId);
+    fetchPredictions(selectedProjectId);
+  }, [fetchMetrics, fetchPredictions, selectedProjectId]);
 
   const exportPredictionsCSV = useCallback(() => {
     if (predictions.length === 0) return;
@@ -343,7 +352,7 @@ export default function ShadowModeDashboard() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { fetchMetrics(true); fetchPredictions(); }}
+            onClick={() => { fetchMetrics(selectedProjectId, true); fetchPredictions(selectedProjectId); }}
             disabled={refreshing}
             data-testid="button-refresh-metrics"
           >
@@ -362,6 +371,29 @@ export default function ShadowModeDashboard() {
         <p className="text-sm text-muted-foreground leading-relaxed">
           Shadow Mode safely runs the AI pipeline in parallel with historical human data. It compares the AI's autonomous classifications against actual expeditor decisions to mathematically prove system accuracy before live deployment.
         </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <FolderKanban className="h-4 w-4 text-muted-foreground" />
+        <Select
+          value={selectedProjectId ?? "__all__"}
+          onValueChange={(v) => setSelectedProjectId(v === "__all__" ? null : v)}
+        >
+          <SelectTrigger className="w-[320px]" data-testid="select-shadow-project">
+            <SelectValue placeholder="Filter by project..." />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Projects</SelectItem>
+            {(projects ?? []).map((p) => (
+              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {selectedProjectId && (
+          <Badge variant="secondary" className="text-xs">
+            Filtered
+          </Badge>
+        )}
       </div>
 
       {error && (
