@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
@@ -233,7 +233,64 @@ function MatchStatusBadge({ status }: { status: string }) {
   }
 }
 
-export default function ShadowModeDashboard() {
+class ShadowDashboardErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("ShadowModeDashboard crashed:", error, info.componentStack);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="container mx-auto p-6 max-w-7xl" data-testid="shadow-dashboard-error">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-red-400">
+                <AlertTriangle className="h-5 w-5" />
+                Dashboard Error
+              </CardTitle>
+              <CardDescription>
+                The Shadow Mode Dashboard encountered an error. Check the browser console for details.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <pre className="text-xs text-red-400 bg-red-500/5 rounded p-3 overflow-auto max-h-40">
+                {this.state.error?.message}
+              </pre>
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => this.setState({ hasError: false, error: null })}
+                data-testid="button-retry-dashboard"
+              >
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function ShadowModeDashboardWrapper() {
+  return (
+    <ShadowDashboardErrorBoundary>
+      <ShadowModeDashboardInner />
+    </ShadowDashboardErrorBoundary>
+  );
+}
+
+function ShadowModeDashboardInner() {
   useAuth();
   const navigate = useNavigate();
   const { projects } = useProjects();
@@ -289,12 +346,6 @@ export default function ShadowModeDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchMetrics(selectedProjectId);
-    fetchPredictions(selectedProjectId);
-    fetchCircuitBreaker(selectedProjectId);
-  }, [fetchMetrics, fetchPredictions, fetchCircuitBreaker, selectedProjectId]);
-
   const fetchCircuitBreaker = useCallback(async (projectId: string | null) => {
     try {
       const body: Record<string, string> = {};
@@ -304,11 +355,22 @@ export default function ShadowModeDashboard() {
         { body }
       );
       if (fnError) throw fnError;
-      setCircuitBreaker(result as CircuitBreakerData);
+      if (result && typeof result === "object" && Array.isArray((result as CircuitBreakerData).agents)) {
+        setCircuitBreaker(result as CircuitBreakerData);
+      } else {
+        setCircuitBreaker({ checked_at: new Date().toISOString(), agents: [] });
+      }
     } catch (err) {
       console.error("Failed to fetch circuit breaker status:", err);
+      setCircuitBreaker({ checked_at: new Date().toISOString(), agents: [] });
     }
   }, []);
+
+  useEffect(() => {
+    fetchMetrics(selectedProjectId);
+    fetchPredictions(selectedProjectId);
+    fetchCircuitBreaker(selectedProjectId);
+  }, [fetchMetrics, fetchPredictions, fetchCircuitBreaker, selectedProjectId]);
 
   const exportWeeklyReport = useCallback(async () => {
     setExporting(true);
