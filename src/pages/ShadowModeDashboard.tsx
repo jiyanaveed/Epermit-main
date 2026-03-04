@@ -35,6 +35,8 @@ import {
   Loader2,
   Users,
   TrendingUp,
+  FileDown,
+  Info,
 } from "lucide-react";
 
 interface OverallMetrics {
@@ -70,6 +72,23 @@ interface AuditEntry {
   action_type: string;
   routing_decision: string;
   created_at: string;
+}
+
+interface ShadowPrediction {
+  id: string;
+  comment_id: string;
+  agent_name: string;
+  prediction_data: {
+    ai_discipline?: string;
+    portal_discipline?: string;
+    [key: string]: unknown;
+  };
+  match_status: string;
+  confidence_score: number;
+  created_at: string;
+  parsed_comments?: {
+    original_text?: string;
+  };
 }
 
 interface ShadowMetricsData {
@@ -156,9 +175,24 @@ export default function ShadowModeDashboard() {
   useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState<ShadowMetricsData | null>(null);
+  const [predictions, setPredictions] = useState<ShadowPrediction[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchPredictions = useCallback(async () => {
+    try {
+      const { data: rows, error: fetchErr } = await supabase
+        .from("shadow_predictions")
+        .select("id, comment_id, agent_name, prediction_data, match_status, confidence_score, created_at, parsed_comments(original_text)")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (fetchErr) throw fetchErr;
+      setPredictions((rows as unknown as ShadowPrediction[]) ?? []);
+    } catch (err) {
+      console.error("Failed to fetch shadow predictions:", err);
+    }
+  }, []);
 
   const fetchMetrics = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -185,7 +219,29 @@ export default function ShadowModeDashboard() {
 
   useEffect(() => {
     fetchMetrics();
-  }, [fetchMetrics]);
+    fetchPredictions();
+  }, [fetchMetrics, fetchPredictions]);
+
+  const exportPredictionsCSV = useCallback(() => {
+    if (predictions.length === 0) return;
+    const headers = ["Comment Snippet", "AI Prediction", "Human Baseline", "Status", "Confidence", "Date"];
+    const rows = predictions.map((p) => [
+      (p.parsed_comments?.original_text || "—").slice(0, 120).replace(/"/g, '""'),
+      p.prediction_data?.ai_discipline || "—",
+      p.prediction_data?.portal_discipline || "—",
+      p.match_status,
+      (p.confidence_score * 100).toFixed(1) + "%",
+      new Date(p.created_at).toLocaleDateString(),
+    ]);
+    const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `shadow-mode-report-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [predictions]);
 
   if (loading) {
     return (
@@ -273,20 +329,39 @@ export default function ShadowModeDashboard() {
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => fetchMetrics(true)}
-          disabled={refreshing}
-          data-testid="button-refresh-metrics"
-        >
-          {refreshing ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportPredictionsCSV}
+            disabled={predictions.length === 0}
+            data-testid="button-export-report"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Export Weekly Report
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { fetchMetrics(true); fetchPredictions(); }}
+            disabled={refreshing}
+            data-testid="button-refresh-metrics"
+          >
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4" data-testid="text-explainer">
+        <Info className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Shadow Mode safely runs the AI pipeline in parallel with historical human data. It compares the AI's autonomous classifications against actual expeditor decisions to mathematically prove system accuracy before live deployment.
+        </p>
       </div>
 
       {error && (
@@ -301,13 +376,13 @@ export default function ShadowModeDashboard() {
         <StatCard
           title="Total Predictions"
           value={overall.total_predictions}
-          subtitle={`${overall.pending} still pending`}
+          subtitle={`Processed ${overall.total_predictions} comments, with ${overall.pending} currently awaiting a human baseline.`}
           icon={Activity}
         />
         <StatCard
           title="Overall Accuracy"
           value={`${overall.accuracy_percent}%`}
-          subtitle={`${overall.matches} matches, ${overall.partials} partials`}
+          subtitle={`The AI matched the human expeditor on ${overall.matches} out of ${overall.total_predictions - overall.pending} actionable comments.`}
           icon={Target}
           variant={
             overall.accuracy_percent >= 80
@@ -319,8 +394,8 @@ export default function ShadowModeDashboard() {
         />
         <StatCard
           title="Avg Confidence"
-          value={overall.avg_confidence.toFixed(2)}
-          subtitle="LLM self-reported score"
+          value={`${(overall.avg_confidence * 100).toFixed(0)}%`}
+          subtitle={`The LLM is operating with ${(overall.avg_confidence * 100).toFixed(0)}% self-reported certainty.`}
           icon={TrendingUp}
           variant={
             overall.avg_confidence >= 0.8
@@ -333,11 +408,7 @@ export default function ShadowModeDashboard() {
         <StatCard
           title="Mismatches"
           value={overall.mismatches}
-          subtitle={
-            overall.total_predictions > 0
-              ? `${Math.round((overall.mismatches / overall.total_predictions) * 100)}% of total`
-              : "No data yet"
-          }
+          subtitle={`The AI had ${overall.mismatches} direct disagreement${overall.mismatches !== 1 ? "s" : ""} with the human expeditor.`}
           icon={AlertTriangle}
           variant={overall.mismatches > 0 ? "danger" : "success"}
         />
@@ -469,6 +540,70 @@ export default function ShadowModeDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <Card data-testid="card-prediction-comparison">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Target className="h-5 w-5" />
+            Prediction Comparison
+          </CardTitle>
+          <CardDescription>
+            Side-by-side view of AI predictions vs. human expeditor decisions
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {predictions.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No predictions recorded yet. Enable Shadow Mode on a project and run the pipeline to see results.
+            </p>
+          ) : (
+            <div className="rounded-md border overflow-auto max-h-[500px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[240px]">Comment Snippet</TableHead>
+                    <TableHead>AI Prediction</TableHead>
+                    <TableHead>Human Baseline</TableHead>
+                    <TableHead>Confidence</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {predictions.map((pred) => (
+                    <TableRow key={pred.id} data-testid={`prediction-row-${pred.id}`}>
+                      <TableCell className="text-sm max-w-[300px]">
+                        <span className="line-clamp-2" data-testid={`text-comment-snippet-${pred.id}`}>
+                          {pred.parsed_comments?.original_text || "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono text-xs" data-testid={`text-ai-prediction-${pred.id}`}>
+                          {pred.prediction_data?.ai_discipline || "—"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {pred.prediction_data?.portal_discipline ? (
+                          <Badge variant="secondary" className="font-mono text-xs" data-testid={`text-human-baseline-${pred.id}`}>
+                            {pred.prediction_data.portal_discipline}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground" data-testid={`text-human-baseline-${pred.id}`}>No baseline</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm" data-testid={`text-confidence-${pred.id}`}>
+                        {(pred.confidence_score * 100).toFixed(0)}%
+                      </TableCell>
+                      <TableCell data-testid={`badge-status-${pred.id}`}>
+                        <MatchStatusBadge status={pred.match_status} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card data-testid="card-audit-trail">
         <CardHeader>
