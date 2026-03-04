@@ -206,7 +206,10 @@ app.post("/api/login", async (req, res) => {
   try {
     console.log("🔐 Launching browser...");
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 2,
+    });
     const page = await context.newPage();
     await performLogin(page, username, password);
     console.log("✅ Login successful!");

@@ -1280,7 +1280,7 @@ export default function PortalDataViewer() {
 
       {lightboxImage && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center"
+          className="fixed inset-0 z-50"
           style={{ backgroundColor: "#050E1FCC", backdropFilter: "blur(8px)" }}
           onClick={() => setLightboxImage(null)}
           data-testid="modal-lightbox"
@@ -1316,16 +1316,22 @@ export default function PortalDataViewer() {
           </div>
 
           <div
-            className="overflow-auto w-full h-full flex justify-center p-8"
+            className="absolute inset-0 overflow-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <img
-              src={lightboxImage.src}
-              alt={lightboxImage.alt}
-              className="h-auto block"
-              style={{ width: `${lightboxZoom}%`, maxWidth: "none" }}
-              data-testid="img-lightbox-full"
-            />
+            <div className="flex justify-center min-h-full px-4 py-8">
+              <img
+                src={lightboxImage.src}
+                alt={lightboxImage.alt}
+                className="block h-auto"
+                style={{
+                  width: `${lightboxZoom}%`,
+                  maxWidth: "none",
+                  imageRendering: "auto",
+                }}
+                data-testid="img-lightbox-full"
+              />
+            </div>
           </div>
         </div>
       )}
