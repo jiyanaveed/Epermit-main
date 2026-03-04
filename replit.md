@@ -34,6 +34,8 @@ Preferred communication style: Simple, everyday language.
 - **Mechanism:** When active, AI agents log predictions to `shadow_predictions` instead of updating `parsed_comments`. It includes a dashboard for performance monitoring, baseline comparisons, and audit trails.
 - **Agent Chain Mechanism:** A sequential pipeline of agents (Scrape, Intake, Discipline Classifier, Context Engine, Auto-Router) can be triggered manually or automatically. Shadow Mode policies are applied consistently across all agent invocations.
 - **Smart Diff Parsing:** The `comment-parser-agent` intelligently identifies and inserts only genuinely new comments, avoiding full re-parsing.
+- **Weekly Report Export:** Edge function `export-weekly-report` aggregates last 7 days of predictions into a structured CSV (Executive Summary, Agent Performance, Baseline Metrics, Confidence Calibration with high-risk errors, raw predictions). Triggered from dashboard "Export Weekly Report" button.
+- **Circuit Breaker:** Edge function `circuit-breaker-check` enforces ESG safety rule: agent auto-disabled if >10% fail rate in 24h (minimum 10 predictions for statistical significance). Warning at 3 consecutive mismatches. Status badges (ACTIVE/WARNING/DISABLED) shown per-agent in dashboard.
 
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).

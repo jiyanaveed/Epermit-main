@@ -42,6 +42,9 @@ import {
   ShieldAlert,
   Trophy,
   Timer,
+  Zap,
+  Bell,
+  CircleDot,
 } from "lucide-react";
 
 interface OverallMetrics {
@@ -103,6 +106,21 @@ interface ShadowPrediction {
   parsed_comments?: {
     original_text?: string;
   };
+}
+
+interface CircuitBreakerAgent {
+  agent_name: string;
+  status: "active" | "warning" | "disabled";
+  predictions_24h: number;
+  mismatches_24h: number;
+  fail_rate_24h: number;
+  consecutive_fails: number;
+  reason: string | null;
+}
+
+interface CircuitBreakerData {
+  checked_at: string;
+  agents: CircuitBreakerAgent[];
 }
 
 type ActiveFilter = "total" | "accuracy" | "confidence" | "mismatches" | "high-risk";
@@ -227,6 +245,8 @@ export default function ShadowModeDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [circuitBreaker, setCircuitBreaker] = useState<CircuitBreakerData | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const fetchPredictions = useCallback(async (projectId: string | null) => {
     try {
@@ -272,28 +292,108 @@ export default function ShadowModeDashboard() {
   useEffect(() => {
     fetchMetrics(selectedProjectId);
     fetchPredictions(selectedProjectId);
-  }, [fetchMetrics, fetchPredictions, selectedProjectId]);
+    fetchCircuitBreaker(selectedProjectId);
+  }, [fetchMetrics, fetchPredictions, fetchCircuitBreaker, selectedProjectId]);
 
-  const exportPredictionsCSV = useCallback(() => {
-    if (predictions.length === 0) return;
-    const headers = ["Comment Snippet", "AI Prediction", "Human Baseline", "Status", "Confidence", "Date"];
-    const rows = predictions.map((p) => [
-      (p.parsed_comments?.original_text || "—").slice(0, 120).replace(/"/g, '""'),
-      p.prediction_data?.ai_discipline || "—",
-      p.prediction_data?.portal_discipline || "—",
-      p.match_status,
-      (p.confidence_score * 100).toFixed(1) + "%",
-      new Date(p.created_at).toLocaleDateString(),
-    ]);
-    const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `shadow-mode-report-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [predictions]);
+  const fetchCircuitBreaker = useCallback(async (projectId: string | null) => {
+    try {
+      const body: Record<string, string> = {};
+      if (projectId) body.project_id = projectId;
+      const { data: result, error: fnError } = await supabase.functions.invoke(
+        "circuit-breaker-check",
+        { body }
+      );
+      if (fnError) throw fnError;
+      setCircuitBreaker(result as CircuitBreakerData);
+    } catch (err) {
+      console.error("Failed to fetch circuit breaker status:", err);
+    }
+  }, []);
+
+  const exportWeeklyReport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const body: Record<string, string> = {};
+      if (selectedProjectId) body.project_id = selectedProjectId;
+      const { data: report, error: fnError } = await supabase.functions.invoke(
+        "export-weekly-report",
+        { body }
+      );
+      if (fnError) throw fnError;
+
+      const reportData = report as Record<string, unknown>;
+      const exec = reportData.executive_summary as Record<string, unknown>;
+      const agents = (reportData.agent_performance ?? []) as Record<string, unknown>[];
+      const baseline = reportData.baseline_metrics as Record<string, unknown>;
+      const calibration = reportData.confidence_calibration as Record<string, unknown>;
+      const rawPreds = (reportData.raw_predictions ?? []) as Record<string, unknown>[];
+      const meta = reportData.report_metadata as Record<string, unknown>;
+
+      const lines: string[] = [];
+      const addRow = (...cells: (string | number)[]) => lines.push(cells.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","));
+
+      addRow("SHADOW MODE WEEKLY REPORT");
+      addRow("Period", `${meta.period_start} to ${meta.period_end}`);
+      addRow("Generated", String(meta.generated_at));
+      addRow("Project Filter", String(meta.project_filter));
+      addRow("");
+
+      addRow("EXECUTIVE SUMMARY");
+      addRow("Total Predictions", Number(exec.total_predictions));
+      addRow("Actionable Comments", Number(exec.actionable_comments));
+      addRow("Pending Review", Number(exec.pending_review));
+      addRow("Overall Accuracy %", Number(exec.overall_accuracy_percent));
+      addRow("Avg Confidence %", Number(exec.avg_confidence_percent));
+      addRow("Matches", Number(exec.matches));
+      addRow("Partials", Number(exec.partials));
+      addRow("Mismatches", Number(exec.mismatches));
+      addRow("");
+
+      addRow("AGENT PERFORMANCE");
+      addRow("Agent", "Predictions", "Matches", "Partials", "Mismatches", "Pending", "Accuracy %", "Avg Confidence %");
+      for (const a of agents) {
+        addRow(String(a.agent_name), Number(a.predictions), Number(a.matches), Number(a.partials), Number(a.mismatches), Number(a.pending), Number(a.accuracy), Number(a.avg_confidence));
+      }
+      addRow("");
+
+      addRow("BASELINE METRICS");
+      addRow("Total Baselines", Number(baseline.total_baselines));
+      addRow("Unique Disciplines", Number(baseline.unique_disciplines));
+      addRow("Baseline Coverage %", Number(baseline.baseline_coverage_percent));
+      addRow("Timed Reviews", Number(baseline.timed_reviews));
+      addRow("Avg Time per Comment (min)", Number(baseline.avg_time_per_comment_minutes));
+      addRow("");
+
+      addRow("CONFIDENCE CALIBRATION - HIGH RISK ERRORS");
+      addRow("High Risk Count", Number(calibration.high_risk_count));
+      if (Array.isArray(calibration.high_risk_predictions) && calibration.high_risk_predictions.length > 0) {
+        addRow("Agent", "Confidence %", "AI Prediction", "Human Baseline", "Comment Snippet", "Date");
+        for (const hr of calibration.high_risk_predictions as Record<string, unknown>[]) {
+          addRow(String(hr.agent_name), Number(hr.confidence), String(hr.ai_prediction), String(hr.human_baseline), String(hr.comment_snippet), String(hr.created_at));
+        }
+      }
+      addRow("");
+
+      addRow("RAW PREDICTIONS (last 7 days)");
+      addRow("Agent", "Status", "Confidence %", "AI Prediction", "Human Baseline", "Comment Snippet", "Project ID", "Date");
+      for (const p of rawPreds) {
+        addRow(String(p.agent_name), String(p.match_status), Number(p.confidence), String(p.ai_prediction), String(p.human_baseline), String(p.comment_snippet), String(p.project_id), String(p.created_at));
+      }
+
+      const csv = lines.join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `shadow-mode-weekly-report-${(meta.period_end as string) ?? new Date().toISOString().split("T")[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export weekly report:", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [selectedProjectId]);
 
   if (loading) {
     return (
@@ -425,17 +525,21 @@ export default function ShadowModeDashboard() {
           <Button
             variant="outline"
             size="sm"
-            onClick={exportPredictionsCSV}
-            disabled={predictions.length === 0}
+            onClick={exportWeeklyReport}
+            disabled={exporting}
             data-testid="button-export-report"
           >
-            <FileDown className="h-4 w-4 mr-2" />
-            Export Weekly Report
+            {exporting ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <FileDown className="h-4 w-4 mr-2" />
+            )}
+            {exporting ? "Generating..." : "Export Weekly Report"}
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { fetchMetrics(selectedProjectId, true); fetchPredictions(selectedProjectId); }}
+            onClick={() => { fetchMetrics(selectedProjectId, true); fetchPredictions(selectedProjectId); fetchCircuitBreaker(selectedProjectId); }}
             disabled={refreshing}
             data-testid="button-refresh-metrics"
           >
@@ -583,6 +687,10 @@ export default function ShadowModeDashboard() {
               {agents.map((agent) => {
                 const threshold = getAgentThreshold(agent.agent_name);
                 const passing = agent.accuracy >= threshold;
+                const cbAgent = circuitBreaker?.agents?.find(
+                  (cb) => cb.agent_name.toLowerCase() === agent.agent_name.toLowerCase()
+                );
+                const cbStatus = cbAgent?.status ?? "active";
                 return (
                   <div key={agent.agent_name} className="flex items-center gap-2 shrink-0" data-testid={`agent-row-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}>
                     <span className="text-xs text-muted-foreground truncate max-w-[140px]">{agent.agent_name}</span>
@@ -594,6 +702,36 @@ export default function ShadowModeDashboard() {
                       <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
                     ) : (
                       <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                    )}
+                    {cbStatus === "disabled" ? (
+                      <Badge
+                        variant="destructive"
+                        className="text-[10px] px-1.5 py-0 shrink-0 gap-1"
+                        title={cbAgent?.reason ?? ""}
+                        data-testid={`badge-cb-disabled-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}
+                      >
+                        <Zap className="h-2.5 w-2.5" />
+                        DISABLED
+                      </Badge>
+                    ) : cbStatus === "warning" ? (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] px-1.5 py-0 border-orange-500 text-orange-500 bg-orange-500/10 shrink-0 gap-1"
+                        title={cbAgent?.reason ?? ""}
+                        data-testid={`badge-cb-warning-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}
+                      >
+                        <Bell className="h-2.5 w-2.5" />
+                        {cbAgent?.consecutive_fails} FAILS
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] px-1.5 py-0 border-green-500 text-green-500 bg-green-500/10 shrink-0 gap-1"
+                        data-testid={`badge-cb-active-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}
+                      >
+                        <CircleDot className="h-2.5 w-2.5" />
+                        ACTIVE
+                      </Badge>
                     )}
                     <span className="text-[10px] text-muted-foreground">≥{threshold}% · {agent.predictions}p</span>
                   </div>
