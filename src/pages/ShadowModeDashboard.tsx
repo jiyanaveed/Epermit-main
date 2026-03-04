@@ -39,6 +39,9 @@ import {
   FileDown,
   Info,
   FolderKanban,
+  ShieldAlert,
+  Trophy,
+  Timer,
 } from "lucide-react";
 
 interface OverallMetrics {
@@ -66,6 +69,15 @@ interface BaselineMetrics {
   total_baselines: number;
   unique_disciplines: number;
   baseline_coverage_percent: number;
+  total_timed_reviews: number;
+  avg_time_per_comment: number;
+}
+
+interface ValidationGate {
+  total_comments: number;
+  total_projects: number;
+  comments_goal: number;
+  projects_goal: number;
 }
 
 interface AuditEntry {
@@ -93,13 +105,31 @@ interface ShadowPrediction {
   };
 }
 
-type ActiveFilter = "total" | "accuracy" | "confidence" | "mismatches";
+type ActiveFilter = "total" | "accuracy" | "confidence" | "mismatches" | "high-risk";
 
 interface ShadowMetricsData {
   overall: OverallMetrics;
   agent_performance: AgentPerformance[];
   baseline: BaselineMetrics;
+  validation_gate: ValidationGate;
   recent_audit: AuditEntry[];
+}
+
+const AGENT_THRESHOLDS: Record<string, number> = {
+  "Comment Parser": 90,
+  "Guardian Agent": 90,
+  "Discipline Classifier": 85,
+  "Code Reference": 80,
+  "Similar Matcher": 75,
+  "Response Matrix Gen": 70,
+};
+const DEFAULT_THRESHOLD = 80;
+
+function getAgentThreshold(agentName: string): number {
+  for (const [key, value] of Object.entries(AGENT_THRESHOLDS)) {
+    if (agentName.toLowerCase().includes(key.toLowerCase())) return value;
+  }
+  return DEFAULT_THRESHOLD;
 }
 
 function StatCard({
@@ -325,12 +355,24 @@ export default function ShadowModeDashboard() {
     total_baselines: 0,
     unique_disciplines: 0,
     baseline_coverage_percent: 0,
+    total_timed_reviews: 0,
+    avg_time_per_comment: 0,
+  };
+  const validationGate = data?.validation_gate ?? {
+    total_comments: 0,
+    total_projects: 0,
+    comments_goal: 300,
+    projects_goal: 30,
   };
   const recentAudit = data?.recent_audit ?? [];
 
   const toggleFilter = (filter: ActiveFilter) => {
     setActiveFilter((prev) => (prev === filter ? "total" : filter));
   };
+
+  const confidentButWrongCount = predictions.filter(
+    (p) => p.match_status === "mismatch" && p.confidence_score >= 0.8
+  ).length;
 
   const displayedPredictions = (() => {
     let result = [...predictions];
@@ -340,6 +382,8 @@ export default function ShadowModeDashboard() {
       result = result.filter((p) => p.match_status === "match");
     } else if (activeFilter === "confidence") {
       result.sort((a, b) => (a.confidence_score ?? 0) - (b.confidence_score ?? 0));
+    } else if (activeFilter === "high-risk") {
+      result = result.filter((p) => p.match_status === "mismatch" && p.confidence_score >= 0.8);
     }
     return result;
   })();
@@ -497,6 +541,29 @@ export default function ShadowModeDashboard() {
         />
       </div>
 
+      {confidentButWrongCount > 0 && (
+        <Card
+          data-testid="card-high-risk-errors"
+          className={`border-red-500/30 bg-red-500/5 cursor-pointer transition-transform duration-150 hover:scale-[1.01] ${activeFilter === "high-risk" ? "ring-2 ring-red-500/60 shadow-lg" : ""}`}
+          onClick={() => toggleFilter("high-risk")}
+        >
+          <div className="flex items-center gap-3 px-4 py-3">
+            <ShieldAlert className="h-5 w-5 text-red-500 shrink-0" />
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold">{confidentButWrongCount} High-Risk Error{confidentButWrongCount !== 1 ? "s" : ""}</span>
+                <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+                  Calibration Risk
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Predictions where the AI was ≥80% confident but gave the wrong answer. Click to filter the table below.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card data-testid="card-agent-performance" className="py-0">
         <div className="flex items-center gap-3 px-4 py-2 border-b">
           <BarChart3 className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -505,16 +572,25 @@ export default function ShadowModeDashboard() {
             <span className="text-xs text-muted-foreground">No predictions yet</span>
           ) : (
             <div className="flex items-center gap-4 overflow-x-auto flex-1">
-              {agents.map((agent) => (
-                <div key={agent.agent_name} className="flex items-center gap-2 shrink-0" data-testid={`agent-row-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}>
-                  <span className="text-xs text-muted-foreground truncate max-w-[140px]">{agent.agent_name}</span>
-                  <Progress value={agent.accuracy} className="h-1.5 w-20" />
-                  <Badge variant={agent.accuracy >= 80 ? "default" : agent.accuracy >= 50 ? "secondary" : "destructive"} className="text-[10px] px-1.5 py-0">
-                    {agent.accuracy}%
-                  </Badge>
-                  <span className="text-[10px] text-muted-foreground">{agent.predictions}p</span>
-                </div>
-              ))}
+              {agents.map((agent) => {
+                const threshold = getAgentThreshold(agent.agent_name);
+                const passing = agent.accuracy >= threshold;
+                return (
+                  <div key={agent.agent_name} className="flex items-center gap-2 shrink-0" data-testid={`agent-row-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}>
+                    <span className="text-xs text-muted-foreground truncate max-w-[140px]">{agent.agent_name}</span>
+                    <Progress value={agent.accuracy} className="h-1.5 w-20" />
+                    <Badge variant={passing ? "default" : "destructive"} className="text-[10px] px-1.5 py-0">
+                      {agent.accuracy}%
+                    </Badge>
+                    {passing ? (
+                      <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+                    ) : (
+                      <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                    )}
+                    <span className="text-[10px] text-muted-foreground">≥{threshold}% · {agent.predictions}p</span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -527,21 +603,78 @@ export default function ShadowModeDashboard() {
           {baseline.total_baselines === 0 && baseline.unique_disciplines === 0 ? (
             <span className="text-xs text-muted-foreground">No human baseline data recorded</span>
           ) : (
-            <div className="flex items-center gap-6 flex-1">
-              <div className="flex flex-col" data-testid="text-total-baselines">
+            <div className="flex items-center gap-6 flex-1 overflow-x-auto">
+              <div className="flex flex-col shrink-0" data-testid="text-total-baselines">
                 <span className="text-xs"><span className="font-semibold">{baseline.total_baselines}</span> <span className="text-muted-foreground">total baselines</span></span>
                 <span className="text-[10px] text-muted-foreground leading-tight">Comments explicitly categorized by the human expeditor in the portal.</span>
               </div>
-              <div className="flex flex-col" data-testid="text-unique-disciplines">
+              <div className="flex flex-col shrink-0" data-testid="text-unique-disciplines">
                 <span className="text-xs"><span className="font-semibold">{baseline.unique_disciplines}</span> <span className="text-muted-foreground">unique disciplines</span></span>
                 <span className="text-[10px] text-muted-foreground leading-tight">Distinct routing departments utilized by the human.</span>
               </div>
-              <div className="flex flex-col" data-testid="text-baseline-coverage">
+              <div className="flex flex-col shrink-0" data-testid="text-baseline-coverage">
                 <span className="text-xs"><span className="font-semibold">{baseline.baseline_coverage_percent}%</span> <span className="text-muted-foreground">baseline coverage</span></span>
                 <span className="text-[10px] text-muted-foreground leading-tight">Percentage of the total comments the human actually addressed.</span>
               </div>
+              <div className="flex flex-col shrink-0" data-testid="text-avg-time">
+                <span className="text-xs flex items-center gap-1">
+                  <Timer className="h-3 w-3" />
+                  <span className="font-semibold">{baseline.avg_time_per_comment > 0 ? `${baseline.avg_time_per_comment} min` : "—"}</span>
+                  <span className="text-muted-foreground">avg per comment</span>
+                </span>
+                <span className="text-[10px] text-muted-foreground leading-tight">Average time the human spent reviewing each comment ({baseline.total_timed_reviews} timed).</span>
+              </div>
             </div>
           )}
+        </div>
+      </Card>
+
+      <Card data-testid="card-validation-gate" className="py-0">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <Trophy className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-sm font-medium whitespace-nowrap">Validation Gate Progress</span>
+          <div className="flex items-center gap-6 flex-1">
+            <div className="flex flex-col gap-1 min-w-[180px]" data-testid="gate-comments">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Total Shadow Comments</span>
+                <span className="font-semibold">
+                  {validationGate.total_comments} / {validationGate.comments_goal}
+                  {validationGate.total_comments >= validationGate.comments_goal && (
+                    <CheckCircle className="inline h-3 w-3 ml-1 text-green-500" />
+                  )}
+                </span>
+              </div>
+              <Progress
+                value={Math.min((validationGate.total_comments / validationGate.comments_goal) * 100, 100)}
+                className="h-2"
+              />
+            </div>
+            <div className="flex flex-col gap-1 min-w-[180px]" data-testid="gate-projects">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Total Shadow Projects</span>
+                <span className="font-semibold">
+                  {validationGate.total_projects} / {validationGate.projects_goal}
+                  {validationGate.total_projects >= validationGate.projects_goal && (
+                    <CheckCircle className="inline h-3 w-3 ml-1 text-green-500" />
+                  )}
+                </span>
+              </div>
+              <Progress
+                value={Math.min((validationGate.total_projects / validationGate.projects_goal) * 100, 100)}
+                className="h-2"
+              />
+            </div>
+            {validationGate.total_comments >= validationGate.comments_goal &&
+              validationGate.total_projects >= validationGate.projects_goal ? (
+              <Badge variant="default" className="bg-green-600 text-white text-[10px] shrink-0">
+                <CheckCircle className="h-3 w-3 mr-1" /> Gate Passed
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-[10px] shrink-0">
+                In Progress
+              </Badge>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -562,6 +695,7 @@ export default function ShadowModeDashboard() {
                 {activeFilter === "mismatches" && "Showing Mismatches Only"}
                 {activeFilter === "accuracy" && "Showing Matches Only"}
                 {activeFilter === "confidence" && "Sorted by Confidence ↑"}
+                {activeFilter === "high-risk" && "Showing High-Risk Errors Only"}
               </Badge>
             )}
           </div>
@@ -591,10 +725,21 @@ export default function ShadowModeDashboard() {
                     const fullText = pred.parsed_comments?.original_text || "—";
                     const isLong = fullText.length > 120;
                     const isExpanded = expandedRows.has(pred.id);
+                    const isConfidentButWrong = pred.match_status === "mismatch" && pred.confidence_score >= 0.8;
                     return (
-                      <TableRow key={pred.id} data-testid={`prediction-row-${pred.id}`}>
+                      <TableRow
+                        key={pred.id}
+                        data-testid={`prediction-row-${pred.id}`}
+                        className={isConfidentButWrong ? "bg-red-500/8 border-l-2 border-l-red-500" : ""}
+                      >
                         <TableCell className="text-sm max-w-[280px] align-top">
                           <div data-testid={`text-comment-snippet-${pred.id}`}>
+                            {isConfidentButWrong && (
+                              <div className="flex items-center gap-1 mb-1" data-testid={`alert-confident-wrong-${pred.id}`}>
+                                <ShieldAlert className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                                <span className="text-[10px] font-semibold text-red-500">Confident But Wrong</span>
+                              </div>
+                            )}
                             <span className={isExpanded ? "" : "line-clamp-2"}>{fullText}</span>
                             {isLong && (
                               <button
@@ -624,7 +769,7 @@ export default function ShadowModeDashboard() {
                             <span className="text-xs text-muted-foreground" data-testid={`text-human-baseline-${pred.id}`}>No baseline</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm font-mono align-top" data-testid={`text-confidence-${pred.id}`}>
+                        <TableCell className={`text-sm font-mono align-top ${isConfidentButWrong ? "text-red-500 font-bold" : ""}`} data-testid={`text-confidence-${pred.id}`}>
                           {(pred.confidence_score * 100).toFixed(1)}%
                         </TableCell>
                         <TableCell className="align-top" data-testid={`badge-status-${pred.id}`}>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
+import { ReviewTimer, type ReviewTimerHandle } from "@/components/shadow/ReviewTimer";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import {
@@ -80,7 +81,7 @@ function statusBorderClass(status: string | null): string {
   if (s === "approved") return "border-l-emerald-500";
   if (s === "rejected") return "border-l-red-500";
   if (s.includes("ready")) return "border-l-blue-500";
-  return "border-l-[#E2E8F0] dark:border-l-[#1A3055]";
+  return "border-l-[#1A3055]";
 }
 
 function statusBadgeClass(status: string): string {
@@ -89,7 +90,7 @@ function statusBadgeClass(status: string): string {
   if (s === "approved") return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
   if (s === "rejected") return "bg-red-500/10 text-red-700 border-red-500/30";
   if (s.includes("ready")) return "bg-blue-500/10 text-blue-700 border-blue-500/30";
-  return "bg-[#64748B]/10 dark:bg-[#6B9AC4]/10 text-[#64748B] dark:text-[#6B9AC4] border-[#64748B]/30 dark:border-[#6B9AC4]/30";
+  return "bg-[#6B9AC4]/10 text-[#6B9AC4] border-[#6B9AC4]/30";
 }
 
 const DISCIPLINE_COLORS: Record<string, string> = {
@@ -100,7 +101,7 @@ const DISCIPLINE_COLORS: Record<string, string> = {
   mep: "bg-orange-500/15 text-orange-700 border-orange-500/30",
   electrical: "bg-yellow-500/15 text-yellow-700 border-yellow-500/30",
   fire: "bg-red-500/15 text-red-700 border-red-500/30",
-  general: "bg-[#64748B]/15 dark:bg-[#6B9AC4]/15 text-[#64748B] dark:text-[#6B9AC4] border-[#64748B]/30 dark:border-[#6B9AC4]/30",
+  general: "bg-[#6B9AC4]/15 text-[#6B9AC4] border-[#6B9AC4]/30",
 };
 
 function disciplineBadgeClass(discipline: string | null): string {
@@ -196,6 +197,7 @@ export default function ResponseMatrix() {
 
   const [projectId, setProjectId] = useState<string | null>(projectIdParam);
   const [saving, setSaving] = useState(false);
+  const timerRef = useRef<ReviewTimerHandle>(null);
   const [draftingId, setDraftingId] = useState<string | null>(null);
   const [validateOpen, setValidateOpen] = useState(false);
   const [validateResult, setValidateResult] = useState<{
@@ -453,6 +455,9 @@ export default function ResponseMatrix() {
   const saveChanges = useCallback(async () => {
     if (!user || rows.length === 0) return;
     setSaving(true);
+    if (timerRef.current?.isRunning()) {
+      await timerRef.current.stopAndSave();
+    }
     try {
       for (const row of rows) {
         const { error } = await supabase
@@ -568,6 +573,7 @@ export default function ResponseMatrix() {
                   Route Comments
                 </Button>
               </div>
+              <ReviewTimer ref={timerRef} projectId={projectId} commentCount={rows.length} />
               <Button
                 onClick={saveChanges}
                 disabled={saving || rows.length === 0}

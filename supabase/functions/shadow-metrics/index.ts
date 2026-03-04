@@ -127,6 +127,37 @@ Deno.serve(async (req: Request) => {
       console.error("shadow-metrics: audit trail fetch error", JSON.stringify(auditErr));
     }
 
+    let globalTotalComments = totalPredictions;
+    let globalTotalProjects = new Set(allPredictions.map((p) => p.project_id)).size;
+
+    if (projectId) {
+      const { count: globalCount, error: gcErr } = await supabase
+        .from("shadow_predictions")
+        .select("id", { count: "exact", head: true });
+      if (!gcErr && globalCount !== null) globalTotalComments = globalCount;
+
+      const { data: globalProjectRows, error: gpErr } = await supabase
+        .from("shadow_predictions")
+        .select("project_id");
+      if (!gpErr && globalProjectRows) {
+        globalTotalProjects = new Set(globalProjectRows.map((r) => r.project_id)).size;
+      }
+    }
+
+    const { data: baselineTimingRows, error: btErr } = await supabase
+      .from("baseline_actions")
+      .select("duration_minutes")
+      .gt("duration_minutes", 0);
+    if (btErr) {
+      console.error("shadow-metrics: baseline timing fetch error", JSON.stringify(btErr));
+    }
+    const timingRows = baselineTimingRows ?? [];
+    const totalTimedReviews = timingRows.length;
+    const totalDurationMinutes = timingRows.reduce((sum, r) => sum + (Number(r.duration_minutes) || 0), 0);
+    const avgTimePerComment = totalTimedReviews > 0
+      ? Math.round((totalDurationMinutes / totalTimedReviews) * 100) / 100
+      : 0;
+
     return jsonResponse({
       overall: {
         total_predictions: totalPredictions,
@@ -142,6 +173,14 @@ Deno.serve(async (req: Request) => {
         total_baselines: totalBaselines,
         unique_disciplines: uniqueDisciplines,
         baseline_coverage_percent: baselineCoverage,
+        total_timed_reviews: totalTimedReviews,
+        avg_time_per_comment: avgTimePerComment,
+      },
+      validation_gate: {
+        total_comments: globalTotalComments,
+        total_projects: globalTotalProjects,
+        comments_goal: 300,
+        projects_goal: 30,
       },
       recent_audit: recentAudit ?? [],
     });

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
+import { ReviewTimer, type ReviewTimerHandle } from "@/components/shadow/ReviewTimer";
 import { supabase } from "@/lib/supabase";
 import { pdfFirstPageToImageFile } from "@/utils/pdfToImage";
 import { toast } from "sonner";
@@ -69,6 +70,7 @@ export default function CommentReview() {
   const [pageNumber, setPageNumber] = useState<number>(1);
   const [parsing, setParsing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const timerRef = useRef<ReviewTimerHandle>(null);
 
   const fetchComments = useCallback(async (): Promise<ParsedCommentRow[]> => {
     if (!projectId) return [];
@@ -236,6 +238,9 @@ export default function CommentReview() {
       return;
     }
     setSaving(true);
+    if (timerRef.current?.isRunning()) {
+      await timerRef.current.stopAndSave();
+    }
     try {
       const toInsert = uploadRows.map((r) => ({
         project_id: projectId,
@@ -405,15 +410,18 @@ export default function CommentReview() {
                           <CardTitle className="text-base">Extracted comments</CardTitle>
                           <CardDescription>Edit then Approve All to save to the project.</CardDescription>
                         </div>
-                        <Button
-                          size="sm"
-                          onClick={approveAll}
-                          disabled={saving || uploadRows.length === 0}
-                          className="bg-accent hover:bg-accent/90"
-                        >
-                          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                          Approve All
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <ReviewTimer ref={timerRef} projectId={projectId} commentCount={uploadRows.length} />
+                          <Button
+                            size="sm"
+                            onClick={approveAll}
+                            disabled={saving || uploadRows.length === 0}
+                            className="bg-accent hover:bg-accent/90"
+                          >
+                            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                            Approve All
+                          </Button>
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
