@@ -56,8 +56,9 @@ Deno.serve(async (req: Request) => {
     const mismatchCount = allPredictions.filter((p) => p.match_status === "mismatch").length;
     const pendingCount = allPredictions.filter((p) => p.match_status === "pending").length;
 
-    const overallAccuracy = totalPredictions > 0
-      ? Math.round(((matchCount + partialCount * 0.5) / totalPredictions) * 1000) / 10
+    const actionableCount = matchCount + partialCount + mismatchCount;
+    const overallAccuracy = actionableCount > 0
+      ? Math.round(((matchCount + partialCount * 0.5) / actionableCount) * 1000) / 10
       : 0;
 
     const avgConfidence = totalPredictions > 0
@@ -91,8 +92,8 @@ Deno.serve(async (req: Request) => {
       partials: stats.partials,
       mismatches: stats.mismatches,
       pending: stats.pending,
-      accuracy: stats.predictions > 0
-        ? Math.round(((stats.matches + stats.partials * 0.5) / stats.predictions) * 1000) / 10
+      accuracy: (stats.matches + stats.partials + stats.mismatches) > 0
+        ? Math.round(((stats.matches + stats.partials * 0.5) / (stats.matches + stats.partials + stats.mismatches)) * 1000) / 10
         : 0,
       avg_confidence: stats.predictions > 0
         ? Math.round((stats.totalConfidence / stats.predictions) * 1000) / 1000

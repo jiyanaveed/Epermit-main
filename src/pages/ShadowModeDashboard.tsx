@@ -500,7 +500,7 @@ export default function ShadowModeDashboard() {
         <StatCard
           title="Overall Accuracy"
           value={`${overall.accuracy_percent}%`}
-          subtitle={`The AI matched the human expeditor on ${overall.matches} out of ${overall.total_predictions - overall.pending} actionable comments.`}
+          subtitle={`The AI matched the human expeditor on ${overall.matches} out of ${overall.matches + overall.mismatches + overall.partials} actionable comments (excludes ${overall.pending} pending).`}
           icon={Target}
           variant={
             overall.accuracy_percent >= 80
@@ -541,28 +541,36 @@ export default function ShadowModeDashboard() {
         />
       </div>
 
-      {confidentButWrongCount > 0 && (
-        <Card
-          data-testid="card-high-risk-errors"
-          className={`border-red-500/30 bg-red-500/5 cursor-pointer transition-transform duration-150 hover:scale-[1.01] ${activeFilter === "high-risk" ? "ring-2 ring-red-500/60 shadow-lg" : ""}`}
-          onClick={() => toggleFilter("high-risk")}
-        >
-          <div className="flex items-center gap-3 px-4 py-3">
-            <ShieldAlert className="h-5 w-5 text-red-500 shrink-0" />
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold">{confidentButWrongCount} High-Risk Error{confidentButWrongCount !== 1 ? "s" : ""}</span>
+      <Card
+        data-testid="card-high-risk-errors"
+        className={`${confidentButWrongCount > 0 ? "border-red-500/30 bg-red-500/5" : "border-green-500/30 bg-green-500/5"} cursor-pointer transition-transform duration-150 hover:scale-[1.01] ${activeFilter === "high-risk" ? "ring-2 ring-red-500/60 shadow-lg" : ""}`}
+        onClick={() => toggleFilter("high-risk")}
+      >
+        <div className="flex items-center gap-3 px-4 py-3">
+          <ShieldAlert className={`h-5 w-5 ${confidentButWrongCount > 0 ? "text-red-500" : "text-green-500"} shrink-0`} />
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">
+                {confidentButWrongCount} High-Risk Error{confidentButWrongCount !== 1 ? "s" : ""}
+              </span>
+              {confidentButWrongCount > 0 ? (
                 <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
                   Calibration Risk
                 </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Predictions where the AI was ≥80% confident but gave the wrong answer. Click to filter the table below.
-              </p>
+              ) : (
+                <Badge variant="default" className="bg-green-600 text-white text-[10px] px-1.5 py-0">
+                  Clean
+                </Badge>
+              )}
             </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {confidentButWrongCount > 0
+                ? "Predictions where the AI was ≥80% confident but gave the wrong answer. Click to filter the table below."
+                : "No predictions with ≥80% confidence scored as mismatches. Click to verify."}
+            </p>
           </div>
-        </Card>
-      )}
+        </div>
+      </Card>
 
       <Card data-testid="card-agent-performance" className="py-0">
         <div className="flex items-center gap-3 px-4 py-2 border-b">
