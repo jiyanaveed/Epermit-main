@@ -80,7 +80,7 @@ function statusBorderClass(status: string | null): string {
   if (s === "approved") return "border-l-emerald-500";
   if (s === "rejected") return "border-l-red-500";
   if (s.includes("ready")) return "border-l-blue-500";
-  return "border-l-gray-300";
+  return "border-l-[#1A3055]";
 }
 
 function statusBadgeClass(status: string): string {
