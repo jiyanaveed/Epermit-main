@@ -198,6 +198,7 @@ export default function ShadowModeDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const fetchPredictions = useCallback(async (projectId: string | null) => {
     try {
@@ -346,7 +347,16 @@ export default function ShadowModeDashboard() {
     return result;
   })();
 
-  const projectNameMap = new Map((projects ?? []).map((p) => [p.id, p.name]));
+  const projectPermitMap = new Map((projects ?? []).map((p) => [p.id, p.permit_number || p.name]));
+
+  const toggleRowExpand = (id: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <div className="container mx-auto p-6 max-w-7xl space-y-6" data-testid="shadow-mode-dashboard">
@@ -490,132 +500,45 @@ export default function ShadowModeDashboard() {
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card data-testid="card-agent-performance">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              Agent Performance
-            </CardTitle>
-            <CardDescription>
-              Breakdown by AI agent across all shadow predictions
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {agents.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No shadow predictions recorded yet. Enable Shadow Mode on a
-                project and run the pipeline.
-              </p>
-            ) : (
-              <div className="space-y-6">
-                {agents.map((agent) => (
-                  <div key={agent.agent_name} className="space-y-2" data-testid={`agent-row-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">
-                        {agent.agent_name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">
-                          {agent.predictions} predictions
-                        </span>
-                        <Badge
-                          variant={
-                            agent.accuracy >= 80
-                              ? "default"
-                              : agent.accuracy >= 50
-                                ? "secondary"
-                                : "destructive"
-                          }
-                        >
-                          {agent.accuracy}%
-                        </Badge>
-                      </div>
-                    </div>
-                    <Progress
-                      value={agent.accuracy}
-                      className="h-2"
-                    />
-                    <div className="flex gap-3 text-xs text-muted-foreground">
-                      <span className="text-green-600">
-                        {agent.matches} match
-                      </span>
-                      <span className="text-yellow-600">
-                        {agent.partials} partial
-                      </span>
-                      <span className="text-red-600">
-                        {agent.mismatches} mismatch
-                      </span>
-                      <span>{agent.pending} pending</span>
-                      <span className="ml-auto">
-                        Conf: {agent.avg_confidence.toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="card-baseline-metrics">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Baseline Metrics
-            </CardTitle>
-            <CardDescription>
-              Human expeditor performance for comparison
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {baseline.total_actions === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No baseline actions recorded yet. Expeditor activity will appear
-                here once tracked.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="rounded-lg border p-4 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-avg-time">
-                      {baseline.avg_time_per_comment_minutes}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Avg min per comment
-                    </p>
-                  </div>
-                  <div className="rounded-lg border p-4 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-total-actions">
-                      {baseline.total_actions}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Total actions
-                    </p>
-                  </div>
-                  <div className="rounded-lg border p-4 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-total-duration">
-                      {baseline.total_duration_minutes}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Total minutes
-                    </p>
-                  </div>
-                  <div className="rounded-lg border p-4 text-center">
-                    <p className="text-2xl font-bold flex items-center justify-center gap-1" data-testid="text-unique-expeditors">
-                      <Users className="h-4 w-4" />
-                      {baseline.unique_expeditors}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Expeditors
-                    </p>
-                  </div>
+      <Card data-testid="card-agent-performance" className="py-0">
+        <div className="flex items-center gap-3 px-4 py-2 border-b">
+          <BarChart3 className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-sm font-medium whitespace-nowrap">Agent Performance</span>
+          {agents.length === 0 ? (
+            <span className="text-xs text-muted-foreground">No predictions yet</span>
+          ) : (
+            <div className="flex items-center gap-4 overflow-x-auto flex-1">
+              {agents.map((agent) => (
+                <div key={agent.agent_name} className="flex items-center gap-2 shrink-0" data-testid={`agent-row-${agent.agent_name.toLowerCase().replace(/\s+/g, "-")}`}>
+                  <span className="text-xs text-muted-foreground truncate max-w-[140px]">{agent.agent_name}</span>
+                  <Progress value={agent.accuracy} className="h-1.5 w-20" />
+                  <Badge variant={agent.accuracy >= 80 ? "default" : agent.accuracy >= 50 ? "secondary" : "destructive"} className="text-[10px] px-1.5 py-0">
+                    {agent.accuracy}%
+                  </Badge>
+                  <span className="text-[10px] text-muted-foreground">{agent.predictions}p</span>
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card data-testid="card-baseline-metrics" className="py-0">
+        <div className="flex items-center gap-3 px-4 py-2">
+          <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-sm font-medium whitespace-nowrap">Baseline</span>
+          {baseline.total_actions === 0 ? (
+            <span className="text-xs text-muted-foreground">No human baseline data recorded</span>
+          ) : (
+            <div className="flex items-center gap-4 flex-1">
+              <span className="text-xs" data-testid="text-total-actions"><span className="font-semibold">{baseline.total_actions}</span> <span className="text-muted-foreground">actions</span></span>
+              <span className="text-xs" data-testid="text-avg-time"><span className="font-semibold">{baseline.avg_time_per_comment_minutes}</span> <span className="text-muted-foreground">avg min/comment</span></span>
+              <span className="text-xs" data-testid="text-total-duration"><span className="font-semibold">{baseline.total_duration_minutes}</span> <span className="text-muted-foreground">total min</span></span>
+              <span className="text-xs flex items-center gap-1" data-testid="text-unique-expeditors"><Users className="h-3 w-3" /> <span className="font-semibold">{baseline.unique_expeditors}</span> <span className="text-muted-foreground">expeditors</span></span>
+            </div>
+          )}
+        </div>
+      </Card>
 
       <Card data-testid="card-prediction-comparison">
         <CardHeader>
@@ -659,38 +582,52 @@ export default function ShadowModeDashboard() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {displayedPredictions.map((pred) => (
-                    <TableRow key={pred.id} data-testid={`prediction-row-${pred.id}`}>
-                      <TableCell className="text-sm max-w-[280px]">
-                        <span className="line-clamp-2" data-testid={`text-comment-snippet-${pred.id}`}>
-                          {pred.parsed_comments?.original_text || "—"}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap" data-testid={`text-project-${pred.id}`}>
-                        {projectNameMap.get(pred.project_id) || pred.project_id?.slice(0, 8) || "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="font-mono text-xs" data-testid={`text-ai-prediction-${pred.id}`}>
-                          {pred.prediction_data?.ai_discipline || "—"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {pred.prediction_data?.portal_discipline ? (
-                          <Badge variant="secondary" className="font-mono text-xs" data-testid={`text-human-baseline-${pred.id}`}>
-                            {pred.prediction_data.portal_discipline}
+                  {displayedPredictions.map((pred) => {
+                    const fullText = pred.parsed_comments?.original_text || "—";
+                    const isLong = fullText.length > 120;
+                    const isExpanded = expandedRows.has(pred.id);
+                    return (
+                      <TableRow key={pred.id} data-testid={`prediction-row-${pred.id}`}>
+                        <TableCell className="text-sm max-w-[280px] align-top">
+                          <div data-testid={`text-comment-snippet-${pred.id}`}>
+                            <span className={isExpanded ? "" : "line-clamp-2"}>{fullText}</span>
+                            {isLong && (
+                              <button
+                                className="text-xs text-primary hover:underline mt-0.5 block"
+                                onClick={() => toggleRowExpand(pred.id)}
+                                data-testid={`button-expand-${pred.id}`}
+                              >
+                                {isExpanded ? "Show less" : "Read more"}
+                              </button>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs font-mono text-muted-foreground whitespace-nowrap align-top" data-testid={`text-project-${pred.id}`}>
+                          {projectPermitMap.get(pred.project_id) || pred.project_id?.slice(0, 8) || "—"}
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <Badge variant="outline" className="font-mono text-xs" data-testid={`text-ai-prediction-${pred.id}`}>
+                            {pred.prediction_data?.ai_discipline || "—"}
                           </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground" data-testid={`text-human-baseline-${pred.id}`}>No baseline</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm font-mono" data-testid={`text-confidence-${pred.id}`}>
-                        {(pred.confidence_score * 100).toFixed(1)}%
-                      </TableCell>
-                      <TableCell data-testid={`badge-status-${pred.id}`}>
-                        <MatchStatusBadge status={pred.match_status} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell className="align-top">
+                          {pred.prediction_data?.portal_discipline ? (
+                            <Badge variant="secondary" className="font-mono text-xs" data-testid={`text-human-baseline-${pred.id}`}>
+                              {pred.prediction_data.portal_discipline}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground" data-testid={`text-human-baseline-${pred.id}`}>No baseline</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm font-mono align-top" data-testid={`text-confidence-${pred.id}`}>
+                          {(pred.confidence_score * 100).toFixed(1)}%
+                        </TableCell>
+                        <TableCell className="align-top" data-testid={`badge-status-${pred.id}`}>
+                          <MatchStatusBadge status={pred.match_status} />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
