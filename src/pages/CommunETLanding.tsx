@@ -201,10 +201,9 @@ export default function CommunETLanding() {
         minHeight: "100vh",
         display: "flex",
         flexDirection: "column",
-        justifyContent: "center",
         position: "relative",
         overflow: "hidden",
-        padding: "0 clamp(24px, 5vw, 80px)",
+        padding: "0 clamp(24px, 5vw, 80px) 0",
       }} className="grid-bg">
         <div className="scan-line" />
 
@@ -332,9 +331,11 @@ export default function CommunETLanding() {
           </div>
         </div>
 
+        <div style={{ flex: 1 }} />
         {/* Stats strip */}
         <div style={{
-          position: "absolute", bottom: 0, left: 0, right: 0,
+          marginLeft: `calc(-1 * clamp(24px, 5vw, 80px))`,
+          marginRight: `calc(-1 * clamp(24px, 5vw, 80px))`,
           borderTop: `1px solid ${COLORS.border}`,
           display: "grid",
           gridTemplateColumns: "repeat(4, 1fr)",
