@@ -995,7 +995,7 @@ export default function AdminPanel() {
                               <h3 className="text-white font-bold text-sm">{editedBranding.header_text}</h3>
                             </div>
                             <div className="p-4 space-y-2">
-                              <p className="text-xs text-[#6B9AC4]">Jurisdiction Code Update</p>
+                              <p className="text-xs text-gray-500">Jurisdiction Code Update</p>
                               <p className="font-bold text-[#F0F6FF]">Sample Notification Title</p>
                               <span 
                                 className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
@@ -1009,7 +1009,7 @@ export default function AdminPanel() {
                               <div 
                                 className="p-2 text-xs"
                                 style={{ 
-                                  backgroundColor: '#091428',
+                                  backgroundColor: '#f7fafc',
                                   borderLeft: `3px solid ${editedBranding.primary_color}` 
                                 }}
                               >
@@ -1017,7 +1017,7 @@ export default function AdminPanel() {
                               </div>
                             </div>
                             <div className="bg-[#091428] px-4 py-2 text-center">
-                              <p className="text-xs text-[#6B9AC4]">{editedBranding.footer_text}</p>
+                              <p className="text-xs text-gray-500">{editedBranding.footer_text}</p>
                               <p className="mt-1">
                                 <span 
                                   className="text-xs cursor-pointer"
@@ -1194,7 +1194,7 @@ export default function AdminPanel() {
               <div 
                 className="p-4"
                 style={{ 
-                  backgroundColor: '#091428',
+                  backgroundColor: '#f7fafc',
                   borderLeft: `4px solid ${currentBranding.primary_color}` 
                 }}
               >
