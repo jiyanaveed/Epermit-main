@@ -40,7 +40,7 @@ Deno.serve(async (req: Request) => {
 
     let predictionsQuery = supabase
       .from("shadow_predictions")
-      .select("id, agent_name, match_status, confidence_score, project_id, created_at");
+      .select("id, agent_name, match_status, confidence_score, project_id, created_at, prediction_data");
     if (projectId) predictionsQuery = predictionsQuery.eq("project_id", projectId);
 
     const { data: predictions, error: predErr } = await predictionsQuery;
@@ -99,23 +99,21 @@ Deno.serve(async (req: Request) => {
         : 0,
     }));
 
-    let baselineQuery = supabase
-      .from("baseline_actions")
-      .select("id, duration_minutes, action_type, expeditor_id");
-    if (projectId) baselineQuery = baselineQuery.eq("project_id", projectId);
+    const totalBaselines = allPredictions.filter((p) => {
+      const pd = (p.prediction_data as Record<string, unknown>)?.portal_discipline;
+      return typeof pd === "string" && pd.trim() !== "";
+    }).length;
 
-    const { data: baselineRows, error: baseErr } = await baselineQuery;
-    if (baseErr) {
-      console.error("shadow-metrics: baseline fetch error", JSON.stringify(baseErr));
-    }
+    const uniqueDisciplines = new Set(
+      allPredictions
+        .map((p) => (p.prediction_data as Record<string, unknown>)?.portal_discipline)
+        .filter((d): d is string => typeof d === "string" && d.trim() !== "")
+        .map((d) => d.trim())
+    ).size;
 
-    const allBaseline = baselineRows ?? [];
-    const totalBaselineActions = allBaseline.length;
-    const totalDuration = allBaseline.reduce((sum, b) => sum + (Number(b.duration_minutes) || 0), 0);
-    const avgTimePerComment = totalBaselineActions > 0
-      ? Math.round((totalDuration / totalBaselineActions) * 100) / 100
+    const baselineCoverage = totalPredictions > 0
+      ? Math.round((totalBaselines / totalPredictions) * 1000) / 10
       : 0;
-    const uniqueExpeditors = new Set(allBaseline.map((b) => b.expeditor_id)).size;
 
     let auditQuery = supabase
       .from("audit_trail")
@@ -141,10 +139,9 @@ Deno.serve(async (req: Request) => {
       },
       agent_performance: agentPerformance,
       baseline: {
-        total_actions: totalBaselineActions,
-        avg_time_per_comment_minutes: avgTimePerComment,
-        total_duration_minutes: Math.round(totalDuration * 100) / 100,
-        unique_expeditors: uniqueExpeditors,
+        total_baselines: totalBaselines,
+        unique_disciplines: uniqueDisciplines,
+        baseline_coverage_percent: baselineCoverage,
       },
       recent_audit: recentAudit ?? [],
     });

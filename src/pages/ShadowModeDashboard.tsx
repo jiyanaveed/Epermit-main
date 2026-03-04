@@ -35,7 +35,6 @@ import {
   AlertTriangle,
   XCircle,
   Loader2,
-  Users,
   TrendingUp,
   FileDown,
   Info,
@@ -64,10 +63,9 @@ interface AgentPerformance {
 }
 
 interface BaselineMetrics {
-  total_actions: number;
-  avg_time_per_comment_minutes: number;
-  total_duration_minutes: number;
-  unique_expeditors: number;
+  total_baselines: number;
+  unique_disciplines: number;
+  baseline_coverage_percent: number;
 }
 
 interface AuditEntry {
@@ -324,10 +322,9 @@ export default function ShadowModeDashboard() {
   };
   const agents = data?.agent_performance ?? [];
   const baseline = data?.baseline ?? {
-    total_actions: 0,
-    avg_time_per_comment_minutes: 0,
-    total_duration_minutes: 0,
-    unique_expeditors: 0,
+    total_baselines: 0,
+    unique_disciplines: 0,
+    baseline_coverage_percent: 0,
   };
   const recentAudit = data?.recent_audit ?? [];
 
@@ -524,17 +521,25 @@ export default function ShadowModeDashboard() {
       </Card>
 
       <Card data-testid="card-baseline-metrics" className="py-0">
-        <div className="flex items-center gap-3 px-4 py-2">
+        <div className="flex items-center gap-3 px-4 py-3">
           <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="text-sm font-medium whitespace-nowrap">Baseline</span>
-          {baseline.total_actions === 0 ? (
+          <span className="text-sm font-medium whitespace-nowrap">Baseline Metrics</span>
+          {baseline.total_baselines === 0 && baseline.unique_disciplines === 0 ? (
             <span className="text-xs text-muted-foreground">No human baseline data recorded</span>
           ) : (
-            <div className="flex items-center gap-4 flex-1">
-              <span className="text-xs" data-testid="text-total-actions"><span className="font-semibold">{baseline.total_actions}</span> <span className="text-muted-foreground">actions</span></span>
-              <span className="text-xs" data-testid="text-avg-time"><span className="font-semibold">{baseline.avg_time_per_comment_minutes}</span> <span className="text-muted-foreground">avg min/comment</span></span>
-              <span className="text-xs" data-testid="text-total-duration"><span className="font-semibold">{baseline.total_duration_minutes}</span> <span className="text-muted-foreground">total min</span></span>
-              <span className="text-xs flex items-center gap-1" data-testid="text-unique-expeditors"><Users className="h-3 w-3" /> <span className="font-semibold">{baseline.unique_expeditors}</span> <span className="text-muted-foreground">expeditors</span></span>
+            <div className="flex items-center gap-6 flex-1">
+              <div className="flex flex-col" data-testid="text-total-baselines">
+                <span className="text-xs"><span className="font-semibold">{baseline.total_baselines}</span> <span className="text-muted-foreground">total baselines</span></span>
+                <span className="text-[10px] text-muted-foreground leading-tight">Comments explicitly categorized by the human expeditor in the portal.</span>
+              </div>
+              <div className="flex flex-col" data-testid="text-unique-disciplines">
+                <span className="text-xs"><span className="font-semibold">{baseline.unique_disciplines}</span> <span className="text-muted-foreground">unique disciplines</span></span>
+                <span className="text-[10px] text-muted-foreground leading-tight">Distinct routing departments utilized by the human.</span>
+              </div>
+              <div className="flex flex-col" data-testid="text-baseline-coverage">
+                <span className="text-xs"><span className="font-semibold">{baseline.baseline_coverage_percent}%</span> <span className="text-muted-foreground">baseline coverage</span></span>
+                <span className="text-[10px] text-muted-foreground leading-tight">Percentage of the total comments the human actually addressed.</span>
+              </div>
             </div>
           )}
         </div>
