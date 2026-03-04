@@ -982,7 +982,7 @@ export default function AdminPanel() {
                         {/* Live Preview */}
                         <div className="space-y-2">
                           <Label>Live Preview</Label>
-                          <div className="border rounded-lg overflow-hidden bg-[#0D1E38] text-sm">
+                          <div className="border rounded-lg overflow-hidden bg-white dark:bg-[#0D1E38] text-sm">
                             <div style={{ backgroundColor: editedBranding.primary_color }} className="px-4 py-3 text-center">
                               {editedBranding.logo_url && (
                                 <img 
@@ -995,8 +995,8 @@ export default function AdminPanel() {
                               <h3 className="text-white font-bold text-sm">{editedBranding.header_text}</h3>
                             </div>
                             <div className="p-4 space-y-2">
-                              <p className="text-xs text-[#6B9AC4]">Jurisdiction Code Update</p>
-                              <p className="font-bold text-[#F0F6FF]">Sample Notification Title</p>
+                              <p className="text-xs text-[#64748B] dark:text-[#6B9AC4]">Jurisdiction Code Update</p>
+                              <p className="font-bold text-[#0F172A] dark:text-[#F0F6FF]">Sample Notification Title</p>
                               <span 
                                 className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
                                 style={{ 
@@ -1016,8 +1016,8 @@ export default function AdminPanel() {
                                 Sample notification message content...
                               </div>
                             </div>
-                            <div className="bg-[#091428] px-4 py-2 text-center">
-                              <p className="text-xs text-[#6B9AC4]">{editedBranding.footer_text}</p>
+                            <div className="bg-[#F8FAFC] dark:bg-[#091428] px-4 py-2 text-center">
+                              <p className="text-xs text-[#64748B] dark:text-[#6B9AC4]">{editedBranding.footer_text}</p>
                               <p className="mt-1">
                                 <span 
                                   className="text-xs cursor-pointer"
@@ -1157,7 +1157,7 @@ export default function AdminPanel() {
             </DialogDescription>
           </DialogHeader>
           
-          <div className="border rounded-lg overflow-hidden bg-[#0D1E38]">
+          <div className="border rounded-lg overflow-hidden bg-white dark:bg-[#0D1E38]">
             {/* Email Header */}
             <div style={{ backgroundColor: currentBranding.primary_color }} className="px-6 py-4 text-center">
               {currentBranding.logo_url && (

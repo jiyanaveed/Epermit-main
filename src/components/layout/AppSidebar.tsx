@@ -755,6 +755,12 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              <SidebarMenuItem>
+                <div className="flex items-center px-2 py-1">
+                  <ThemeToggle />
+                  <span className="ml-2 text-xs text-muted-foreground">Theme</span>
+                </div>
+              </SidebarMenuItem>
             </>
           ) : (
             <>

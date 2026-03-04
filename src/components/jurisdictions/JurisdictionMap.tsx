@@ -206,7 +206,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
     if (units >= 10000) return 'bg-emerald-500/10 text-emerald-400';
     if (units >= 5000) return 'bg-blue-500/10 text-blue-400';
     if (units >= 1000) return 'bg-amber-500/10 text-amber-400';
-    return 'bg-[#6B9AC4]/10 text-[#6B9AC4]';
+    return 'bg-[#64748B]/10 dark:bg-[#6B9AC4]/10 text-[#64748B] dark:text-[#6B9AC4]';
   };
 
   return (

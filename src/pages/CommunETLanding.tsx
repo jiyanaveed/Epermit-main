@@ -1,22 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-
-const COLORS = {
-  obsidian: "#050E1F",
-  slate: "#091428",
-  panel: "#0D1E38",
-  border: "#1A3055",
-  gold: "#FF6B2B",
-  goldLight: "#FF8C55",
-  goldDim: "#C44D14",
-  steel: "#1D4A7A",
-  fog: "#6B9AC4",
-  white: "#F0F6FF",
-  offwhite: "#B8D4F0",
-  teal: "#38BDF8",
-  tealDim: "#0A5A8C",
-  red: "#FF4040",
-};
+import { useThemeColors } from "@/hooks/useThemeColors";
+import { useTheme } from "@/hooks/useTheme";
 
 const useInView = (threshold = 0.15): [React.RefObject<HTMLElement | null>, boolean] => {
   const ref = useRef<HTMLElement | null>(null);
@@ -55,7 +40,7 @@ const AnimCounter = ({ target, suffix = "", duration = 2000 }: AnimCounterProps)
 const GoldLine = ({ w = "100%", delay = 0 }: { w?: string; delay?: number }) => (
   <div style={{
     height: 1,
-    background: `linear-gradient(90deg, transparent, ${COLORS.gold}, transparent)`,
+    background: `linear-gradient(90deg, transparent, #FF6B2B, transparent)`,
     width: w,
     opacity: 0.4,
     animationDelay: `${delay}s`,
@@ -64,6 +49,25 @@ const GoldLine = ({ w = "100%", delay = 0 }: { w?: string; delay?: number }) => 
 
 export default function CommunETLanding() {
   const navigate = useNavigate();
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+  const tc = useThemeColors();
+  const COLORS = {
+    obsidian: tc.bg,
+    slate: tc.bgSecondary,
+    panel: tc.panel,
+    border: tc.border,
+    gold: tc.gold,
+    goldLight: tc.goldLight,
+    goldDim: tc.goldDim,
+    steel: tc.steel,
+    fog: tc.fog,
+    white: tc.white,
+    offwhite: tc.offwhite,
+    teal: tc.teal,
+    tealDim: tc.tealDim,
+    red: tc.red,
+  };
   const competitiveMatrixRef = useRef<HTMLElement | null>(null);
   const [activeModule, setActiveModule] = useState(0);
   
@@ -133,8 +137,8 @@ export default function CommunETLanding() {
         .gold-hover:hover { color: #FF6B2B; }
         .grid-bg {
           background-image: 
-            linear-gradient(rgba(56,189,248,0.04) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(56,189,248,0.04) 1px, transparent 1px);
+            linear-gradient(${isDark ? "rgba(56,189,248,0.04)" : "rgba(15,23,42,0.04)"} 1px, transparent 1px),
+            linear-gradient(90deg, ${isDark ? "rgba(56,189,248,0.04)" : "rgba(15,23,42,0.04)"} 1px, transparent 1px);
           background-size: 60px 60px;
         }
         .shimmer {
@@ -148,7 +152,7 @@ export default function CommunETLanding() {
         @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
         .scan-line {
           position: absolute; left: 0; right: 0; height: 1px;
-          background: linear-gradient(90deg, transparent, rgba(255,107,43,0.4), transparent);
+          background: linear-gradient(90deg, transparent, rgba(255,107,43,${isDark ? "0.4" : "0.15"}), transparent);
           animation: scan 8s linear infinite;
         }
         .stat-number {
@@ -176,7 +180,7 @@ export default function CommunETLanding() {
           font-family: 'Barlow', 'Trebuchet MS', sans-serif;
           font-weight: 300;
           line-height: 1.7;
-          color: #6B9AC4;
+          color: ${COLORS.fog};
         }
         .tag {
           font-family: 'DM Mono', monospace;
@@ -189,7 +193,7 @@ export default function CommunETLanding() {
         .arrow-connector {
           display: flex;
           align-items: center;
-          color: #1D4A7A;
+          color: ${COLORS.steel};
           font-size: 1.2rem;
           padding: 0 8px;
           flex-shrink: 0;
@@ -228,7 +232,7 @@ export default function CommunETLanding() {
           position: "fixed", top: 0, left: 0, right: 0,
           display: "flex", justifyContent: "space-between", alignItems: "center",
           padding: "20px clamp(24px, 5vw, 80px)",
-          background: "linear-gradient(180deg, rgba(5,14,31,0.96) 0%, transparent 100%)",
+          background: isDark ? "linear-gradient(180deg, rgba(5,14,31,0.96) 0%, transparent 100%)" : "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, transparent 100%)",
           backdropFilter: "blur(12px)",
           zIndex: 100,
           borderBottom: `1px solid ${COLORS.border}`,
@@ -340,7 +344,7 @@ export default function CommunETLanding() {
           borderTop: `1px solid ${COLORS.border}`,
           display: "grid",
           gridTemplateColumns: "repeat(4, 1fr)",
-          background: "rgba(9,20,40,0.85)",
+          background: isDark ? "rgba(9,20,40,0.85)" : "rgba(255,255,255,0.9)",
           backdropFilter: "blur(20px)",
         }}>
           {[

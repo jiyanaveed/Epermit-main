@@ -80,7 +80,7 @@ function statusBorderClass(status: string | null): string {
   if (s === "approved") return "border-l-emerald-500";
   if (s === "rejected") return "border-l-red-500";
   if (s.includes("ready")) return "border-l-blue-500";
-  return "border-l-[#1A3055]";
+  return "border-l-[#E2E8F0] dark:border-l-[#1A3055]";
 }
 
 function statusBadgeClass(status: string): string {
@@ -89,7 +89,7 @@ function statusBadgeClass(status: string): string {
   if (s === "approved") return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
   if (s === "rejected") return "bg-red-500/10 text-red-700 border-red-500/30";
   if (s.includes("ready")) return "bg-blue-500/10 text-blue-700 border-blue-500/30";
-  return "bg-[#6B9AC4]/10 text-[#6B9AC4] border-[#6B9AC4]/30";
+  return "bg-[#64748B]/10 dark:bg-[#6B9AC4]/10 text-[#64748B] dark:text-[#6B9AC4] border-[#64748B]/30 dark:border-[#6B9AC4]/30";
 }
 
 const DISCIPLINE_COLORS: Record<string, string> = {
@@ -100,7 +100,7 @@ const DISCIPLINE_COLORS: Record<string, string> = {
   mep: "bg-orange-500/15 text-orange-700 border-orange-500/30",
   electrical: "bg-yellow-500/15 text-yellow-700 border-yellow-500/30",
   fire: "bg-red-500/15 text-red-700 border-red-500/30",
-  general: "bg-[#6B9AC4]/15 text-[#6B9AC4] border-[#6B9AC4]/30",
+  general: "bg-[#64748B]/15 dark:bg-[#6B9AC4]/15 text-[#64748B] dark:text-[#6B9AC4] border-[#64748B]/30 dark:border-[#6B9AC4]/30",
 };
 
 function disciplineBadgeClass(discipline: string | null): string {

@@ -714,11 +714,11 @@ export default function PortalDataViewer() {
           <div key={keyInc++} className="overflow-x-auto my-4 border rounded-lg">
             <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="bg-[#091428] border-b-2 border-[#1A3055]">
+                <tr className="bg-[#F8FAFC] dark:bg-[#091428] border-b-2 border-[#E2E8F0] dark:border-[#1A3055]">
                   {table.headers.map((h, hi) => (
                     <th
                       key={hi}
-                      className="text-left p-2 px-3 text-xs font-bold text-[#C44D14] font-mono border-r border-[#1A3055] whitespace-nowrap"
+                      className="text-left p-2 px-3 text-xs font-bold text-[#C44D14] font-mono border-r border-[#E2E8F0] dark:border-[#1A3055] whitespace-nowrap"
                     >
                       {h}
                     </th>
@@ -729,12 +729,12 @@ export default function PortalDataViewer() {
                 {table.rows.map((row, ri) => (
                   <tr
                     key={ri}
-                    className={`border-b border-[#1A3055] ${ri % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"} hover:bg-[#FF6B2B08]`}
+                    className={`border-b border-[#E2E8F0] dark:border-[#1A3055] ${ri % 2 === 0 ? "bg-white dark:bg-[#0D1E38]" : "bg-[#F8FAFC] dark:bg-[#091428]"} hover:bg-[#FFF7ED] dark:hover:bg-[#FF6B2B08]`}
                   >
                     {row.map((cell, ci) => (
                       <td
                         key={ci}
-                        className="p-2 px-3 align-top border-r border-[#1A3055] whitespace-nowrap text-[#F0F6FF] max-w-[200px] overflow-hidden text-ellipsis"
+                        className="p-2 px-3 align-top border-r border-[#E2E8F0] dark:border-[#1A3055] whitespace-nowrap text-[#0F172A] dark:text-[#F0F6FF] max-w-[200px] overflow-hidden text-ellipsis"
                       >
                         {cell}
                       </td>
@@ -761,7 +761,7 @@ export default function PortalDataViewer() {
         elements.push(
           <p
             key={keyInc++}
-            className="text-xs text-[#6B9AC4] mt-6 pt-2 border-t border-[#1A3055] italic"
+            className="text-xs text-[#64748B] dark:text-[#6B9AC4] mt-6 pt-2 border-t border-[#E2E8F0] dark:border-[#1A3055] italic"
           >
             {trimmed}
           </p>
@@ -782,7 +782,7 @@ export default function PortalDataViewer() {
         elements.push(
           <h3
             key={keyInc++}
-            className="text-xl font-light text-[#6B9AC4] pb-2 mb-4 border-b-2 border-blue-600"
+            className="text-xl font-light text-[#64748B] dark:text-[#6B9AC4] pb-2 mb-4 border-b-2 border-blue-600"
           >
             {trimmed}
           </h3>
@@ -802,7 +802,7 @@ export default function PortalDataViewer() {
         elements.push(
           <div
             key={keyInc++}
-            className="text-center text-sm font-bold tracking-wider text-[#6B9AC4] bg-[#091428] py-2 my-4 border-y border-[#1A3055]"
+            className="text-center text-sm font-bold tracking-wider text-[#64748B] dark:text-[#6B9AC4] bg-[#F8FAFC] dark:bg-[#091428] py-2 my-4 border-y border-[#E2E8F0] dark:border-[#1A3055]"
           >
             {trimmed}
           </div>
@@ -823,10 +823,10 @@ export default function PortalDataViewer() {
         if (key.length > 1 && key.length < 45) {
           elements.push(
             <div key={keyInc++} className="flex gap-2 py-0.5">
-              <span className="text-sm text-[#6B9AC4] whitespace-nowrap min-w-[160px]">
+              <span className="text-sm text-[#64748B] dark:text-[#6B9AC4] whitespace-nowrap min-w-[160px]">
                 {key}:
               </span>
-              <span className="text-sm font-semibold text-[#F0F6FF]">{val}</span>
+              <span className="text-sm font-semibold text-[#0F172A] dark:text-[#F0F6FF]">{val}</span>
             </div>
           );
           lineIdx++;
@@ -835,7 +835,7 @@ export default function PortalDataViewer() {
       }
 
       elements.push(
-        <p key={keyInc++} className="text-sm text-[#F0F6FF] py-0.5">
+        <p key={keyInc++} className="text-sm text-[#0F172A] dark:text-[#F0F6FF] py-0.5">
           {trimmed}
         </p>
       );
@@ -862,7 +862,7 @@ export default function PortalDataViewer() {
     elements.push(
       <div
         key={keyInc++}
-        className="text-center text-sm font-bold tracking-wider text-[#6B9AC4] bg-[#091428] py-2 my-4 border-y border-[#1A3055]"
+        className="text-center text-sm font-bold tracking-wider text-[#64748B] dark:text-[#6B9AC4] bg-[#F8FAFC] dark:bg-[#091428] py-2 my-4 border-y border-[#E2E8F0] dark:border-[#1A3055]"
       >
         REVIEW COMMENTS
       </div>
@@ -872,7 +872,7 @@ export default function PortalDataViewer() {
 
     if (comments.length === 0) {
       elements.push(
-        <p key={keyInc++} className="text-sm text-[#6B9AC4] italic py-2">
+        <p key={keyInc++} className="text-sm text-[#64748B] dark:text-[#6B9AC4] italic py-2">
           No comments parsed.
         </p>
       );
@@ -881,13 +881,13 @@ export default function PortalDataViewer() {
     comments.forEach((comment) => {
       elements.push(
         <div key={keyInc++} className="border rounded-lg mb-3 overflow-hidden">
-          <div className="flex items-center justify-between bg-[#091428] px-4 py-2 border-b border-[#1A3055] flex-wrap gap-2">
+          <div className="flex items-center justify-between bg-[#F8FAFC] dark:bg-[#091428] px-4 py-2 border-b border-[#E2E8F0] dark:border-[#1A3055] flex-wrap gap-2">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="bg-blue-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">
                 #{comment.ref}
               </span>
               {comment.cycle && (
-                <span className="text-xs text-[#6B9AC4] bg-[#1A3055] px-2 py-0.5 rounded">
+                <span className="text-xs text-[#64748B] dark:text-[#6B9AC4] bg-[#E2E8F0] dark:bg-[#1A3055] px-2 py-0.5 rounded">
                   Cycle {comment.cycle}
                 </span>
               )}
@@ -897,10 +897,10 @@ export default function PortalDataViewer() {
                 </span>
               )}
               {comment.reviewer && (
-                <span className="text-sm text-[#F0F6FF] font-medium">{comment.reviewer}</span>
+                <span className="text-sm text-[#0F172A] dark:text-[#F0F6FF] font-medium">{comment.reviewer}</span>
               )}
               {comment.date && (
-                <span className="text-xs text-[#6B9AC4]">{comment.date}</span>
+                <span className="text-xs text-[#64748B] dark:text-[#6B9AC4]">{comment.date}</span>
               )}
             </div>
             {comment.status && (
@@ -912,7 +912,7 @@ export default function PortalDataViewer() {
                       ? "bg-red-100 text-red-700"
                       : comment.status === "Info Only"
                         ? "bg-yellow-100 text-yellow-700"
-                        : "bg-[#6B9AC4]/10 text-[#6B9AC4]"
+                        : "bg-[#64748B]/10 dark:bg-[#6B9AC4]/10 text-[#64748B] dark:text-[#6B9AC4]"
                 }`}
               >
                 {comment.status}
@@ -928,17 +928,17 @@ export default function PortalDataViewer() {
                 return (
                   <div
                     key={idx}
-                    className="text-sm font-semibold text-[#6B9AC4] mt-3 pt-2 border-t border-dashed border-[#1A3055]"
+                    className="text-sm font-semibold text-[#64748B] dark:text-[#6B9AC4] mt-3 pt-2 border-t border-dashed border-[#E2E8F0] dark:border-[#1A3055]"
                   >
                     {line}
                   </div>
                 );
               }
               if (line === "---") {
-                return <hr key={idx} className="my-2 border-[#1A3055]" />;
+                return <hr key={idx} className="my-2 border-[#E2E8F0] dark:border-[#1A3055]" />;
               }
               return (
-                <p key={idx} className="text-sm text-[#F0F6FF] leading-relaxed">
+                <p key={idx} className="text-sm text-[#0F172A] dark:text-[#F0F6FF] leading-relaxed">
                   {line}
                 </p>
               );
@@ -951,7 +951,7 @@ export default function PortalDataViewer() {
     const footerMatch = text.match(/Created in ProjectDox[^\n]*/);
     if (footerMatch) {
       elements.push(
-        <p key={keyInc++} className="text-xs text-[#6B9AC4] mt-4 pt-2 border-t border-[#1A3055] italic">
+        <p key={keyInc++} className="text-xs text-[#64748B] dark:text-[#6B9AC4] mt-4 pt-2 border-t border-[#E2E8F0] dark:border-[#1A3055] italic">
           {footerMatch[0]}
         </p>
       );
@@ -974,7 +974,7 @@ export default function PortalDataViewer() {
             )}
             <div className="flex items-center gap-3 mt-2 flex-wrap">
               {(portalData.dashboardStatus ?? portalStatus) && (
-                <Badge className="bg-[#1a1a2e] text-white border-0">
+                <Badge className="bg-[#F8FAFC] dark:bg-[#1a1a2e] text-foreground border-0">
                   {portalData.dashboardStatus ?? portalStatus}
                 </Badge>
               )}
@@ -1030,10 +1030,10 @@ export default function PortalDataViewer() {
                           <div
                             key={`${kv.key}-${i}`}
                             className={`grid grid-cols-3 border-b border-border last:border-b-0 ${
-                              i % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"
+                              i % 2 === 0 ? "bg-white dark:bg-[#0D1E38]" : "bg-[#F8FAFC] dark:bg-[#091428]"
                             }`}
                           >
-                            <div className="col-span-1 w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold bg-[#091428] border-r border-[#1A3055]">
+                            <div className="col-span-1 w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold bg-[#F8FAFC] dark:bg-[#091428] border-r border-[#E2E8F0] dark:border-[#1A3055]">
                               {kv.key}
                             </div>
                             <div
@@ -1056,7 +1056,7 @@ export default function PortalDataViewer() {
                         <div
                           key={i}
                           className={`flex border-b border-border last:border-b-0 ${
-                            i % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"
+                            i % 2 === 0 ? "bg-white dark:bg-[#0D1E38]" : "bg-[#F8FAFC] dark:bg-[#091428]"
                           }`}
                         >
                           <div className="w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold text-muted-foreground bg-muted/40 shrink-0">
@@ -1080,9 +1080,9 @@ export default function PortalDataViewer() {
                     >
                       <Table>
                         <TableHeader>
-                          <TableRow className="bg-[#1a1a2e] hover:bg-[#1a1a2e]">
+                          <TableRow className="bg-[#F8FAFC] dark:bg-[#1a1a2e] hover:bg-[#F8FAFC] dark:hover:bg-[#1a1a2e]">
                             {tbl.headers?.map((h, hi) => (
-                              <TableHead key={hi} className="text-white font-medium whitespace-nowrap">
+                              <TableHead key={hi} className="text-foreground font-medium whitespace-nowrap">
                                 {h}
                               </TableHead>
                             ))}
@@ -1090,7 +1090,7 @@ export default function PortalDataViewer() {
                         </TableHeader>
                         <TableBody>
                           {tbl.rows?.map((row, ri) => (
-                            <TableRow key={ri} className={ri % 2 === 1 ? "bg-[#091428]" : "bg-[#0D1E38]"}>
+                            <TableRow key={ri} className={ri % 2 === 1 ? "bg-[#F8FAFC] dark:bg-[#091428]" : "bg-white dark:bg-[#0D1E38]"}>
                               {tbl.headers?.map((h) => (
                                 <TableCell key={h} className="whitespace-nowrap">{row[h] ?? ""}</TableCell>
                               ))}
@@ -1122,13 +1122,13 @@ export default function PortalDataViewer() {
               ) : reportsTable ? (
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-[#1a1a2e] hover:bg-[#1a1a2e]">
+                    <TableRow className="bg-[#F8FAFC] dark:bg-[#1a1a2e] hover:bg-[#F8FAFC] dark:hover:bg-[#1a1a2e]">
                       {reportsTable.headers?.map((h, hi) => (
-                        <TableHead key={hi} className="text-white font-medium">
+                        <TableHead key={hi} className="text-foreground font-medium">
                           {h}
                         </TableHead>
                       ))}
-                      <TableHead className="text-white font-medium w-12 min-w-[3rem] text-right" />
+                      <TableHead className="text-foreground font-medium w-12 min-w-[3rem] text-right" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1233,17 +1233,17 @@ export default function PortalDataViewer() {
                                             </div>
                                             {pdf.text && (
                                               <details className="mt-2">
-                                                <summary className="text-xs text-[#6B9AC4] cursor-pointer hover:text-[#F0F6FF]">
+                                                <summary className="text-xs text-[#64748B] dark:text-[#6B9AC4] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F0F6FF]">
                                                   Show extracted text
                                                 </summary>
-                                                <pre className="mt-2 text-xs bg-[#091428] text-[#F0F6FF] p-3 rounded border border-[#1A3055] overflow-auto max-h-64 whitespace-pre-wrap">
+                                                <pre className="mt-2 text-xs bg-[#F8FAFC] dark:bg-[#091428] text-[#0F172A] dark:text-[#F0F6FF] p-3 rounded border border-[#E2E8F0] dark:border-[#1A3055] overflow-auto max-h-64 whitespace-pre-wrap">
                                                   {pdf.text}
                                                 </pre>
                                               </details>
                                             )}
                                           </div>
                                         ) : pdf?.text ? (
-                                          <div className="max-h-96 overflow-y-auto rounded border border-[#1A3055] bg-[#0D1E38] p-4">
+                                          <div className="max-h-96 overflow-y-auto rounded border border-[#E2E8F0] dark:border-[#1A3055] bg-white dark:bg-[#0D1E38] p-4">
                                             {pdf.fileName?.includes("Review Comments")
                                               ? renderReviewComments(pdf.text)
                                               : renderReportContent(pdf.text)}
