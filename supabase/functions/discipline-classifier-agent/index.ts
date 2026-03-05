@@ -119,7 +119,7 @@ serve(async (req) => {
       );
     }
 
-    const orDiscipline = "discipline.is.null,discipline.eq.General,discipline.eq.";
+    const orDiscipline = "discipline.is.null,discipline.eq.General,discipline.eq.Unclassified,discipline.eq.";
     const projectFilter = projectId ? [projectId] : projectIds;
 
     let query = supabase
@@ -277,8 +277,7 @@ One object per comment in the same order as provided.`;
         const { error: updateError } = await supabase
           .from("parsed_comments")
           .update({ discipline })
-          .eq("id", row.id)
-          .or(orDiscipline);
+          .eq("id", row.id);
 
         if (!updateError) classifiedCount++;
       }

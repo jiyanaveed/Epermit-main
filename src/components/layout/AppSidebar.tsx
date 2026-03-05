@@ -199,7 +199,7 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const { recentPages, favorites, toggleFavorite, isFavorite, clearRecent } = useNavigationHistory();
   const selectedProject = useSelectedProjectOptional();
-  const { projects, updateProject, fetchProjects, createProject } = useProjects();
+  const { projects, loading, updateProject, fetchProjects, createProject } = useProjects();
   const isCollapsed = state === "collapsed";
 
   // Permit number is the primary input; persisted per user. Never derived from project.
@@ -335,12 +335,11 @@ export function AppSidebar() {
     if (createNewProject && permitNumber.trim()) setNewProjectName(permitNumber.trim());
   }, [createNewProject, permitNumber]);
 
-  // Clear stored selection only if the selected project no longer exists (e.g. deleted). Never set selection to first project.
   useEffect(() => {
-    if (!selectedProject?.selectedProjectId || projects.length === 0) return;
+    if (!selectedProject?.selectedProjectId || loading || projects.length === 0) return;
     const exists = projects.some((p) => p.id === selectedProject.selectedProjectId);
     if (!exists) selectedProject.setSelectedProjectId(null);
-  }, [selectedProject, projects]);
+  }, [selectedProject, projects, loading]);
 
   const isActive = (href: string) => location.pathname === href;
 
