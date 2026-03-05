@@ -134,6 +134,7 @@ export function AgentWorkflowStatus() {
   const [projectBySelectedId, setProjectBySelectedId] = useState<{
     id: string;
     permit_number: string | null;
+    jurisdiction: string | null;
   } | null>(null);
 
   const [scrapingOverlay, setScrapingOverlay] = useState<{
@@ -513,7 +514,7 @@ export function AgentWorkflowStatus() {
     if (selectedProjectId) {
       const { data: sel } = await supabase
         .from("projects")
-        .select("id, permit_number")
+        .select("id, permit_number, jurisdiction")
         .eq("id", selectedProjectId)
         .eq("user_id", user.id)
         .maybeSingle();
@@ -522,6 +523,7 @@ export function AgentWorkflowStatus() {
           ? {
               id: sel.id as string,
               permit_number: (sel.permit_number as string) ?? null,
+              jurisdiction: (sel.jurisdiction as string) ?? null,
             }
           : null,
       );
@@ -867,14 +869,16 @@ export function AgentWorkflowStatus() {
     toast.info("Chain Step 1/5: Portal Scraping...");
 
     try {
-      const { data: proj, error: projError } = await supabase
-        .from("projects")
-        .select("jurisdiction")
-        .eq("id", projectIdToUse)
-        .maybeSingle();
+      let projectJurisdiction = projectBySelectedId?.jurisdiction?.trim() || "";
 
-      if (projError) throw new Error("Failed to load project details");
-      const projectJurisdiction = (proj?.jurisdiction as string)?.trim() || "";
+      if (!projectJurisdiction) {
+        const { data: proj } = await supabase
+          .from("projects")
+          .select("jurisdiction")
+          .eq("id", projectIdToUse)
+          .maybeSingle();
+        projectJurisdiction = (proj?.jurisdiction as string)?.trim() || "";
+      }
 
       const { data: credentials, error: credError } = await supabase
         .from("portal_credentials")
@@ -887,24 +891,32 @@ export function AgentWorkflowStatus() {
           "No portal credentials found. Add credentials in Settings.",
         );
 
-      let cred = projectJurisdiction
-        ? credentials.find(
-            (c) =>
-              c.jurisdiction?.toLowerCase() === projectJurisdiction.toLowerCase(),
-          )
-        : undefined;
+      let cred: (typeof credentials)[number] | undefined;
 
-      if (!cred && projectJurisdiction) {
-        cred = credentials.find((c) =>
-          c.jurisdiction?.toLowerCase().includes(projectJurisdiction.toLowerCase()) ||
-          projectJurisdiction.toLowerCase().includes(c.jurisdiction?.toLowerCase() ?? ""),
+      if (projectJurisdiction) {
+        cred = credentials.find(
+          (c) =>
+            c.jurisdiction?.toLowerCase() === projectJurisdiction.toLowerCase(),
         );
+
+        if (!cred) {
+          cred = credentials.find((c) =>
+            c.jurisdiction?.toLowerCase().includes(projectJurisdiction.toLowerCase()) ||
+            projectJurisdiction.toLowerCase().includes(c.jurisdiction?.toLowerCase() ?? ""),
+          );
+        }
       }
 
       if (!cred) {
-        throw new Error(
-          `No portal credentials found for jurisdiction "${projectJurisdiction || "unknown"}". Please add credentials in Settings.`,
-        );
+        if (credentials.length === 1) {
+          cred = credentials[0];
+        } else {
+          throw new Error(
+            projectJurisdiction
+              ? `No portal credentials found for jurisdiction "${projectJurisdiction}". Please add credentials in Settings.`
+              : "This project has no jurisdiction set. Please set a jurisdiction on the project, or ensure you have exactly one set of portal credentials in Settings.",
+          );
+        }
       }
 
       const loginUrl = cred.login_url?.trim();
