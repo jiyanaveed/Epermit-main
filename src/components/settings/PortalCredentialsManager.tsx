@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,17 +12,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, KeyRound, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, KeyRound, Loader2, ChevronsUpDown, Check } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { cn } from "@/lib/utils";
 
 export interface PortalCredential {
   id: string;
@@ -47,29 +53,68 @@ export interface PortalCredential {
   created_at: string;
 }
 
-interface ProjectOption {
-  id: string;
-  name: string;
-  permit_number: string | null;
-  address: string | null;
-}
-
-const DEFAULT_PORTAL_URL = "https://washington-dc-us.avolvecloud.com";
+const JURISDICTION_PORTALS = [
+  { jurisdiction: "Washington DC - ProjectDox", url: "https://washington-dc-us.avolvecloud.com/User/Index" },
+  { jurisdiction: "Washington DC - DCRA", url: "https://govservices.dcra.dc.gov/ProjectDoxWebsite/ProjectInvestigationStatus.aspx" },
+  { jurisdiction: "Washington DC - ePlan", url: "https://eplan9x.dcra.dc.gov/ProjectDox/ViewProjects.aspx" },
+  { jurisdiction: "Washington DC - DDOT TOPS", url: "https://tops.ddot.dc.gov/DDOTPermitSystem/DDOTPermitOnline/Login" },
+  { jurisdiction: "Montgomery County MD - ePlans", url: "https://eplans.montgomerycountymd.gov/ProjectDox/Frame.aspx" },
+  { jurisdiction: "Montgomery County MD - Avolve", url: "https://montgomeryco-md-us.avolvecloud.com/ProjectDox/index.html" },
+  { jurisdiction: "Montgomery County MD - Permitting", url: "https://permittingservices.montgomerycountymd.gov/" },
+  { jurisdiction: "Prince George's County MD", url: "https://eplans.princegeorgescountymd.gov/ProjectDox/ViewProjects.aspx" },
+  { jurisdiction: "Frederick County MD - ProjectDox", url: "https://frederickco-md-us.avolvecloud.com/ProjectDox/ViewProjects.aspx" },
+  { jurisdiction: "Frederick County MD - Planning", url: "https://planningandpermitting.frederickcountymd.gov/my-dashboard" },
+  { jurisdiction: "Howard County MD", url: "https://howardb2cprod.b2clogin.com/" },
+  { jurisdiction: "Harford County MD", url: "https://epermitcenter.harfordcountymd.gov/" },
+  { jurisdiction: "Baltimore City MD", url: "https://eplans.baltimorecity.gov/projectdox/" },
+  { jurisdiction: "Baltimore Housing", url: "https://cels.baltimorehousing.org/" },
+  { jurisdiction: "Anne Arundel County MD", url: "" },
+  { jurisdiction: "WSSC Water", url: "https://wssc-md-us.avolvecloud.com/Portal/Login/Index/WSSC-Prod" },
+  { jurisdiction: "WSSC Permits", url: "https://permits.wsscwater.com/EnerGov_Prod/SelfService" },
+  { jurisdiction: "Fairfax County VA", url: "https://eplanreview.fairfaxcounty.gov/ProjectDox/" },
+  { jurisdiction: "Arlington County VA", url: "" },
+  { jurisdiction: "Virginia Beach VA", url: "" },
+  { jurisdiction: "Stafford County VA", url: "https://stafford-va-us.avolvecloud.com/ProjectDox/" },
+  { jurisdiction: "Henrico County VA", url: "" },
+  { jurisdiction: "Chesapeake VA", url: "" },
+  { jurisdiction: "Charlottesville VA", url: "https://permits.charlottesville.gov/" },
+  { jurisdiction: "Accomack County VA", url: "" },
+  { jurisdiction: "Harrisonburg VA", url: "https://permits.harrisonburgva.gov/default.aspx" },
+  { jurisdiction: "Danville VA", url: "https://onlinepermits.danvilleva.gov/PortalProd/home/welcome" },
+  { jurisdiction: "Chesterfield County VA", url: "" },
+  { jurisdiction: "City of Highpoint NC", url: "" },
+  { jurisdiction: "Winston Salem NC", url: "" },
+  { jurisdiction: "Jacksonville NC", url: "https://jaxplans.jacksonvillenc.gov/ProjectDox/ViewProjects.aspx" },
+  { jurisdiction: "Town of Garner NC", url: "" },
+  { jurisdiction: "Angier NC", url: "" },
+  { jurisdiction: "Randolph County NC", url: "https://esuite.randolphcountync.gov/" },
+  { jurisdiction: "Orange County NC", url: "https://centralpermits.orangecountync.gov/" },
+  { jurisdiction: "New Castle County DE", url: "https://newcastleco-de-us.avolvecloud.com/Login/Index/NewCastle-Prod" },
+  { jurisdiction: "Broward County FL", url: "https://dpep.broward.org/" },
+  { jurisdiction: "Pompano Beach FL", url: "https://epr.pompanobeachfl.gov/ProjectDox/Profile.aspx" },
+  { jurisdiction: "Lee County FL", url: "https://lee.csqrcloud.com/" },
+  { jurisdiction: "Littleton CO", url: "https://permit9.littletongov.org/" },
+  { jurisdiction: "City of Suffolk VA", url: "https://app03.cityworksonline.com/CLIENT_SuffolkVA-Public/login" },
+  { jurisdiction: "Norfolk VA", url: "https://norfolkva.my.site.com/s/login/" },
+  { jurisdiction: "Berkeley WV", url: "" },
+  { jurisdiction: "Charles County MD", url: "" },
+  { jurisdiction: "311 DC", url: "" },
+  { jurisdiction: "Access DC", url: "" },
+  { jurisdiction: "BGE (Exelon)", url: "" },
+  { jurisdiction: "MDOT SHA", url: "https://mdotsha.my.site.com/" },
+  { jurisdiction: "OAS Avolve (General)", url: "https://oas.avolvecloud.com/Portal/" },
+];
 
 const defaultForm = {
   jurisdiction: "",
   portal_username: "",
   portal_password: "",
-  login_url: DEFAULT_PORTAL_URL,
-  project_address: "",
-  linkedProjectId: "" as string,
-  createNewProject: false,
+  login_url: "",
 };
 
 export function PortalCredentialsManager() {
   const { user } = useAuth();
   const [credentials, setCredentials] = useState<PortalCredential[]>([]);
-  const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,6 +122,9 @@ export function PortalCredentialsManager() {
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [jurisdictionOpen, setJurisdictionOpen] = useState(false);
+  const [jurisdictionSearch, setJurisdictionSearch] = useState("");
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const fetchCredentials = useCallback(async () => {
     if (!user) return;
@@ -95,30 +143,14 @@ export function PortalCredentialsManager() {
     setLoading(false);
   }, [user]);
 
-  const fetchProjects = useCallback(async () => {
-    if (!user) return;
-    const { data, error } = await supabase
-      .from("projects")
-      .select("id, name, permit_number, address")
-      .eq("user_id", user.id);
-    if (!error) {
-      setProjects((data as ProjectOption[]) || []);
-    }
-  }, [user]);
-
   useEffect(() => {
     fetchCredentials();
   }, [fetchCredentials]);
 
-  useEffect(() => {
-    if (dialogOpen && user) {
-      fetchProjects();
-    }
-  }, [dialogOpen, user, fetchProjects]);
-
   const openAdd = () => {
     setEditingId(null);
     setForm({ ...defaultForm });
+    setJurisdictionSearch("");
     setDialogOpen(true);
   };
 
@@ -128,12 +160,20 @@ export function PortalCredentialsManager() {
       jurisdiction: row.jurisdiction,
       portal_username: row.portal_username,
       portal_password: row.portal_password,
-      login_url: row.login_url ?? DEFAULT_PORTAL_URL,
-      project_address: row.project_address ?? "",
-      linkedProjectId: row.project_id ?? "",
-      createNewProject: false,
+      login_url: row.login_url ?? "",
     });
+    setJurisdictionSearch("");
     setDialogOpen(true);
+  };
+
+  const handleJurisdictionSelect = (jurisdictionName: string) => {
+    const match = JURISDICTION_PORTALS.find((j) => j.jurisdiction === jurisdictionName);
+    setForm((f) => ({
+      ...f,
+      jurisdiction: jurisdictionName,
+      login_url: match ? match.url : "",
+    }));
+    setJurisdictionOpen(false);
   };
 
   const handleSave = async () => {
@@ -142,49 +182,15 @@ export function PortalCredentialsManager() {
       toast.error("Jurisdiction, username, and password are required");
       return;
     }
-    if (!form.linkedProjectId && !form.createNewProject) {
-      toast.error("Link to a project is required for portal monitoring");
-      return;
-    }
 
     setSaving(true);
     try {
-      let projectId: string | null = null;
-      let permitNumber: string | null = null;
-
-      if (form.linkedProjectId && !form.createNewProject) {
-        projectId = form.linkedProjectId;
-        const { data: proj } = await supabase
-          .from("projects")
-          .select("permit_number")
-          .eq("id", projectId)
-          .eq("user_id", user.id)
-          .maybeSingle();
-        permitNumber = (proj?.permit_number as string) ?? null;
-      } else if (form.createNewProject) {
-        const { data: newProject, error } = await supabase
-          .from("projects")
-          .insert({
-            user_id: user.id,
-            name: `New project – ${form.jurisdiction.trim()}`,
-            jurisdiction: form.jurisdiction.trim(),
-          })
-          .select("id")
-          .single();
-        if (error) throw error;
-        projectId = newProject?.id ?? null;
-        if (!projectId) throw new Error("Failed to create project");
-      }
-
       const payload = {
         user_id: user.id,
         jurisdiction: form.jurisdiction.trim(),
         portal_username: form.portal_username.trim(),
         portal_password: form.portal_password.trim(),
-        login_url: form.login_url.trim() || DEFAULT_PORTAL_URL,
-        permit_number: permitNumber,
-        project_address: form.project_address.trim() || null,
-        project_id: projectId,
+        login_url: form.login_url.trim() || null,
       };
 
       if (editingId) {
@@ -226,6 +232,10 @@ export function PortalCredentialsManager() {
     setDeleteId(null);
   };
 
+  const filteredJurisdictions = JURISDICTION_PORTALS.filter((j) =>
+    j.jurisdiction.toLowerCase().includes(jurisdictionSearch.toLowerCase())
+  );
+
   return (
     <>
       <Card>
@@ -240,7 +250,7 @@ export function PortalCredentialsManager() {
                 Add and manage login details for jurisdiction portals (used by the Portal Monitor Agent).
               </CardDescription>
             </div>
-            <Button onClick={openAdd} className="bg-accent hover:bg-accent/90">
+            <Button onClick={openAdd} className="bg-accent hover:bg-accent/90" data-testid="button-add-credential">
               <Plus className="mr-2 h-4 w-4" />
               Add New
             </Button>
@@ -252,35 +262,32 @@ export function PortalCredentialsManager() {
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : credentials.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">
+            <p className="text-muted-foreground text-center py-8" data-testid="text-no-credentials">
               No credentials saved. Click &quot;Add New&quot; to add jurisdiction portal logins.
             </p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-3" data-testid="list-credentials">
               {credentials.map((c) => (
                 <li
                   key={c.id}
                   className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg border bg-muted/30"
+                  data-testid={`card-credential-${c.id}`}
                 >
                   <div className="min-w-0">
-                    <p className="font-medium truncate">{c.jurisdiction}</p>
-                    <p className="text-sm text-muted-foreground truncate">
+                    <p className="font-medium truncate" data-testid={`text-jurisdiction-${c.id}`}>{c.jurisdiction}</p>
+                    <p className="text-sm text-muted-foreground truncate" data-testid={`text-username-${c.id}`}>
                       {c.portal_username}
-                      {c.permit_number ? ` · Permit: ${c.permit_number}` : ""}
                     </p>
                     {c.login_url && (
-                      <p className="text-xs text-muted-foreground truncate mt-0.5">{c.login_url}</p>
-                    )}
-                    {c.project_address && (
-                      <p className="text-xs text-muted-foreground truncate mt-0.5">{c.project_address}</p>
+                      <p className="text-xs text-muted-foreground truncate mt-0.5" data-testid={`text-url-${c.id}`}>{c.login_url}</p>
                     )}
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    <Button variant="outline" size="sm" onClick={() => openEdit(c)}>
+                    <Button variant="outline" size="sm" onClick={() => openEdit(c)} data-testid={`button-edit-${c.id}`}>
                       <Pencil className="h-4 w-4 sm:mr-1" />
                       <span className="hidden sm:inline">Edit</span>
                     </Button>
-                    <Button variant="outline" size="sm" className="text-destructive" onClick={() => setDeleteId(c.id)}>
+                    <Button variant="outline" size="sm" className="text-destructive" onClick={() => setDeleteId(c.id)} data-testid={`button-delete-${c.id}`}>
                       <Trash2 className="h-4 w-4 sm:mr-1" />
                       <span className="hidden sm:inline">Delete</span>
                     </Button>
@@ -302,13 +309,72 @@ export function PortalCredentialsManager() {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="jurisdiction">Jurisdiction</Label>
-              <Input
-                id="jurisdiction"
-                placeholder="e.g. Fairfax County, Washington DC"
-                value={form.jurisdiction}
-                onChange={(e) => setForm((f) => ({ ...f, jurisdiction: e.target.value }))}
-              />
+              <Label>Jurisdiction</Label>
+              <Popover open={jurisdictionOpen} onOpenChange={setJurisdictionOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={jurisdictionOpen}
+                    className="w-full justify-between font-normal"
+                    data-testid="combobox-jurisdiction"
+                  >
+                    {form.jurisdiction || "Select or type a jurisdiction..."}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      ref={commandInputRef}
+                      placeholder="Search jurisdictions..."
+                      value={jurisdictionSearch}
+                      onValueChange={setJurisdictionSearch}
+                      data-testid="input-jurisdiction-search"
+                    />
+                    <CommandList>
+                      <CommandEmpty>
+                        {jurisdictionSearch.trim() ? (
+                          <button
+                            className="w-full px-2 py-1.5 text-sm text-left cursor-pointer hover:bg-accent/10"
+                            onClick={() => {
+                              handleJurisdictionSelect(jurisdictionSearch.trim());
+                            }}
+                            data-testid="button-custom-jurisdiction"
+                          >
+                            Use &quot;{jurisdictionSearch.trim()}&quot; as custom jurisdiction
+                          </button>
+                        ) : (
+                          "No jurisdictions found."
+                        )}
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {filteredJurisdictions.map((j) => (
+                          <CommandItem
+                            key={j.jurisdiction}
+                            value={j.jurisdiction}
+                            onSelect={() => handleJurisdictionSelect(j.jurisdiction)}
+                            data-testid={`option-jurisdiction-${j.jurisdiction}`}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                form.jurisdiction === j.jurisdiction ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <div className="flex flex-col">
+                              <span>{j.jurisdiction}</span>
+                              {j.url && (
+                                <span className="text-xs text-muted-foreground truncate max-w-[300px]">{j.url}</span>
+                              )}
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="portal_username">Username</Label>
@@ -317,6 +383,7 @@ export function PortalCredentialsManager() {
                 placeholder="Portal username"
                 value={form.portal_username}
                 onChange={(e) => setForm((f) => ({ ...f, portal_username: e.target.value }))}
+                data-testid="input-portal-username"
               />
             </div>
             <div className="grid gap-2">
@@ -327,6 +394,7 @@ export function PortalCredentialsManager() {
                 placeholder="Portal password"
                 value={form.portal_password}
                 onChange={(e) => setForm((f) => ({ ...f, portal_password: e.target.value }))}
+                data-testid="input-portal-password"
               />
               <Button
                 type="button"
@@ -334,6 +402,7 @@ export function PortalCredentialsManager() {
                 size="sm"
                 className="text-xs text-muted-foreground"
                 onClick={() => setShowPassword((s) => !s)}
+                data-testid="button-toggle-password"
               >
                 {showPassword ? "Hide" : "Show"} password
               </Button>
@@ -342,71 +411,18 @@ export function PortalCredentialsManager() {
               <Label htmlFor="login_url">Portal URL</Label>
               <Input
                 id="login_url"
-                placeholder="https://washington-dc-us.avolvecloud.com"
+                placeholder="https://example.avolvecloud.com"
                 value={form.login_url}
                 onChange={(e) => setForm((f) => ({ ...f, login_url: e.target.value }))}
                 data-testid="input-login-url"
               />
               <p className="text-xs text-muted-foreground">
-                The Avolve/ProjectDox login URL for this jurisdiction.
+                Auto-filled when selecting a jurisdiction. You can edit it manually.
               </p>
-            </div>
-            <div className="grid gap-2">
-              <Label>Link to Project <span className="text-destructive">*</span></Label>
-              <Select
-                value={form.createNewProject ? "__none__" : (form.linkedProjectId || "__none__")}
-                onValueChange={(v) => {
-                  if (v === "__none__") {
-                    setForm((f) => ({ ...f, linkedProjectId: "" }));
-                  } else {
-                    setForm((f) => ({ ...f, createNewProject: false, linkedProjectId: v }));
-                  }
-                }}
-                disabled={form.createNewProject}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                      {p.address ? ` · ${p.address}` : ""}
-                      {p.permit_number ? ` (${p.permit_number})` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="createNewProject"
-                  checked={form.createNewProject}
-                  onCheckedChange={(checked) =>
-                    setForm((f) => ({
-                      ...f,
-                      createNewProject: !!checked,
-                      linkedProjectId: checked ? "" : f.linkedProjectId,
-                    }))
-                  }
-                />
-                <Label htmlFor="createNewProject" className="text-sm font-normal cursor-pointer">
-                  Or create a new project for this permit
-                </Label>
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="project_address">Project address (optional)</Label>
-              <Input
-                id="project_address"
-                placeholder="Project address"
-                value={form.project_address}
-                onChange={(e) => setForm((f) => ({ ...f, project_address: e.target.value }))}
-              />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} data-testid="button-cancel">
               Cancel
             </Button>
             <Button
@@ -415,10 +431,10 @@ export function PortalCredentialsManager() {
                 saving ||
                 !form.jurisdiction.trim() ||
                 !form.portal_username.trim() ||
-                !form.portal_password.trim() ||
-                (!form.linkedProjectId && !form.createNewProject)
+                !form.portal_password.trim()
               }
               className="bg-accent hover:bg-accent/90"
+              data-testid="button-save-credential"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               {editingId ? "Update" : "Add"}
@@ -436,10 +452,11 @@ export function PortalCredentialsManager() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => deleteId && handleDelete(deleteId)}
+              data-testid="button-confirm-delete"
             >
               Delete
             </AlertDialogAction>
