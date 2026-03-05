@@ -869,7 +869,7 @@ export function AgentWorkflowStatus() {
     try {
       const { data: credentials, error: credError } = await supabase
         .from("portal_credentials")
-        .select("portal_username, portal_password, permit_number, project_id")
+        .select("portal_username, portal_password, permit_number, project_id, login_url, jurisdiction")
         .eq("user_id", user!.id);
 
       if (credError) throw new Error("Failed to load portal credentials");
@@ -878,12 +878,20 @@ export function AgentWorkflowStatus() {
           "No portal credentials found. Add credentials in Settings.",
         );
 
-      const cred =
-        credentials.find((c) => c.project_id === projectIdToUse) ??
-        (permitNumberToUse
-          ? credentials.find((c) => c.permit_number === permitNumberToUse)
-          : null) ??
-        credentials[0];
+      const cred = credentials.find((c) => c.project_id === projectIdToUse);
+      if (!cred) {
+        throw new Error(
+          "No portal credentials found for this project. Please add credentials in Settings and link them to this project.",
+        );
+      }
+
+      const loginUrl = cred.login_url?.trim();
+      if (!loginUrl) {
+        throw new Error(
+          `Missing Portal URL for ${cred.jurisdiction || "this jurisdiction"}. Please update Settings.`,
+        );
+      }
+
       const username = cred.portal_username;
       const password = cred.portal_password;
 
@@ -894,7 +902,7 @@ export function AgentWorkflowStatus() {
         loginRes = await fetch(`${SCRAPER_URL}/api/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ username, password, portalUrl: loginUrl }),
         });
       } catch (fetchErr) {
         throw new Error("SCRAPER_OFFLINE");

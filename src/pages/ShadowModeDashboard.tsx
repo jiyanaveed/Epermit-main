@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { useProjects } from "@/hooks/useProjects";
+import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { supabase } from "@/lib/supabase";
 import {
   Card,
@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -38,7 +37,6 @@ import {
   TrendingUp,
   FileDown,
   Info,
-  FolderKanban,
   ShieldAlert,
   Trophy,
   Timer,
@@ -293,8 +291,7 @@ export default function ShadowModeDashboardWrapper() {
 function ShadowModeDashboardInner() {
   useAuth();
   const navigate = useNavigate();
-  const { projects } = useProjects();
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const { selectedProjectId } = useSelectedProject();
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>("total");
   const [data, setData] = useState<ShadowMetricsData | null>(null);
   const [predictions, setPredictions] = useState<ShadowPrediction[]>([]);
@@ -622,28 +619,13 @@ function ShadowModeDashboardInner() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3">
-        <FolderKanban className="h-4 w-4 text-muted-foreground" />
-        <Select
-          value={selectedProjectId ?? "__all__"}
-          onValueChange={(v) => setSelectedProjectId(v === "__all__" ? null : v)}
-        >
-          <SelectTrigger className="w-[320px]" data-testid="select-shadow-project">
-            <SelectValue placeholder="Filter by project..." />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All Projects</SelectItem>
-            {(projects ?? []).map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {selectedProjectId && (
-          <Badge variant="secondary" className="text-xs">
-            Filtered
+      {selectedProjectId && (
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="text-xs" data-testid="badge-project-filtered">
+            Filtered by sidebar project
           </Badge>
-        )}
-      </div>
+        </div>
+      )}
 
       {error && (
         <Card className="border-red-500/30 bg-red-500/5">

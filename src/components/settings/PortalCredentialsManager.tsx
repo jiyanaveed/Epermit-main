@@ -40,6 +40,7 @@ export interface PortalCredential {
   jurisdiction: string;
   portal_username: string;
   portal_password: string;
+  login_url: string | null;
   permit_number: string | null;
   project_address: string | null;
   project_id: string | null;
@@ -53,10 +54,13 @@ interface ProjectOption {
   address: string | null;
 }
 
+const DEFAULT_PORTAL_URL = "https://washington-dc-us.avolvecloud.com";
+
 const defaultForm = {
   jurisdiction: "",
   portal_username: "",
   portal_password: "",
+  login_url: DEFAULT_PORTAL_URL,
   project_address: "",
   linkedProjectId: "" as string,
   createNewProject: false,
@@ -124,6 +128,7 @@ export function PortalCredentialsManager() {
       jurisdiction: row.jurisdiction,
       portal_username: row.portal_username,
       portal_password: row.portal_password,
+      login_url: row.login_url ?? DEFAULT_PORTAL_URL,
       project_address: row.project_address ?? "",
       linkedProjectId: row.project_id ?? "",
       createNewProject: false,
@@ -176,6 +181,7 @@ export function PortalCredentialsManager() {
         jurisdiction: form.jurisdiction.trim(),
         portal_username: form.portal_username.trim(),
         portal_password: form.portal_password.trim(),
+        login_url: form.login_url.trim() || DEFAULT_PORTAL_URL,
         permit_number: permitNumber,
         project_address: form.project_address.trim() || null,
         project_id: projectId,
@@ -262,6 +268,9 @@ export function PortalCredentialsManager() {
                       {c.portal_username}
                       {c.permit_number ? ` · Permit: ${c.permit_number}` : ""}
                     </p>
+                    {c.login_url && (
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">{c.login_url}</p>
+                    )}
                     {c.project_address && (
                       <p className="text-xs text-muted-foreground truncate mt-0.5">{c.project_address}</p>
                     )}
@@ -328,6 +337,19 @@ export function PortalCredentialsManager() {
               >
                 {showPassword ? "Hide" : "Show"} password
               </Button>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="login_url">Portal URL</Label>
+              <Input
+                id="login_url"
+                placeholder="https://washington-dc-us.avolvecloud.com"
+                value={form.login_url}
+                onChange={(e) => setForm((f) => ({ ...f, login_url: e.target.value }))}
+                data-testid="input-login-url"
+              />
+              <p className="text-xs text-muted-foreground">
+                The Avolve/ProjectDox login URL for this jurisdiction.
+              </p>
             </div>
             <div className="grid gap-2">
               <Label>Link to Project <span className="text-destructive">*</span></Label>

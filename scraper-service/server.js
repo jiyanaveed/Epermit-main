@@ -29,8 +29,19 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = 3001;
-const DASHBOARD_URL = "https://washington-dc-us.avolvecloud.com";
-const WEBUI_BASE = "https://washington-dc-us-projectdoxwebui.avolvecloud.com";
+const DEFAULT_DASHBOARD_URL = "https://washington-dc-us.avolvecloud.com";
+
+function deriveWebUiBase(dashboardUrl) {
+  try {
+    const u = new URL(dashboardUrl);
+    const parts = u.hostname.split(".");
+    if (parts.length >= 2 && parts[0]) {
+      parts[0] = parts[0] + "-projectdoxwebui";
+      return `${u.protocol}//${parts.join(".")}`;
+    }
+  } catch (e) {}
+  return "https://washington-dc-us-projectdoxwebui.avolvecloud.com";
+}
 
 // ─── Supabase: load from .env ───────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -71,8 +82,8 @@ app.get("/api/progress/:sessionId", (req, res) => {
 });
 
 // ─── Login helper ────────────────────────────────────────────────────────────
-async function performLogin(page, username, password) {
-  await page.goto(DASHBOARD_URL, { waitUntil: "networkidle", timeout: 45000 });
+async function performLogin(page, username, password, dashboardUrl) {
+  await page.goto(dashboardUrl, { waitUntil: "networkidle", timeout: 45000 });
   await page.waitForTimeout(2000);
   let url = page.url();
   console.log(`  Landed on: ${url}`);
@@ -201,7 +212,11 @@ async function performLogin(page, username, password) {
 
 // ─── Login endpoint ──────────────────────────────────────────────────────────
 app.post("/api/login", async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, portalUrl } = req.body;
+  const dashboardUrl = (portalUrl && portalUrl.trim()) ? portalUrl.trim().replace(/\/+$/, "").replace(/\/User\/Index$/i, "") : DEFAULT_DASHBOARD_URL;
+  const webUiBase = deriveWebUiBase(dashboardUrl);
+  console.log(`Portal URL: ${dashboardUrl}`);
+  console.log(`WebUI Base: ${webUiBase}`);
   let browser;
   try {
     console.log("🔐 Launching browser...");
@@ -211,15 +226,14 @@ app.post("/api/login", async (req, res) => {
       deviceScaleFactor: 2,
     });
     const page = await context.newPage();
-    await performLogin(page, username, password);
+    await performLogin(page, username, password, dashboardUrl);
     console.log("✅ Login successful!");
 
-    // Ensure dashboard
     if (
       !page.url().includes("avolvecloud.com") ||
       page.url().includes("projectdoxwebui")
     ) {
-      await page.goto(DASHBOARD_URL, {
+      await page.goto(dashboardUrl, {
         waitUntil: "networkidle",
         timeout: 30000,
       });
@@ -307,7 +321,7 @@ app.post("/api/login", async (req, res) => {
         await page.waitForTimeout(3000);
         const testPage = await context.newPage();
         await testPage.goto(
-          `${WEBUI_BASE}/WebForms/Frame.aspx?tab=projectStatusTab&ProjectID=${firstProject.projectId}`,
+          `${webUiBase}/WebForms/Frame.aspx?tab=projectStatusTab&ProjectID=${firstProject.projectId}`,
           {
             waitUntil: "networkidle",
             timeout: 30000,
@@ -328,6 +342,8 @@ app.post("/api/login", async (req, res) => {
       page,
       username,
       password,
+      dashboardUrl,
+      webUiBase,
       message: `Found ${projects.length} projects`,
       progress: 0,
       total: 0,
@@ -464,7 +480,7 @@ async function scrapeAll(
       let page;
       try {
         page = await context.newPage();
-        const webUiUrl = `${WEBUI_BASE}/WebForms/Frame.aspx?tab=${tab.param}&ProjectID=${project.projectId}`;
+        const webUiUrl = `${session.webUiBase}/WebForms/Frame.aspx?tab=${tab.param}&ProjectID=${project.projectId}`;
         await page.goto(webUiUrl, { waitUntil: "networkidle", timeout: 30000 });
         await page.waitForTimeout(2000);
 
