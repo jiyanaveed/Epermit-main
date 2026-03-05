@@ -301,6 +301,7 @@ function ShadowModeDashboardInner() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [circuitBreaker, setCircuitBreaker] = useState<CircuitBreakerData | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [projects, setProjects] = useState<{ id: string; name: string; permit_number: string | null }[]>([]);
 
   const fetchPredictions = useCallback(async (projectId: string | null) => {
     try {
@@ -367,6 +368,12 @@ function ShadowModeDashboardInner() {
     fetchMetrics(selectedProjectId);
     fetchPredictions(selectedProjectId);
     fetchCircuitBreaker(selectedProjectId);
+    supabase
+      .from("projects")
+      .select("id, name, permit_number")
+      .then(({ data }) => {
+        if (data) setProjects(data as { id: string; name: string; permit_number: string | null }[]);
+      });
   }, [fetchMetrics, fetchPredictions, fetchCircuitBreaker, selectedProjectId]);
 
   const exportWeeklyReport = useCallback(async () => {
