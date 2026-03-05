@@ -538,15 +538,36 @@ export function AgentWorkflowStatus() {
 
   const runChainedPipeline = useCallback(
     async (projectId: string) => {
+      console.log("[CHAIN DEBUG] runChainedPipeline called with projectId:", projectId);
       setChainError(null);
 
-      const { data: projectRow } = await supabase
+      const { data: projectRow, error: projectRowErr } = await supabase
         .from("projects")
-        .select("is_shadow_mode")
+        .select("is_shadow_mode, portal_data")
         .eq("id", projectId)
         .maybeSingle();
+
+      if (projectRowErr) {
+        console.error("[CHAIN DEBUG] Failed to fetch project row:", projectRowErr.message);
+      }
+
+      const portalData = projectRow?.portal_data as Record<string, unknown> | null;
+      const pdfs = (portalData?.tabs as Record<string, unknown>)?.reports as Record<string, unknown>;
+      const pdfCount = Array.isArray(pdfs?.pdfs) ? pdfs.pdfs.length : 0;
+      const reviewCommentPdfs = Array.isArray(pdfs?.pdfs)
+        ? (pdfs.pdfs as { fileName?: string; text?: string }[]).filter(
+            (p) => p.fileName?.toLowerCase().includes("review comments") && p.text && p.text.trim().length > 0
+          )
+        : [];
+      console.log("[CHAIN DEBUG] portal_data check — total PDFs:", pdfCount, "review comment PDFs:", reviewCommentPdfs.length,
+        reviewCommentPdfs.map(p => `${p.fileName} (${p.text?.length ?? 0} chars)`));
+      if (reviewCommentPdfs.length === 0) {
+        console.warn("[CHAIN DEBUG] ⚠️ No 'Review Comments' PDFs found in portal_data — comment parser will return 0 parsed");
+      }
+
       const shadowActive = projectRow?.is_shadow_mode === true;
       setIsShadowMode(shadowActive);
+      console.log("[CHAIN DEBUG] shadowActive:", shadowActive);
       if (shadowActive) {
         toast.info("Shadow Mode active — all results will be logged to shadow tables.");
       }
@@ -564,6 +585,7 @@ export function AgentWorkflowStatus() {
       let intakeFailed = false;
       try {
         while (round < maxRounds) {
+          console.log("[CHAIN DEBUG] Intake round:", round, "cursor:", cursor);
           const { data: pipelineData, error: pipelineError } =
             await supabase.functions.invoke("intake-pipeline-agent", {
               body: {
@@ -572,6 +594,7 @@ export function AgentWorkflowStatus() {
                 ...(cursor && { cursor }),
               },
             });
+          console.log("[CHAIN DEBUG] Intake response — data:", JSON.stringify(pipelineData)?.slice(0, 500), "error:", pipelineError);
           if (pipelineError) {
             console.warn("Intake pipeline error:", pipelineError);
             intakeFailed = true;
@@ -660,8 +683,22 @@ export function AgentWorkflowStatus() {
         return;
       }
 
+      const { data: preClassRows, error: preClassErr } = await supabase
+        .from("parsed_comments")
+        .select("id, discipline, status")
+        .eq("project_id", projectId);
+      if (preClassErr) {
+        console.error("[CHAIN DEBUG] Failed to query parsed_comments:", preClassErr.message);
+      } else {
+        const rows = preClassRows ?? [];
+        const unclassified = rows.filter((r: { discipline: string | null }) => !r.discipline || r.discipline === "General" || r.discipline === "Unclassified" || r.discipline === "");
+        const pending = rows.filter((r: { status: string | null }) => r.status === "Pending");
+        console.log("[CHAIN DEBUG] Pre-classifier parsed_comments:", rows.length, "total,", unclassified.length, "unclassified,", pending.length, "pending");
+      }
+
       setChainPhase("classifier");
       toast.info("Chain Step 3/5: Discipline Classifier...");
+      console.log("[CHAIN DEBUG] Step 3: Calling discipline-classifier-agent for project:", projectId, "shadow:", shadowActive);
       let classifierFailed2 = false;
       try {
         const { data: classData, error: classError } =
@@ -671,6 +708,7 @@ export function AgentWorkflowStatus() {
               is_shadow_mode: shadowActive,
             },
           });
+        console.log("[CHAIN DEBUG] Classifier response — data:", JSON.stringify(classData), "error:", classError);
         if (classError) {
           classifierFailed2 = true;
           const errMsg =
@@ -1098,8 +1136,11 @@ export function AgentWorkflowStatus() {
             toast.success(
               `Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
             );
+            console.log("[CHAIN DEBUG] Scrape complete callback fired. projectIdToUse:", projectIdToUse);
             await loadDashboardData();
+            console.log("[CHAIN DEBUG] loadDashboardData done, starting chained pipeline...");
             await runChainedPipeline(projectIdToUse);
+            console.log("[CHAIN DEBUG] runChainedPipeline finished.");
           };
           return true;
         }

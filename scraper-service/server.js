@@ -659,9 +659,8 @@ async function scrapeAll(
     }
   }
 
-  session.status = "done";
-  session.message = `Scraping complete! ${projects.length} projects extracted.`;
-  console.log(`\n✅ Done!`);
+  session.message = `Scraping complete! Syncing to database...`;
+  console.log(`\n✅ Done! Syncing to Supabase...`);
 
   // ─── 💾 SYNC TO SUPABASE (after scraping completes) ─────────────────────────
   for (let i = 0; i < projects.length; i++) {
@@ -800,6 +799,10 @@ async function scrapeAll(
       console.error("   ❌ DB Error:", dbErr.message);
     }
   }
+
+  session.status = "done";
+  session.message = `Scraping complete! ${projects.length} projects extracted and synced.`;
+  console.log(`   ✅ Supabase sync complete — session status set to "done"`);
 }
 
 async function extractPDFsFromPage(page, context) {

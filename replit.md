@@ -28,7 +28,8 @@ Preferred communication style: Simple, everyday language.
 - **Technology:** Separate Node.js/Express app using Playwright (Chromium) for browser automation.
 - **Functionality:** Logs into ProjectDox/Avolve portals to extract project data, report PDFs, and syncs this information back to Supabase.
 - **Dynamic Portal Routing:** The scraper accepts a `portalUrl` parameter in `/api/login` requests. It derives the WebUI base URL dynamically from the portal URL (subdomain + `-projectdoxwebui`). Both URLs are stored in the session object for use by `/api/scrape`. Falls back to Washington DC URL if no portal URL is provided.
-- **Credential Matching:** The frontend strictly matches credentials by `project_id` from the sidebar's selected project. No fallback to first credential. Missing credentials or portal URL produce clear toast error messages.
+- **Credential Matching:** The frontend matches credentials by jurisdiction (exact match → partial match → single-credential fallback). Missing credentials or portal URL produce clear toast error messages.
+- **Sync-before-done:** The scraper sets `session.status = "done"` only AFTER the Supabase sync completes, preventing race conditions where the frontend starts the AI chain before portal_data is saved.
 - **Deployment:** Runs locally, proxied by Vite for frontend access.
 
 ### Shadow Mode
