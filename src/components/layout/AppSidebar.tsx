@@ -25,10 +25,12 @@ import {
   Star,
   StarOff,
   X,
-  Table2
+  Table2,
+  KeyRound
 } from "lucide-react";
 import { useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
+import { supabase } from "@/lib/supabase";
 import {
   Select,
   SelectContent,
@@ -201,6 +203,39 @@ export function AppSidebar() {
   const selectedProject = useSelectedProjectOptional();
   const { projects, loading, updateProject, fetchProjects, createProject } = useProjects();
   const isCollapsed = state === "collapsed";
+
+  const [sidebarCredentials, setSidebarCredentials] = useState<{ id: string; jurisdiction: string; portal_username: string }[]>([]);
+  const [selectedCredentialId, setSelectedCredentialId] = useState<string>("");
+
+  useEffect(() => {
+    if (!user) { setSidebarCredentials([]); return; }
+    supabase
+      .from("portal_credentials")
+      .select("id, jurisdiction, portal_username")
+      .eq("user_id", user.id)
+      .order("jurisdiction", { ascending: true })
+      .then(({ data }) => setSidebarCredentials(data || []));
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!selectedProject?.selectedProjectId || loading || projects.length === 0) return;
+    const p = projects.find((pr) => pr.id === selectedProject.selectedProjectId);
+    setSelectedCredentialId((p as any)?.credential_id ?? "");
+  }, [selectedProject?.selectedProjectId, projects, loading]);
+
+  const handleCredentialChange = useCallback(async (value: string) => {
+    const credId = value === "__none__" ? null : value;
+    const previousValue = selectedCredentialId;
+    setSelectedCredentialId(credId ?? "");
+    if (!selectedProject?.selectedProjectId || !user) return;
+    const updated = await updateProject(selectedProject.selectedProjectId, { credential_id: credId });
+    if (updated) {
+      fetchProjects();
+    } else {
+      setSelectedCredentialId(previousValue);
+      toast.error("Failed to update credential");
+    }
+  }, [selectedProject?.selectedProjectId, user, updateProject, fetchProjects, selectedCredentialId]);
 
   // Permit number is the primary input; persisted per user. Never derived from project.
   const [permitNumber, setPermitNumber] = useState("");
@@ -583,6 +618,30 @@ export function AppSidebar() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {selectedProject.selectedProjectId && sidebarCredentials.length > 0 && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                        <KeyRound className="h-3 w-3" />
+                        Portal Credential
+                      </Label>
+                      <Select
+                        value={selectedCredentialId || "__none__"}
+                        onValueChange={handleCredentialChange}
+                      >
+                        <SelectTrigger className="h-9 w-full" data-testid="select-sidebar-credential">
+                          <SelectValue placeholder="Auto-match" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Auto-match by jurisdiction</SelectItem>
+                          {sidebarCredentials.map((cred) => (
+                            <SelectItem key={cred.id} value={cred.id}>
+                              {cred.jurisdiction}{cred.portal_username ? ` — ${cred.portal_username}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   {!selectedProject.selectedProjectId && permitNumber.trim() && (
                     <p className="text-xs text-muted-foreground">Select a project above or create one below.</p>
                   )}
