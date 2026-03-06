@@ -295,35 +295,62 @@ async function searchPermit(page, portalUrl, permitNumber) {
   }
 
   if (!resultLink) {
-    const gridContainer = await page.$('div.ACA_Grid_OverFlow, table[id*="GridView"], div[id*="resultList"]');
-    if (gridContainer) {
-      const gridLinks = await gridContainer.$$("a");
-      console.log(`  Links inside grid container: ${gridLinks.length}`);
-      for (const gl of gridLinks) {
-        const t = (await gl.textContent().catch(() => "")).trim();
-        const h = (await gl.getAttribute("href").catch(() => "")) || "";
-        const visible = await gl.isVisible().catch(() => false);
-        if (visible && t && !t.includes("Sign In") && !h.includes("Login")) {
-          console.log(`    grid link: "${t}" href="${h.substring(0, 80)}"`);
-          if (!resultLink) resultLink = gl;
-          if (t.includes(permitNumber)) {
-            resultLink = gl;
-            break;
-          }
+    console.log("  Searching via page.evaluate (DOM-level scan)...");
+    const linkInfo = await page.evaluate((pn) => {
+      const allAs = Array.from(document.querySelectorAll("a"));
+      const matches = [];
+      const capDetailLinks = [];
+      for (let i = 0; i < allAs.length; i++) {
+        const a = allAs[i];
+        const text = (a.textContent || "").trim();
+        const href = a.getAttribute("href") || "";
+        const rect = a.getBoundingClientRect();
+        const visible = rect.width > 0 && rect.height > 0;
+        if (text.includes(pn) && visible) {
+          matches.push({ text: text.substring(0, 80), href: href.substring(0, 120), index: i });
+        }
+        if (href.includes("CapDetail") && visible && text.length < 100) {
+          capDetailLinks.push({ text: text.substring(0, 80), href: href.substring(0, 120), index: i });
         }
       }
-    } else {
-      console.log("  No grid container found on page");
-      const allVisibleLinks = [];
-      for (const link of allLinks) {
-        const text = (await link.textContent().catch(() => "")).trim();
-        const href = (await link.getAttribute("href").catch(() => "")) || "";
-        const visible = await link.isVisible().catch(() => false);
-        if (visible && text && text.length < 80 && !href.includes("Login") && !text.includes("Sign In")) {
-          allVisibleLinks.push({ text, href: href.substring(0, 80) });
+
+      const tables = Array.from(document.querySelectorAll("table"));
+      const tableInfo = [];
+      for (const t of tables) {
+        const id = t.getAttribute("id") || "";
+        const cls = t.getAttribute("class") || "";
+        const rows = t.querySelectorAll("tr").length;
+        if (rows > 1 && (id || cls)) {
+          tableInfo.push({ id: id.substring(0, 80), class: cls.substring(0, 60), rows });
         }
       }
-      console.log(`  All visible non-nav links (first 15): ${JSON.stringify(allVisibleLinks.slice(0, 15), null, 2)}`);
+
+      const iframes = document.querySelectorAll("iframe");
+
+      return {
+        matches,
+        capDetailLinks: capDetailLinks.slice(0, 5),
+        tables: tableInfo.slice(0, 10),
+        iframeCount: iframes.length,
+      };
+    }, permitNumber);
+
+    console.log(`  DOM scan results:`);
+    console.log(`    Links matching permit text: ${JSON.stringify(linkInfo.matches)}`);
+    console.log(`    CapDetail links: ${JSON.stringify(linkInfo.capDetailLinks)}`);
+    console.log(`    Tables (>1 row): ${JSON.stringify(linkInfo.tables)}`);
+    console.log(`    Iframes on page: ${linkInfo.iframeCount}`);
+
+    if (linkInfo.matches.length > 0) {
+      const idx = linkInfo.matches[0].index;
+      const allAs = await page.$$("a");
+      resultLink = allAs[idx];
+      console.log(`  Using permit-text match link at index ${idx}`);
+    } else if (linkInfo.capDetailLinks.length > 0) {
+      const idx = linkInfo.capDetailLinks[0].index;
+      const allAs = await page.$$("a");
+      resultLink = allAs[idx];
+      console.log(`  Using CapDetail link at index ${idx}`);
     }
   }
 
