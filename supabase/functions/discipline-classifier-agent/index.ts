@@ -230,24 +230,32 @@ One object per comment in the same order as provided.`;
     let shadowLoggedCount = 0;
     let otherCount = 0;
 
-    const routingDecision = isShadowMode ? "shadow_logged" : "live_update";
-
     for (const c of classifications) {
       const i = c.index;
       if (i < 0 || i >= comments.length) continue;
+
       const row = comments[i];
       const discipline = isDiscipline(c.discipline) ? c.discipline : "Other";
       const confidenceScore = typeof c.confidence_score === "number"
         ? Math.max(0, Math.min(1, c.confidence_score))
         : 0.5;
+
       if (discipline === "Other") otherCount++;
 
+      // STEP 1: ALWAYS update parsed_comments with the classified discipline
       const { error: updateError } = await adminClient
         .from("parsed_comments")
         .update({ discipline })
         .eq("id", row.id);
-      if (!updateError) classifiedCount++;
 
+      // STEP 2: Increment count on success
+      if (!updateError) {
+        classifiedCount++;
+      } else {
+        console.warn("parsed_comments update failed for comment", row.id, updateError.message);
+      }
+
+      // STEP 3: If shadow mode, ADDITIONALLY log to shadow_predictions
       if (isShadowMode) {
         const portalDiscipline = row.discipline ?? null;
         const matchStatus = portalDiscipline && portalDiscipline !== "General" && portalDiscipline !== ""
@@ -277,7 +285,9 @@ One object per comment in the same order as provided.`;
         }
       }
 
+      // STEP 4: Audit trail — record whether this was live or shadow
       try {
+        const routingDecision = isShadowMode ? "shadow_logged" : "live_update";
         const auditPayload: Record<string, unknown> = {
           project_id: row.project_id,
           actor_id: "Discipline Classifier",
