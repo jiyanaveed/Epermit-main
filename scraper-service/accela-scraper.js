@@ -231,25 +231,37 @@ async function searchPermit(page, portalUrl, permitNumber) {
       }
       searchBtn = null;
     }
+
+    const beforeSearchHtml = (await page.content()).length;
+
     if (searchBtn) {
-      await Promise.all([
-        page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-        searchBtn.click(),
-      ]);
+      await searchBtn.click();
     } else {
       console.log("  No search button found, pressing Enter");
       await permitField.press("Enter");
-      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
     }
-    await page.waitForTimeout(3000);
+
+    console.log("  Waiting for search results to load (ASP.NET postback)...");
+    for (let wait = 0; wait < 20; wait++) {
+      await page.waitForTimeout(1500);
+      const gridEl = await page.$('div.ACA_Grid_OverFlow, table[id*="GridView"], div[id*="resultList"], div[id*="SearchResult"], table.ACA_GridView_Caption');
+      if (gridEl && (await gridEl.isVisible().catch(() => false))) {
+        console.log(`  Results grid appeared after ${(wait + 1) * 1.5}s`);
+        break;
+      }
+      const afterHtml = (await page.content()).length;
+      if (Math.abs(afterHtml - beforeSearchHtml) > 500 && wait >= 2) {
+        console.log(`  Page content changed significantly (${beforeSearchHtml} → ${afterHtml}), results likely loaded`);
+        break;
+      }
+      if (wait === 19) {
+        console.log("  Results grid did not appear after 30s — checking page content...");
+      }
+    }
+    await page.waitForTimeout(2000);
   }
 
   console.log(`  After search URL: ${page.url()}`);
-
-  await page.waitForSelector('div[id*="resultList"], div[id*="SearchResult"], table[id*="GridView"], div.ACA_Grid_OverFlow', { timeout: 15000 }).catch(() => {
-    console.log("  No result grid appeared within 15s, continuing anyway...");
-  });
-  await page.waitForTimeout(2000);
 
   const noResultsEl = await page.$('[id*="NoDataMessage"], .ACA_NoDataMessage, td:has-text("No record found")');
   if (noResultsEl && (await noResultsEl.isVisible().catch(() => false))) {
