@@ -121,20 +121,15 @@ serve(async (req) => {
 
     const projectFilter = projectId ? [projectId] : projectIds;
 
-    let query = supabase
+    const query = supabase
       .from("parsed_comments")
       .select("id, original_text, project_id, discipline")
       .in("project_id", projectFilter)
+      .or("discipline.is.null,discipline.eq.General,discipline.eq.Unclassified")
+      .eq("status", "Pending")
       .limit(batchLimit);
 
-    if (isShadowMode) {
-      console.log("[DEBUG] discipline-classifier query: shadow mode — fetching ALL comments (including already-classified), project_id in", projectFilter.length, "projects, limit=", batchLimit);
-    } else {
-      query = query
-        .or("discipline.is.null,discipline.eq.General,discipline.eq.Unclassified")
-        .eq("status", "Pending");
-      console.log("[DEBUG] discipline-classifier query: live mode — filter=(discipline IS NULL OR discipline='General' OR discipline='Unclassified'), status=Pending, project_id in", projectFilter.length, "projects, limit=", batchLimit);
-    }
+    console.log("[DEBUG] discipline-classifier query: filter=(discipline IS NULL OR discipline='General' OR discipline='Unclassified'), status=Pending, project_id in", projectFilter.length, "projects, limit=", batchLimit, "shadow_mode=", isShadowMode);
 
     const { data: rows, error: fetchError } = await query;
 
