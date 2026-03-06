@@ -295,62 +295,47 @@ async function searchPermit(page, portalUrl, permitNumber) {
   }
 
   if (!resultLink) {
-    console.log("  Searching via page.evaluate (DOM-level scan)...");
-    const linkInfo = await page.evaluate((pn) => {
-      const allAs = Array.from(document.querySelectorAll("a"));
-      const matches = [];
-      const capDetailLinks = [];
-      for (let i = 0; i < allAs.length; i++) {
-        const a = allAs[i];
-        const text = (a.textContent || "").trim();
-        const href = a.getAttribute("href") || "";
-        const rect = a.getBoundingClientRect();
-        const visible = rect.width > 0 && rect.height > 0;
-        if (text.includes(pn) && visible) {
-          matches.push({ text: text.substring(0, 80), href: href.substring(0, 120), index: i });
+    console.log("  Searching iframes for permit link...");
+    const frames = page.frames();
+    console.log(`  Total frames: ${frames.length}`);
+
+    for (let fi = 0; fi < frames.length; fi++) {
+      const frame = frames[fi];
+      const frameName = frame.name() || frame.url() || `frame-${fi}`;
+      try {
+        const frameContent = await frame.content().catch(() => "");
+        if (!frameContent.includes(permitNumber)) continue;
+        console.log(`  Frame ${fi} ("${frameName.substring(0, 60)}") contains permit number!`);
+
+        const frameLinks = await frame.evaluate((pn) => {
+          const allAs = Array.from(document.querySelectorAll("a"));
+          const results = [];
+          for (let i = 0; i < allAs.length; i++) {
+            const a = allAs[i];
+            const text = (a.textContent || "").trim();
+            const href = a.getAttribute("href") || "";
+            const onclick = a.getAttribute("onclick") || "";
+            const rect = a.getBoundingClientRect();
+            const visible = rect.width > 0 && rect.height > 0;
+            if ((text.includes(pn) || href.includes("CapDetail")) && (visible || href)) {
+              results.push({ text: text.substring(0, 80), href: href.substring(0, 120), onclick: onclick.substring(0, 120), index: i, visible });
+            }
+          }
+          return results;
+        }, permitNumber);
+
+        console.log(`  Frame ${fi} matching links: ${JSON.stringify(frameLinks)}`);
+
+        if (frameLinks.length > 0) {
+          const bestMatch = frameLinks.find(l => l.text.includes(permitNumber)) || frameLinks[0];
+          const frameAs = await frame.$$("a");
+          resultLink = frameAs[bestMatch.index];
+          console.log(`  Using frame ${fi} link at index ${bestMatch.index}: "${bestMatch.text}"`);
+          break;
         }
-        if (href.includes("CapDetail") && visible && text.length < 100) {
-          capDetailLinks.push({ text: text.substring(0, 80), href: href.substring(0, 120), index: i });
-        }
+      } catch (e) {
+        console.log(`  Frame ${fi} error: ${e.message}`);
       }
-
-      const tables = Array.from(document.querySelectorAll("table"));
-      const tableInfo = [];
-      for (const t of tables) {
-        const id = t.getAttribute("id") || "";
-        const cls = t.getAttribute("class") || "";
-        const rows = t.querySelectorAll("tr").length;
-        if (rows > 1 && (id || cls)) {
-          tableInfo.push({ id: id.substring(0, 80), class: cls.substring(0, 60), rows });
-        }
-      }
-
-      const iframes = document.querySelectorAll("iframe");
-
-      return {
-        matches,
-        capDetailLinks: capDetailLinks.slice(0, 5),
-        tables: tableInfo.slice(0, 10),
-        iframeCount: iframes.length,
-      };
-    }, permitNumber);
-
-    console.log(`  DOM scan results:`);
-    console.log(`    Links matching permit text: ${JSON.stringify(linkInfo.matches)}`);
-    console.log(`    CapDetail links: ${JSON.stringify(linkInfo.capDetailLinks)}`);
-    console.log(`    Tables (>1 row): ${JSON.stringify(linkInfo.tables)}`);
-    console.log(`    Iframes on page: ${linkInfo.iframeCount}`);
-
-    if (linkInfo.matches.length > 0) {
-      const idx = linkInfo.matches[0].index;
-      const allAs = await page.$$("a");
-      resultLink = allAs[idx];
-      console.log(`  Using permit-text match link at index ${idx}`);
-    } else if (linkInfo.capDetailLinks.length > 0) {
-      const idx = linkInfo.capDetailLinks[0].index;
-      const allAs = await page.$$("a");
-      resultLink = allAs[idx];
-      console.log(`  Using CapDetail link at index ${idx}`);
     }
   }
 
