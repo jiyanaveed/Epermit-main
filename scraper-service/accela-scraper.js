@@ -87,20 +87,47 @@ async function accelaLogin(page, username, password, portalUrl) {
   ];
 
   let loginBtn = await findFieldInFrames(page, loginBtnSelectors);
+
+  console.log(`  Login button found: ${!!loginBtn}`);
+  if (!loginBtn) {
+    const allAnchors = await page.$$("a");
+    for (const a of allAnchors) {
+      const text = (await a.textContent().catch(() => "")).trim().toUpperCase();
+      const visible = await a.isVisible().catch(() => false);
+      if (visible && (text === "SIGN IN" || text === "LOG IN" || text === "LOGIN")) {
+        loginBtn = a;
+        console.log(`  Found login anchor by text: "${text}"`);
+        break;
+      }
+    }
+  }
+
   if (loginBtn) {
     await Promise.all([
       page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
       loginBtn.click(),
     ]);
   } else {
+    console.log("  No login button found, pressing Enter");
     await page.keyboard.press("Enter");
     await page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {});
   }
   await page.waitForTimeout(3000);
 
   const url = page.url();
+  console.log(`  After login URL: ${url}`);
+
+  const logoutLink = await page.$('a[href*="Logout"], a:has-text("Logout"), a:has-text("Log Out"), a:has-text("Sign Out")');
+  const myAccountLink = await page.$('a:has-text("My Account"), a:has-text("My Records"), a:has-text("Dashboard")');
+  const welcomeText = await page.$('[id*="Welcome"], [class*="welcome"], [id*="loggedIn"]');
+
+  if (logoutLink || myAccountLink || welcomeText) {
+    console.log(`  Login confirmed (found post-login elements)`);
+    return url;
+  }
+
   if (url.includes("Login.aspx") || url.includes("login")) {
-    const errorEl = await page.$(".ACA_Error, .error-message, [id*='Error'], [id*='error']");
+    const errorEl = await page.$(".ACA_Error, .error-message, [id*='Error'], [id*='error'], .font11px");
     const errorText = errorEl ? await errorEl.textContent().catch(() => "") : "";
     throw new Error("Accela login failed" + (errorText ? `: ${errorText.trim()}` : ""));
   }
