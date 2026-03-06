@@ -960,7 +960,7 @@ export function AgentWorkflowStatus() {
 
       const { data: credentials, error: credError } = await supabase
         .from("portal_credentials")
-        .select("portal_username, portal_password, permit_number, login_url, jurisdiction")
+        .select("id, portal_username, portal_password, permit_number, login_url, jurisdiction, project_id")
         .eq("user_id", user!.id);
 
       if (credError) throw new Error("Failed to load portal credentials");
@@ -971,7 +971,16 @@ export function AgentWorkflowStatus() {
 
       let cred: (typeof credentials)[number] | undefined;
 
-      if (projectJurisdiction) {
+      cred = credentials.find((c) => c.project_id === projectIdToUse);
+
+      if (!cred) {
+        const projectPermitNumber = projectBySelectedId?.permit_number?.trim() || "";
+        if (projectPermitNumber) {
+          cred = credentials.find((c) => c.permit_number?.trim() === projectPermitNumber);
+        }
+      }
+
+      if (!cred && projectJurisdiction) {
         cred = credentials.find(
           (c) =>
             c.jurisdiction?.toLowerCase() === projectJurisdiction.toLowerCase(),
@@ -992,7 +1001,7 @@ export function AgentWorkflowStatus() {
           throw new Error(
             projectJurisdiction
               ? `No portal credentials found for jurisdiction "${projectJurisdiction}". Please add credentials in Settings.`
-              : "This project has no jurisdiction set. Please set a jurisdiction on the project, or ensure you have exactly one set of portal credentials in Settings.",
+              : "This project has no jurisdiction set. Please set a jurisdiction on the project, or link a credential to this project in Settings. You can also set it to one credential if only one portal is used.",
           );
         }
       }
