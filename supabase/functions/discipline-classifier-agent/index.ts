@@ -242,6 +242,12 @@ One object per comment in the same order as provided.`;
         : 0.5;
       if (discipline === "Other") otherCount++;
 
+      const { error: updateError } = await supabase
+        .from("parsed_comments")
+        .update({ discipline })
+        .eq("id", row.id);
+      if (!updateError) classifiedCount++;
+
       if (isShadowMode) {
         const portalDiscipline = row.discipline ?? null;
         const matchStatus = portalDiscipline && portalDiscipline !== "General" && portalDiscipline !== ""
@@ -269,13 +275,6 @@ One object per comment in the same order as provided.`;
         } catch (err) {
           console.warn("shadow_predictions insert exception for comment", row.id, err);
         }
-      } else {
-        const { error: updateError } = await supabase
-          .from("parsed_comments")
-          .update({ discipline })
-          .eq("id", row.id);
-
-        if (!updateError) classifiedCount++;
       }
 
       try {
