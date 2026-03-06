@@ -1,4 +1,4 @@
-modules = ["nodejs-20"]
+modules = ["nodejs-20", "postgresql-16"]
 run = "cd scraper-service && node server.js & npx vite --host 0.0.0.0 --port 8080"
 
 [nix]
