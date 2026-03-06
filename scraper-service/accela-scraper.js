@@ -1,26 +1,59 @@
 const path = require("path");
 
+async function findFieldInFrames(page, selectors) {
+  for (const sel of selectors) {
+    const el = await page.$(sel);
+    if (el && (await el.isVisible().catch(() => false))) return el;
+  }
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    for (const sel of selectors) {
+      try {
+        const el = await frame.$(sel);
+        if (el && (await el.isVisible().catch(() => false))) return el;
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+
 async function accelaLogin(page, username, password, portalUrl) {
   const cleanUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
   const loginUrl = cleanUrl + "/Login.aspx";
   console.log(`  Navigating to Accela login: ${loginUrl}`);
   await page.goto(loginUrl, { waitUntil: "networkidle", timeout: 45000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
+
+  const allInputs = await page.$$("input");
+  console.log(`  Found ${allInputs.length} input elements on page`);
+  for (const inp of allInputs) {
+    const id = await inp.getAttribute("id").catch(() => "");
+    const name = await inp.getAttribute("name").catch(() => "");
+    const type = await inp.getAttribute("type").catch(() => "");
+    const visible = await inp.isVisible().catch(() => false);
+    if (id || name) console.log(`    input: id="${id}" name="${name}" type="${type}" visible=${visible}`);
+  }
 
   const userSelectors = [
     "#ctl00_PlaceHolderMain_LoginBox_txtUserId",
     'input[name*="txtUserId"]',
     'input[name*="UserName"]',
+    'input[name*="userName"]',
+    'input[id*="UserId"]',
+    'input[id*="userId"]',
     'input[type="text"][id*="User"]',
     'input[type="email"]',
-    'input[type="text"]',
   ];
 
-  let userField = null;
-  for (const sel of userSelectors) {
-    userField = await page.$(sel);
-    if (userField && (await userField.isVisible().catch(() => false))) break;
-    userField = null;
+  let userField = await findFieldInFrames(page, userSelectors);
+  if (!userField) {
+    const textInputs = await page.$$('input[type="text"]');
+    for (const inp of textInputs) {
+      if (await inp.isVisible().catch(() => false)) {
+        userField = inp;
+        break;
+      }
+    }
   }
   if (!userField) throw new Error("Cannot find Accela username field");
   await userField.fill(username);
@@ -30,15 +63,13 @@ async function accelaLogin(page, username, password, portalUrl) {
     "#ctl00_PlaceHolderMain_LoginBox_txtPassword",
     'input[name*="txtPassword"]',
     'input[name*="Password"]',
+    'input[name*="password"]',
+    'input[id*="Password"]',
+    'input[id*="password"]',
     'input[type="password"]',
   ];
 
-  let passField = null;
-  for (const sel of passSelectors) {
-    passField = await page.$(sel);
-    if (passField && (await passField.isVisible().catch(() => false))) break;
-    passField = null;
-  }
+  let passField = await findFieldInFrames(page, passSelectors);
   if (!passField) throw new Error("Cannot find Accela password field");
   await passField.fill(password);
   console.log("  Filled password");
@@ -47,16 +78,15 @@ async function accelaLogin(page, username, password, portalUrl) {
     "#ctl00_PlaceHolderMain_LoginBox_btnLogin",
     'input[name*="btnLogin"]',
     'a[id*="btnLogin"]',
+    'a[id*="Login"]',
+    'button:has-text("SIGN IN")',
+    'button:has-text("Sign In")',
+    'button:has-text("Log In")',
     'input[type="submit"]',
     'button[type="submit"]',
   ];
 
-  let loginBtn = null;
-  for (const sel of loginBtnSelectors) {
-    loginBtn = await page.$(sel);
-    if (loginBtn && (await loginBtn.isVisible().catch(() => false))) break;
-    loginBtn = null;
-  }
+  let loginBtn = await findFieldInFrames(page, loginBtnSelectors);
   if (loginBtn) {
     await Promise.all([
       page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
