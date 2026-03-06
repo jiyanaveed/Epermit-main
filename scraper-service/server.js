@@ -8,6 +8,15 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
+const { accelaLogin, scrapeAccelaRecord } = require("./accela-scraper");
+
+function detectPortalType(url) {
+  if (!url) return "projectdox";
+  const lower = url.toLowerCase();
+  if (lower.includes("avolvecloud.com") || lower.includes("projectdox")) return "projectdox";
+  if (lower.includes("accela.com")) return "accela";
+  return "unknown";
+}
 
 function stableStringify(obj) {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -214,9 +223,16 @@ async function performLogin(page, username, password, dashboardUrl) {
 app.post("/api/login", async (req, res) => {
   const { username, password, portalUrl } = req.body;
   const dashboardUrl = (portalUrl && portalUrl.trim()) ? portalUrl.trim().replace(/\/+$/, "").replace(/\/User\/Index$/i, "") : DEFAULT_DASHBOARD_URL;
-  const webUiBase = deriveWebUiBase(dashboardUrl);
+  const portalType = detectPortalType(dashboardUrl);
   console.log(`Portal URL: ${dashboardUrl}`);
-  console.log(`WebUI Base: ${webUiBase}`);
+  console.log(`Portal Type: ${portalType}`);
+
+  if (portalType === "unknown") {
+    return res.status(400).json({ error: "Unsupported portal type. Supported: ProjectDox (avolvecloud.com) and Accela (accela.com)" });
+  }
+
+  const webUiBase = portalType === "projectdox" ? deriveWebUiBase(dashboardUrl) : null;
+  if (webUiBase) console.log(`WebUI Base: ${webUiBase}`);
   let browser;
   try {
     console.log("🔐 Launching browser...");
@@ -226,6 +242,40 @@ app.post("/api/login", async (req, res) => {
       deviceScaleFactor: 2,
     });
     const page = await context.newPage();
+
+    if (portalType === "accela") {
+      await accelaLogin(page, username, password, dashboardUrl);
+      console.log("✅ Accela login successful!");
+
+      await page.screenshot({
+        path: path.join(__dirname, "debug_dashboard.png"),
+        fullPage: true,
+      });
+
+      const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+      sessions[sessionId] = {
+        status: "logged_in",
+        portalType: "accela",
+        portalUrl: dashboardUrl,
+        projects: [],
+        browser,
+        context,
+        page,
+        username,
+        password,
+        dashboardUrl,
+        message: "Logged in to Accela — ready to search permits",
+        progress: 0,
+        total: 0,
+        data: {},
+      };
+      sessions[sessionId]._timeout = setTimeout(
+        () => cleanupSession(sessionId),
+        15 * 60 * 1000,
+      );
+      return res.json({ sessionId, projectCount: 0, projects: [], portalType: "accela", message: "Logged in to Accela. Use /api/scrape with permitNumber to search." });
+    }
+
     await performLogin(page, username, password, dashboardUrl);
     console.log("✅ Login successful!");
 
@@ -336,6 +386,7 @@ app.post("/api/login", async (req, res) => {
       Date.now().toString(36) + Math.random().toString(36).slice(2);
     sessions[sessionId] = {
       status: "logged_in",
+      portalType: "projectdox",
       projects,
       browser,
       context,
@@ -391,6 +442,30 @@ app.post("/api/scrape", async (req, res) => {
     () => cleanupSession(sessionId),
     15 * 60 * 1000,
   );
+
+  if (session.portalType === "accela") {
+    if (!permitNumber || String(permitNumber).trim() === "") {
+      return res.status(400).json({ error: "Accela scraping requires a permitNumber" });
+    }
+    session.status = "scraping";
+    session.total = 1;
+    session.progress = 0;
+    session.message = `Scraping Accela permit: ${permitNumber}`;
+    res.json({ message: "Accela scraping started", total: 1, portalType: "accela" });
+    scrapeAccelaRecord(session, String(permitNumber).trim(), projectId, userId, supabase, hashPortalData)
+      .then(() => {
+        session.status = "done";
+        session.progress = 1;
+        session.message = `Accela scrape complete for ${permitNumber}`;
+        console.log(`   ✅ Accela sync complete — session status set to "done"`);
+      })
+      .catch((err) => {
+        session.status = "error";
+        session.message = `Error: ${err.message}`;
+        console.error("❌ Accela scrape error:", err.message);
+      });
+    return;
+  }
 
   // permitNumber takes priority over projectIds
   let targets;

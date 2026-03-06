@@ -26,8 +26,13 @@ Preferred communication style: Simple, everyday language.
 
 ### Scraper Service
 - **Technology:** Separate Node.js/Express app using Playwright (Chromium) for browser automation.
-- **Functionality:** Logs into ProjectDox/Avolve portals to extract project data, report PDFs, and syncs this information back to Supabase.
-- **Dynamic Portal Routing:** The scraper accepts a `portalUrl` parameter in `/api/login` requests. It derives the WebUI base URL dynamically from the portal URL (subdomain + `-projectdoxwebui`). Both URLs are stored in the session object for use by `/api/scrape`. Falls back to Washington DC URL if no portal URL is provided.
+- **Multi-Portal Support:** Detects portal type from URL and routes to correct scraper:
+  - `avolvecloud.com` / `projectdox` → ProjectDox scraper (`server.js` performLogin + scrapeAll)
+  - `accela.com` → Accela scraper (`accela-scraper.js`)
+  - Otherwise → error "Unsupported portal type"
+- **ProjectDox Scraper:** Logs into ProjectDox/Avolve portals to extract project data, report PDFs, and syncs to Supabase.
+- **Accela Scraper:** (`scraper-service/accela-scraper.js`) Handles Baltimore MD's Accela Citizen Access portal. Supports login, permit search, and extraction of: record info, processing status, plan review comments, related records, attachments, inspections, payments. Data structured in portal_data format compatible with existing frontend Portal Data Viewer.
+- **Dynamic Portal Routing:** The scraper accepts a `portalUrl` parameter in `/api/login` requests. For ProjectDox, it derives the WebUI base URL dynamically from the portal URL (subdomain + `-projectdoxwebui`). For Accela, it navigates directly to the portal URL. Falls back to Washington DC URL if no portal URL is provided.
 - **Credential Matching:** The frontend matches credentials by jurisdiction (exact match → partial match → single-credential fallback). Missing credentials or portal URL produce clear toast error messages.
 - **Sync-before-done:** The scraper sets `session.status = "done"` only AFTER the Supabase sync completes, preventing race conditions where the frontend starts the AI chain before portal_data is saved.
 - **Deployment:** Runs locally, proxied by Vite for frontend access.
