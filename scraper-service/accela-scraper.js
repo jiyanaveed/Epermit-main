@@ -246,43 +246,72 @@ async function searchPermit(page, portalUrl, permitNumber) {
 
   console.log(`  After search URL: ${page.url()}`);
 
+  await page.waitForSelector('div[id*="resultList"], div[id*="SearchResult"], table[id*="GridView"], div.ACA_Grid_OverFlow', { timeout: 15000 }).catch(() => {
+    console.log("  No result grid appeared within 15s, continuing anyway...");
+  });
+  await page.waitForTimeout(2000);
+
   const noResultsEl = await page.$('[id*="NoDataMessage"], .ACA_NoDataMessage, td:has-text("No record found")');
   if (noResultsEl && (await noResultsEl.isVisible().catch(() => false))) {
     throw new Error(`Permit not found in Accela: ${permitNumber}`);
   }
 
-  const allLinks = await page.$$("a");
+  const pageContent = await page.content();
+  const permitInPage = pageContent.includes(permitNumber);
+  console.log(`  Permit number "${permitNumber}" found in page HTML: ${permitInPage}`);
+
   let resultLink = null;
+
+  const allLinks = await page.$$("a");
   for (const link of allLinks) {
     const text = (await link.textContent().catch(() => "")).trim();
-    if (text.includes(permitNumber) || text === permitNumber) {
+    const href = (await link.getAttribute("href").catch(() => "")) || "";
+    if ((text.includes(permitNumber) || href.includes("CapDetail")) && text.length < 100) {
       const visible = await link.isVisible().catch(() => false);
-      if (visible) {
-        console.log(`  Found result link with text: "${text}"`);
-        resultLink = link;
-        break;
+      if (visible && !href.includes("Login") && !text.includes("Sign In") && !text.includes("Create")) {
+        console.log(`  Found candidate link: "${text}" href="${href.substring(0, 100)}"`);
+        if (text.includes(permitNumber)) {
+          resultLink = link;
+          console.log(`  ✓ Exact permit match`);
+          break;
+        }
+        if (!resultLink && href.includes("CapDetail")) {
+          resultLink = link;
+        }
       }
     }
   }
 
   if (!resultLink) {
-    resultLink = await page.$(`td a[href*="CapDetail"], a[href*="CapDetail"]`);
-    if (resultLink) {
-      const linkText = (await resultLink.textContent().catch(() => "")).trim();
-      console.log(`  Found CapDetail link: "${linkText}"`);
-    }
-  }
-
-  if (!resultLink) {
-    const gridLinks = await page.$$('table a, div[id*="grid"] a, div[id*="Grid"] a, div[id*="result"] a, div[id*="Result"] a');
-    console.log(`  Grid/table links found: ${gridLinks.length}`);
-    for (const gl of gridLinks.slice(0, 5)) {
-      const t = (await gl.textContent().catch(() => "")).trim();
-      const h = (await gl.getAttribute("href").catch(() => "")) || "";
-      console.log(`    link: "${t}" href="${h.substring(0, 80)}"`);
-    }
-    if (gridLinks.length > 0) {
-      resultLink = gridLinks[0];
+    const gridContainer = await page.$('div.ACA_Grid_OverFlow, table[id*="GridView"], div[id*="resultList"]');
+    if (gridContainer) {
+      const gridLinks = await gridContainer.$$("a");
+      console.log(`  Links inside grid container: ${gridLinks.length}`);
+      for (const gl of gridLinks) {
+        const t = (await gl.textContent().catch(() => "")).trim();
+        const h = (await gl.getAttribute("href").catch(() => "")) || "";
+        const visible = await gl.isVisible().catch(() => false);
+        if (visible && t && !t.includes("Sign In") && !h.includes("Login")) {
+          console.log(`    grid link: "${t}" href="${h.substring(0, 80)}"`);
+          if (!resultLink) resultLink = gl;
+          if (t.includes(permitNumber)) {
+            resultLink = gl;
+            break;
+          }
+        }
+      }
+    } else {
+      console.log("  No grid container found on page");
+      const allVisibleLinks = [];
+      for (const link of allLinks) {
+        const text = (await link.textContent().catch(() => "")).trim();
+        const href = (await link.getAttribute("href").catch(() => "")) || "";
+        const visible = await link.isVisible().catch(() => false);
+        if (visible && text && text.length < 80 && !href.includes("Login") && !text.includes("Sign In")) {
+          allVisibleLinks.push({ text, href: href.substring(0, 80) });
+        }
+      }
+      console.log(`  All visible non-nav links (first 15): ${JSON.stringify(allVisibleLinks.slice(0, 15), null, 2)}`);
     }
   }
 
@@ -290,12 +319,19 @@ async function searchPermit(page, portalUrl, permitNumber) {
     throw new Error(`No clickable result found for permit: ${permitNumber}`);
   }
 
+  const clickText = (await resultLink.textContent().catch(() => "")).trim();
+  console.log(`  Clicking result: "${clickText}"`);
   await Promise.all([
     page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
     resultLink.click(),
   ]);
   await page.waitForTimeout(3000);
-  console.log(`  Opened record detail: ${page.url()}`);
+  const detailUrl = page.url();
+  console.log(`  Opened record detail: ${detailUrl}`);
+
+  if (detailUrl.includes("Login.aspx")) {
+    throw new Error("Session expired — landed on login page after clicking result. Try again.")
+  }
 }
 
 async function extractRecordHeader(page) {
