@@ -295,42 +295,70 @@ async function searchPermit(page, portalUrl, permitNumber) {
   }
 
   if (!resultLink) {
-    console.log("  Searching iframes for permit link...");
+    console.log("  Searching all frames for ANY element containing permit number...");
     const frames = page.frames();
     console.log(`  Total frames: ${frames.length}`);
 
     for (let fi = 0; fi < frames.length; fi++) {
       const frame = frames[fi];
-      const frameName = frame.name() || frame.url() || `frame-${fi}`;
       try {
         const frameContent = await frame.content().catch(() => "");
         if (!frameContent.includes(permitNumber)) continue;
-        console.log(`  Frame ${fi} ("${frameName.substring(0, 60)}") contains permit number!`);
+        console.log(`  Frame ${fi} contains permit number!`);
 
-        const frameLinks = await frame.evaluate((pn) => {
-          const allAs = Array.from(document.querySelectorAll("a"));
+        const elemInfo = await frame.evaluate((pn) => {
           const results = [];
-          for (let i = 0; i < allAs.length; i++) {
-            const a = allAs[i];
-            const text = (a.textContent || "").trim();
-            const href = a.getAttribute("href") || "";
-            const onclick = a.getAttribute("onclick") || "";
-            const rect = a.getBoundingClientRect();
+          const allEls = document.querySelectorAll("a, span, td, div, button, label, tr");
+          for (let i = 0; i < allEls.length; i++) {
+            const el = allEls[i];
+            const directText = Array.from(el.childNodes)
+              .filter(n => n.nodeType === 3)
+              .map(n => n.textContent.trim())
+              .join(" ");
+            const fullText = (el.textContent || "").trim();
+            if (!fullText.includes(pn)) continue;
+            const tag = el.tagName.toLowerCase();
+            const id = (el.getAttribute("id") || "").substring(0, 80);
+            const cls = (el.getAttribute("class") || "").substring(0, 80);
+            const href = (el.getAttribute("href") || "").substring(0, 120);
+            const onclick = (el.getAttribute("onclick") || "").substring(0, 120);
+            const rect = el.getBoundingClientRect();
             const visible = rect.width > 0 && rect.height > 0;
-            if ((text.includes(pn) || href.includes("CapDetail")) && (visible || href)) {
-              results.push({ text: text.substring(0, 80), href: href.substring(0, 120), onclick: onclick.substring(0, 120), index: i, visible });
-            }
+            results.push({
+              tag, id, class: cls, href, onclick,
+              directText: directText.substring(0, 80),
+              fullText: fullText.substring(0, 120),
+              visible, index: i
+            });
           }
-          return results;
+          return results.slice(0, 20);
         }, permitNumber);
 
-        console.log(`  Frame ${fi} matching links: ${JSON.stringify(frameLinks)}`);
+        console.log(`  Elements containing "${permitNumber}":`);
+        for (const el of elemInfo) {
+          console.log(`    <${el.tag}> id="${el.id}" class="${el.class}" href="${el.href}" onclick="${el.onclick}" visible=${el.visible} directText="${el.directText}"`);
+        }
 
-        if (frameLinks.length > 0) {
-          const bestMatch = frameLinks.find(l => l.text.includes(permitNumber)) || frameLinks[0];
-          const frameAs = await frame.$$("a");
-          resultLink = frameAs[bestMatch.index];
-          console.log(`  Using frame ${fi} link at index ${bestMatch.index}: "${bestMatch.text}"`);
+        const clickable = elemInfo.find(e =>
+          e.visible && (e.tag === "a" || e.onclick || e.tag === "span" || e.tag === "td") &&
+          e.directText.includes(permitNumber)
+        );
+        if (clickable) {
+          const allEls = await frame.$$("a, span, td, div, button, label, tr");
+          resultLink = allEls[clickable.index];
+          console.log(`  Using <${clickable.tag}> at index ${clickable.index}`);
+          break;
+        }
+
+        const anyClickable = elemInfo.find(e =>
+          e.visible && e.fullText.includes(permitNumber) &&
+          (e.tag === "a" || e.tag === "span" || e.tag === "td") &&
+          e.fullText.length < 100
+        );
+        if (anyClickable) {
+          const allEls = await frame.$$("a, span, td, div, button, label, tr");
+          resultLink = allEls[anyClickable.index];
+          console.log(`  Using <${anyClickable.tag}> at index ${anyClickable.index} (fullText match)`);
           break;
         }
       } catch (e) {
