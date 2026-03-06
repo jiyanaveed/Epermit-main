@@ -67,6 +67,11 @@ const REAL_COMMENT_SIGNALS = [
   "requirement", "instruction", "code reference", "action request",
   "IBC", "NEC", "DCMR", "NFPA", "provide", "submit", "revise", "correct", "address", "comply",
   "required", "section", "approval", "permit", "shall", "must ",
+  "upload", "verify", "review", "code", "plan", "drawing", "sheet", "detail",
+  "note", "show", "indicate", "ensure", "install", "comply", "violation",
+  "inspection", "certificate", "stamp", "seal", "sign", "abatement", "lead",
+  "plat", "survey", "zoning", "fire", "structural", "electrical", "plumbing",
+  "mechanical", "energy", "egress", "occupancy", "load", "rating",
 ];
 
 /** Date/time pattern (e.g. 07/30/2025 02:29 PM or 02/21/2026). */
@@ -211,6 +216,7 @@ Return ONLY valid JSON. No markdown. Example: {"comments":[{"original_text":"Pro
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
+    temperature: 0,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
