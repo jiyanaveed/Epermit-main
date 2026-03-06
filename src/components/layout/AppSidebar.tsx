@@ -579,7 +579,7 @@ export function AppSidebar() {
                     </SidebarMenuButton>
                   </TooltipTrigger>
                   <TooltipContent side="right">
-                    {permitNumber.trim() ? (selectedProjectData ? `${selectedProjectData.name} · Permit ${permitNumber.trim()}` : "Link to a project below") : "Enter permit number first"}
+                    {permitNumber.trim() ? (selectedProjectData ? `${selectedProjectData.name} · Permit ${permitNumber.trim()}` : "Select a project below") : "Enter permit number first"}
                   </TooltipContent>
                 </Tooltip>
               ) : (
@@ -598,7 +598,7 @@ export function AppSidebar() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Link to Project</Label>
+                    <Label className="text-xs text-muted-foreground">Active Project</Label>
                     <Select
                       value={selectedProject.selectedProjectId ?? "__none__"}
                       onValueChange={handleSelectValueChange}
