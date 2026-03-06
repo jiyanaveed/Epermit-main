@@ -683,22 +683,33 @@ export function AgentWorkflowStatus() {
         return;
       }
 
+      console.log("=== CLASSIFIER DEBUG ===");
+      console.log("Project ID:", projectId);
+
       const { data: preClassRows, error: preClassErr } = await supabase
         .from("parsed_comments")
-        .select("id, discipline, status")
+        .select("id, original_text, discipline, status")
         .eq("project_id", projectId);
       if (preClassErr) {
-        console.error("[CHAIN DEBUG] Failed to query parsed_comments:", preClassErr.message);
+        console.error("Comment fetch error:", preClassErr);
       } else {
         const rows = preClassRows ?? [];
+        console.log("Parsed comments found:", rows.length);
+        console.log("Comments:", rows);
         const unclassified = rows.filter((r: { discipline: string | null }) => !r.discipline || r.discipline === "General" || r.discipline === "Unclassified" || r.discipline === "");
         const pending = rows.filter((r: { status: string | null }) => r.status === "Pending");
-        console.log("[CHAIN DEBUG] Pre-classifier parsed_comments:", rows.length, "total,", unclassified.length, "unclassified,", pending.length, "pending");
+        console.log("Unclassified:", unclassified.length, "Pending:", pending.length);
+        console.log("Discipline breakdown:", rows.reduce((acc: Record<string, number>, r: { discipline: string | null }) => {
+          const d = r.discipline ?? "null";
+          acc[d] = (acc[d] || 0) + 1;
+          return acc;
+        }, {}));
       }
 
       setChainPhase("classifier");
       toast.info("Chain Step 3/5: Discipline Classifier...");
-      console.log("[CHAIN DEBUG] Step 3: Calling discipline-classifier-agent for project:", projectId, "shadow:", shadowActive);
+      console.log("Calling classifier edge function...");
+      console.log("Body:", JSON.stringify({ project_id: projectId, is_shadow_mode: shadowActive }));
       let classifierFailed2 = false;
       try {
         const { data: classData, error: classError } =
@@ -708,7 +719,8 @@ export function AgentWorkflowStatus() {
               is_shadow_mode: shadowActive,
             },
           });
-        console.log("[CHAIN DEBUG] Classifier response — data:", JSON.stringify(classData), "error:", classError);
+        console.log("Classifier response:", classData);
+        console.log("Classifier error:", classError);
         if (classError) {
           classifierFailed2 = true;
           const errMsg =
@@ -731,6 +743,20 @@ export function AgentWorkflowStatus() {
             },
           }));
           toast.success(`Classifier complete: ${classified} classified.`);
+
+          const { data: postClassRows } = await supabase
+            .from("parsed_comments")
+            .select("id, discipline, status")
+            .eq("project_id", projectId);
+          if (postClassRows) {
+            console.log("=== POST-CLASSIFIER CHECK ===");
+            console.log("Total comments after:", postClassRows.length);
+            console.log("Post-classifier discipline breakdown:", postClassRows.reduce((acc: Record<string, number>, r: { discipline: string | null }) => {
+              const d = r.discipline ?? "null";
+              acc[d] = (acc[d] || 0) + 1;
+              return acc;
+            }, {}));
+          }
         }
       } catch (e) {
         classifierFailed2 = true;
