@@ -24,6 +24,7 @@ export interface Project {
   portal_status: string | null;
   last_checked_at: string | null;
   portal_data: unknown | null;
+  credential_id: string | null;
   created_at: string;
   updated_at: string;
 }

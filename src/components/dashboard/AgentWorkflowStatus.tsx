@@ -135,6 +135,7 @@ export function AgentWorkflowStatus() {
     id: string;
     permit_number: string | null;
     jurisdiction: string | null;
+    credential_id: string | null;
   } | null>(null);
 
   const [scrapingOverlay, setScrapingOverlay] = useState<{
@@ -514,7 +515,7 @@ export function AgentWorkflowStatus() {
     if (selectedProjectId) {
       const { data: sel } = await supabase
         .from("projects")
-        .select("id, permit_number, jurisdiction")
+        .select("id, permit_number, jurisdiction, credential_id")
         .eq("id", selectedProjectId)
         .eq("user_id", user.id)
         .maybeSingle();
@@ -524,6 +525,7 @@ export function AgentWorkflowStatus() {
               id: sel.id as string,
               permit_number: (sel.permit_number as string) ?? null,
               jurisdiction: (sel.jurisdiction as string) ?? null,
+              credential_id: (sel.credential_id as string) ?? null,
             }
           : null,
       );
@@ -960,7 +962,7 @@ export function AgentWorkflowStatus() {
 
       const { data: credentials, error: credError } = await supabase
         .from("portal_credentials")
-        .select("id, portal_username, portal_password, permit_number, login_url, jurisdiction, project_id")
+        .select("id, portal_username, portal_password, permit_number, login_url, jurisdiction")
         .eq("user_id", user!.id);
 
       if (credError) throw new Error("Failed to load portal credentials");
@@ -971,7 +973,9 @@ export function AgentWorkflowStatus() {
 
       let cred: (typeof credentials)[number] | undefined;
 
-      cred = credentials.find((c) => c.project_id === projectIdToUse);
+      if (projectBySelectedId?.credential_id) {
+        cred = credentials.find((c) => c.id === projectBySelectedId.credential_id);
+      }
 
       if (!cred) {
         const projectPermitNumber = projectBySelectedId?.permit_number?.trim() || "";
@@ -1000,8 +1004,8 @@ export function AgentWorkflowStatus() {
         } else {
           throw new Error(
             projectJurisdiction
-              ? `No portal credentials found for jurisdiction "${projectJurisdiction}". Please add credentials in Settings.`
-              : "This project has no jurisdiction set. Please set a jurisdiction on the project, or link a credential to this project in Settings. You can also set it to one credential if only one portal is used.",
+              ? `No portal credentials found for jurisdiction "${projectJurisdiction}". Add credentials in Settings, or link one to this project via the Edit Project form.`
+              : "This project has no jurisdiction set. Set a jurisdiction on the project, or link a portal credential via the Edit Project form.",
           );
         }
       }

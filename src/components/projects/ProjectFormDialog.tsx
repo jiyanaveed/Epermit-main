@@ -24,12 +24,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Loader2, Sparkles, Info } from 'lucide-react';
+import { Loader2, Sparkles, Info, KeyRound } from 'lucide-react';
 import { Project, ProjectType, PROJECT_TYPE_LABELS } from '@/types/project';
 import { CreateProjectData, UpdateProjectData } from '@/hooks/useProjects';
 import { JurisdictionLookup } from './JurisdictionLookup';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
 
 interface ProjectFormDialogProps {
   open: boolean;
@@ -127,6 +129,13 @@ function FieldError({ error }: { error?: string }) {
   return <p className="text-sm text-destructive mt-1">{error}</p>;
 }
 
+interface CredentialOption {
+  id: string;
+  jurisdiction: string;
+  portal_username: string;
+  login_url: string | null;
+}
+
 export function ProjectFormDialog({
   open,
   onOpenChange,
@@ -134,6 +143,7 @@ export function ProjectFormDialog({
   onSubmit,
   loading = false,
 }: ProjectFormDialogProps) {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     name: '',
     address: '',
@@ -151,10 +161,22 @@ export function ProjectFormDialog({
     permit_number: '',
     permit_fee: '',
     expeditor_cost: '',
+    credential_id: '',
   });
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<Set<string>>(new Set());
+  const [credentials, setCredentials] = useState<CredentialOption[]>([]);
+
+  useEffect(() => {
+    if (!user || !open) return;
+    supabase
+      .from('portal_credentials')
+      .select('id, jurisdiction, portal_username, login_url')
+      .eq('user_id', user.id)
+      .order('jurisdiction', { ascending: true })
+      .then(({ data }) => setCredentials(data || []));
+  }, [user, open]);
 
   useEffect(() => {
     if (project) {
@@ -175,6 +197,7 @@ export function ProjectFormDialog({
         permit_number: project.permit_number || '',
         permit_fee: (project as any).permit_fee?.toString() || '',
         expeditor_cost: (project as any).expeditor_cost?.toString() || '',
+        credential_id: project.credential_id || '',
       });
       setErrors({});
       setTouched(new Set());
@@ -196,6 +219,7 @@ export function ProjectFormDialog({
         permit_number: '',
         permit_fee: '',
         expeditor_cost: '',
+        credential_id: '',
       });
       setErrors({});
       setTouched(new Set());
@@ -294,6 +318,8 @@ export function ProjectFormDialog({
     if (project && formData.permit_number) {
       (data as UpdateProjectData).permit_number = formData.permit_number.trim();
     }
+
+    data.credential_id = formData.credential_id || null;
 
     await onSubmit(data);
   };
@@ -404,6 +430,33 @@ export function ProjectFormDialog({
                   <FieldError error={errors.permit_number} />
                 </div>
               )}
+
+              <div>
+                <Label htmlFor="credential_id" className="flex items-center">
+                  <KeyRound className="h-3.5 w-3.5 mr-1" />
+                  Portal Credential
+                  <FieldInfo info="Link a saved portal credential to this project for automatic matching when running the scraper agent." />
+                </Label>
+                <Select
+                  value={formData.credential_id}
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, credential_id: value === '__none__' ? '' : value }))}
+                >
+                  <SelectTrigger data-testid="select-credential">
+                    <SelectValue placeholder="None (auto-match)" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border shadow-lg z-50">
+                    <SelectItem value="__none__">None (auto-match by jurisdiction)</SelectItem>
+                    {credentials.map((cred) => (
+                      <SelectItem key={cred.id} value={cred.id}>
+                        {cred.jurisdiction}{cred.portal_username ? ` — ${cred.portal_username}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Select a saved credential for portal scraping. Manage credentials in Settings.
+                </p>
+              </div>
             </div>
           </div>
 

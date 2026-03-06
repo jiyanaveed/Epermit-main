@@ -23,6 +23,7 @@ export interface CreateProjectData {
   expeditor_cost?: number;
   total_cost?: number;
   permit_number?: string | null;
+  credential_id?: string | null;
 }
 
 export interface UpdateProjectData extends Partial<CreateProjectData> {
