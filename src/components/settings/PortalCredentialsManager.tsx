@@ -38,6 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 export interface PortalCredential {
@@ -111,6 +112,7 @@ const defaultForm = {
   portal_username: "",
   portal_password: "",
   login_url: "",
+  project_id: "",
 };
 
 export function PortalCredentialsManager() {
@@ -126,6 +128,7 @@ export function PortalCredentialsManager() {
   const [jurisdictionOpen, setJurisdictionOpen] = useState(false);
   const [jurisdictionSearch, setJurisdictionSearch] = useState("");
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const [projects, setProjects] = useState<{ id: string; permit_number: string | null; name: string | null }[]>([]);
 
   const fetchCredentials = useCallback(async () => {
     if (!user) return;
@@ -144,9 +147,20 @@ export function PortalCredentialsManager() {
     setLoading(false);
   }, [user]);
 
+  const fetchProjects = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from("projects")
+      .select("id, permit_number, name")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+    setProjects(data || []);
+  }, [user]);
+
   useEffect(() => {
     fetchCredentials();
-  }, [fetchCredentials]);
+    fetchProjects();
+  }, [fetchCredentials, fetchProjects]);
 
   const openAdd = () => {
     setEditingId(null);
@@ -162,6 +176,7 @@ export function PortalCredentialsManager() {
       portal_username: row.portal_username,
       portal_password: row.portal_password,
       login_url: row.login_url ?? "",
+      project_id: row.project_id ?? "",
     });
     setJurisdictionSearch("");
     setDialogOpen(true);
@@ -186,12 +201,13 @@ export function PortalCredentialsManager() {
 
     setSaving(true);
     try {
-      const payload = {
+      const payload: Record<string, string | null> = {
         user_id: user.id,
         jurisdiction: form.jurisdiction.trim(),
         portal_username: form.portal_username.trim(),
         portal_password: form.portal_password.trim(),
         login_url: form.login_url.trim() || "https://washington-dc-us.avolvecloud.com/User/Index",
+        project_id: form.project_id || null,
       };
 
       if (editingId) {
@@ -419,6 +435,28 @@ export function PortalCredentialsManager() {
               />
               <p className="text-xs text-muted-foreground">
                 Auto-filled when selecting a jurisdiction. You can edit it manually.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label>Link to Project</Label>
+              <Select
+                value={form.project_id}
+                onValueChange={(val) => setForm((f) => ({ ...f, project_id: val === "__none__" ? "" : val }))}
+              >
+                <SelectTrigger data-testid="select-link-project">
+                  <SelectValue placeholder="None (match by jurisdiction)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None (match by jurisdiction)</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.permit_number || p.name || p.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Link this credential directly to a project for automatic matching.
               </p>
             </div>
           </div>
