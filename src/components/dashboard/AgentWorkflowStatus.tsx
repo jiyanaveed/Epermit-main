@@ -742,7 +742,14 @@ export function AgentWorkflowStatus() {
               classified_count: classified,
             },
           }));
-          toast.success(`Classifier complete: ${classified} classified.`);
+          const debugTotal = (classData as { debug_total_comments?: number })?.debug_total_comments;
+          if (classified === 0 && debugTotal && debugTotal > 0) {
+            toast.info(`All ${debugTotal} comments already classified. Nothing new to classify.`);
+          } else if (classified === 0) {
+            toast.info("No comments found to classify.");
+          } else {
+            toast.success(`Classifier complete: ${classified} classified.`);
+          }
 
           const { data: postClassRows } = await supabase
             .from("parsed_comments")
