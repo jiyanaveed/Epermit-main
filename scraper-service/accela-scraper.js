@@ -295,75 +295,48 @@ async function searchPermit(page, portalUrl, permitNumber) {
   }
 
   if (!resultLink) {
-    console.log("  Searching all frames for ANY element containing permit number...");
-    const frames = page.frames();
-    console.log(`  Total frames: ${frames.length}`);
+    console.log("  Trying to extract CapDetail URL from raw HTML...");
+    const html = await page.content();
 
-    for (let fi = 0; fi < frames.length; fi++) {
-      const frame = frames[fi];
-      try {
-        const frameContent = await frame.content().catch(() => "");
-        if (!frameContent.includes(permitNumber)) continue;
-        console.log(`  Frame ${fi} contains permit number!`);
+    const capDetailRegex = /href="([^"]*CapDetail\.aspx[^"]*)"/gi;
+    const capDetailMatches = [];
+    let match;
+    while ((match = capDetailRegex.exec(html)) !== null) {
+      capDetailMatches.push(match[1]);
+    }
+    console.log(`  CapDetail URLs found in HTML: ${capDetailMatches.length}`);
+    for (const u of capDetailMatches.slice(0, 5)) {
+      console.log(`    ${u.substring(0, 150)}`);
+    }
 
-        const elemInfo = await frame.evaluate((pn) => {
-          const results = [];
-          const allEls = document.querySelectorAll("a, span, td, div, button, label, tr");
-          for (let i = 0; i < allEls.length; i++) {
-            const el = allEls[i];
-            const directText = Array.from(el.childNodes)
-              .filter(n => n.nodeType === 3)
-              .map(n => n.textContent.trim())
-              .join(" ");
-            const fullText = (el.textContent || "").trim();
-            if (!fullText.includes(pn)) continue;
-            const tag = el.tagName.toLowerCase();
-            const id = (el.getAttribute("id") || "").substring(0, 80);
-            const cls = (el.getAttribute("class") || "").substring(0, 80);
-            const href = (el.getAttribute("href") || "").substring(0, 120);
-            const onclick = (el.getAttribute("onclick") || "").substring(0, 120);
-            const rect = el.getBoundingClientRect();
-            const visible = rect.width > 0 && rect.height > 0;
-            results.push({
-              tag, id, class: cls, href, onclick,
-              directText: directText.substring(0, 80),
-              fullText: fullText.substring(0, 120),
-              visible, index: i
-            });
-          }
-          return results.slice(0, 20);
-        }, permitNumber);
-
-        console.log(`  Elements containing "${permitNumber}":`);
-        for (const el of elemInfo) {
-          console.log(`    <${el.tag}> id="${el.id}" class="${el.class}" href="${el.href}" onclick="${el.onclick}" visible=${el.visible} directText="${el.directText}"`);
-        }
-
-        const clickable = elemInfo.find(e =>
-          e.visible && (e.tag === "a" || e.onclick || e.tag === "span" || e.tag === "td") &&
-          e.directText.includes(permitNumber)
-        );
-        if (clickable) {
-          const allEls = await frame.$$("a, span, td, div, button, label, tr");
-          resultLink = allEls[clickable.index];
-          console.log(`  Using <${clickable.tag}> at index ${clickable.index}`);
-          break;
-        }
-
-        const anyClickable = elemInfo.find(e =>
-          e.visible && e.fullText.includes(permitNumber) &&
-          (e.tag === "a" || e.tag === "span" || e.tag === "td") &&
-          e.fullText.length < 100
-        );
-        if (anyClickable) {
-          const allEls = await frame.$$("a, span, td, div, button, label, tr");
-          resultLink = allEls[anyClickable.index];
-          console.log(`  Using <${anyClickable.tag}> at index ${anyClickable.index} (fullText match)`);
-          break;
-        }
-      } catch (e) {
-        console.log(`  Frame ${fi} error: ${e.message}`);
+    const permitIdx = html.indexOf(permitNumber);
+    if (permitIdx > -1) {
+      const surrounding = html.substring(Math.max(0, permitIdx - 500), permitIdx + 200);
+      const nearbyCapDetail = surrounding.match(/href="([^"]*CapDetail\.aspx[^"]*)"/i);
+      if (nearbyCapDetail) {
+        const detailPath = nearbyCapDetail[1].replace(/&amp;/g, "&");
+        const baseUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
+        const fullUrl = detailPath.startsWith("http") ? detailPath : baseUrl + "/" + detailPath.replace(/^\//, "");
+        console.log(`  Found CapDetail URL near permit number: ${fullUrl}`);
+        await page.goto(fullUrl, { waitUntil: "networkidle", timeout: 45000 });
+        await page.waitForTimeout(3000);
+        console.log(`  Navigated to: ${page.url()}`);
+        return;
       }
+
+      console.log(`  HTML around permit number:`);
+      console.log(`  ...${surrounding.replace(/\n/g, " ").substring(0, 400)}...`);
+    }
+
+    if (capDetailMatches.length > 0) {
+      const detailPath = capDetailMatches[0].replace(/&amp;/g, "&");
+      const baseUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
+      const fullUrl = detailPath.startsWith("http") ? detailPath : baseUrl + "/" + detailPath.replace(/^\//, "");
+      console.log(`  Using first CapDetail URL as fallback: ${fullUrl}`);
+      await page.goto(fullUrl, { waitUntil: "networkidle", timeout: 45000 });
+      await page.waitForTimeout(3000);
+      console.log(`  Navigated to: ${page.url()}`);
+      return;
     }
   }
 
