@@ -121,7 +121,7 @@ serve(async (req) => {
 
     const projectFilter = projectId ? [projectId] : projectIds;
 
-    const query = supabase
+    const query = adminClient
       .from("parsed_comments")
       .select("id, original_text, project_id, discipline")
       .in("project_id", projectFilter)
@@ -129,7 +129,7 @@ serve(async (req) => {
       .eq("status", "Pending")
       .limit(batchLimit);
 
-    console.log("[DEBUG] discipline-classifier query: filter=(discipline IS NULL OR discipline='General' OR discipline='Unclassified'), status=Pending, project_id in", projectFilter.length, "projects, limit=", batchLimit, "shadow_mode=", isShadowMode);
+    console.log("[DEBUG] discipline-classifier query (adminClient): filter=(discipline IS NULL OR discipline='General' OR discipline='Unclassified'), status=Pending, project_id in", projectFilter.length, "projects, limit=", batchLimit, "shadow_mode=", isShadowMode);
 
     const { data: rows, error: fetchError } = await query;
 
@@ -142,10 +142,30 @@ serve(async (req) => {
     }
 
     const comments = (rows ?? []) as { id: string; original_text: string; project_id: string; discipline: string | null }[];
-    console.log("[DEBUG] discipline-classifier: query returned rows:", comments.length);
+    console.log("[DEBUG] discipline-classifier: filtered query returned rows:", comments.length);
+
     if (comments.length === 0) {
+      const { data: allRows, error: allErr } = await adminClient
+        .from("parsed_comments")
+        .select("id, discipline, status")
+        .in("project_id", projectFilter)
+        .limit(50);
+      const allComments = allRows ?? [];
+      console.log("[DEBUG] discipline-classifier: UNFILTERED query returned:", allComments.length, "rows");
+      if (allComments.length > 0) {
+        const disciplineBreakdown: Record<string, number> = {};
+        const statusBreakdown: Record<string, number> = {};
+        for (const r of allComments as { discipline: string | null; status: string | null }[]) {
+          const d = r.discipline ?? "null";
+          const s = r.status ?? "null";
+          disciplineBreakdown[d] = (disciplineBreakdown[d] || 0) + 1;
+          statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
+        }
+        console.log("[DEBUG] discipline breakdown:", JSON.stringify(disciplineBreakdown));
+        console.log("[DEBUG] status breakdown:", JSON.stringify(statusBreakdown));
+      }
       return new Response(
-        JSON.stringify({ classified_count: 0 }),
+        JSON.stringify({ classified_count: 0, debug_total_comments: allComments.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
