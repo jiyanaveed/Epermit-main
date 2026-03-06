@@ -242,7 +242,7 @@ One object per comment in the same order as provided.`;
         : 0.5;
       if (discipline === "Other") otherCount++;
 
-      const { error: updateError } = await supabase
+      const { error: updateError } = await adminClient
         .from("parsed_comments")
         .update({ discipline })
         .eq("id", row.id);
