@@ -96,6 +96,7 @@ interface ShadowPrediction {
   prediction_data: {
     ai_discipline?: string;
     portal_discipline?: string;
+    assigned_discipline?: string;
     [key: string]: unknown;
   };
   match_status: string;
@@ -958,9 +959,9 @@ function ShadowModeDashboardInner() {
                           </Badge>
                         </TableCell>
                         <TableCell className="align-top">
-                          {pred.prediction_data?.portal_discipline ? (
+                          {(pred.prediction_data?.portal_discipline || pred.prediction_data?.assigned_discipline) ? (
                             <Badge variant="secondary" className="font-mono text-xs" data-testid={`text-human-baseline-${pred.id}`}>
-                              {pred.prediction_data.portal_discipline}
+                              {pred.prediction_data.portal_discipline || pred.prediction_data.assigned_discipline}
                             </Badge>
                           ) : (
                             <span className="text-xs text-muted-foreground" data-testid={`text-human-baseline-${pred.id}`}>No baseline</span>

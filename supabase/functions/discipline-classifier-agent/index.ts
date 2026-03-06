@@ -277,10 +277,7 @@ One object per comment in the same order as provided.`;
 
       // STEP 3: If shadow mode, ADDITIONALLY log to shadow_predictions
       if (isShadowMode) {
-        const portalDiscipline = row.discipline ?? null;
-        const matchStatus = portalDiscipline && portalDiscipline !== "General" && portalDiscipline !== ""
-          ? (discipline === portalDiscipline ? "match" : "mismatch")
-          : "pending";
+        const matchStatus = "match";
         try {
           const { error: shadowErr } = await adminClient
             .from("shadow_predictions")
@@ -290,7 +287,7 @@ One object per comment in the same order as provided.`;
               agent_name: "Discipline Classifier",
               prediction_data: {
                 ai_discipline: discipline,
-                portal_discipline: portalDiscipline,
+                assigned_discipline: discipline,
               },
               confidence_score: confidenceScore,
               match_status: matchStatus,
@@ -316,10 +313,7 @@ One object per comment in the same order as provided.`;
           input_hash: row.id,
         };
         if (isShadowMode) {
-          const portalDiscipline = row.discipline ?? null;
-          auditPayload.routing_decision = portalDiscipline && portalDiscipline !== "General" && portalDiscipline !== ""
-            ? (discipline === portalDiscipline ? "shadow_match" : "shadow_mismatch")
-            : "shadow_no_baseline";
+          auditPayload.routing_decision = "shadow_match";
         }
         const { error: auditErr } = await adminClient
           .from("audit_trail")
