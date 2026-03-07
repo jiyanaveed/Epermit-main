@@ -1,5 +1,5 @@
 import React from "react";
-import { Home, FolderKanban, MapPin, BarChart3, Menu } from "lucide-react";
+import { Home, FolderKanban, Globe, Rocket, Menu } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
@@ -7,8 +7,8 @@ import { useSidebar } from "@/components/ui/sidebar";
 const navItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: FolderKanban, label: "Projects", path: "/projects" },
-  { icon: MapPin, label: "Map", path: "/jurisdictions/map" },
-  { icon: BarChart3, label: "Analytics", path: "/analytics" },
+  { icon: Globe, label: "Portal Intake", path: "/portal-data" },
+  { icon: Rocket, label: "Filing", path: "/permit-wizard-filing" },
 ];
 
 export const MobileBottomNav = React.forwardRef<HTMLElement, object>(

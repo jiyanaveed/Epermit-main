@@ -23,11 +23,12 @@ import {
   MessageSquare,
   Clock,
   Star,
-  StarOff,
   X,
   Table2,
   KeyRound,
-  Rocket
+  Rocket,
+  FileSearch,
+  Tags
 } from "lucide-react";
 import { useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
@@ -90,115 +91,142 @@ const mainNavigation = [
   },
 ];
 
-const toolsNavigation = [
-  { 
-    title: "AI Compliance", 
-    href: "/code-compliance", 
+const intakeNavigation = [
+  {
+    title: "Portal Intake",
+    href: "/portal-data",
+    icon: Globe,
+    description: "Gather (Scrape) & View Portal Data",
+    requiresAuth: true
+  },
+  {
+    title: "Comment Review",
+    href: "/comment-review",
+    icon: FileSearch,
+    description: "Review scraped & uploaded comments",
+    requiresAuth: true
+  },
+  {
+    title: "Classified Comments",
+    href: "/classified-comments",
+    icon: Tags,
+    description: "AI-classified discipline comments",
+    requiresAuth: true
+  },
+  {
+    title: "AI Compliance",
+    href: "/code-compliance",
     icon: Shield,
-    description: "Check code compliance"
+    description: "Check code compliance",
+    requiresAuth: true
   },
-  { 
-    title: "Response Matrix", 
-    href: "/response-matrix", 
+];
+
+const responseNavigation = [
+  {
+    title: "Response Matrix",
+    href: "/response-matrix",
     icon: Table2,
-    description: "Manage comment responses"
+    description: "Manage comment responses",
+    requiresAuth: true
   },
-  { 
-    title: "Code Library", 
-    href: "/code-reference", 
+];
+
+const filingNavigation = [
+  {
+    title: "Permit Filing",
+    href: "/permit-wizard-filing",
+    icon: Rocket,
+    description: "Multi-municipality filing pipeline",
+    requiresAuth: true
+  },
+];
+
+const trackingNavigation = [
+  {
+    title: "Projects",
+    href: "/projects",
+    icon: Building2,
+    requiresAuth: true
+  },
+  {
+    title: "Checklists",
+    href: "/checklist-history",
+    icon: FileText,
+    requiresAuth: true
+  },
+  {
+    title: "Analytics",
+    href: "/analytics",
+    icon: BarChart3,
+    requiresAuth: true
+  },
+];
+
+const intelligenceNavigation = [
+  {
+    title: "Jurisdiction Map",
+    href: "/jurisdictions/map",
+    icon: Map,
+    description: "Interactive coverage map"
+  },
+  {
+    title: "Compare Jurisdictions",
+    href: "/jurisdictions/compare",
+    icon: Scale,
+    description: "Side-by-side comparison"
+  },
+  {
+    title: "Permit Intelligence",
+    href: "/permit-intelligence",
+    icon: Search,
+    description: "Search permit data"
+  },
+  {
+    title: "Code Library",
+    href: "/code-reference",
     icon: BookOpen,
     description: "Reference materials"
   },
-  { 
-    title: "ROI Calculator", 
-    href: "/roi-calculator", 
+  {
+    title: "ROI Calculator",
+    href: "/roi-calculator",
     icon: Calculator,
     description: "Calculate savings"
   },
 ];
 
-const jurisdictionNavigation = [
-  { 
-    title: "Jurisdiction Map", 
-    href: "/jurisdictions/map", 
-    icon: Map,
-    description: "Interactive coverage map"
-  },
-  { 
-    title: "Compare Jurisdictions", 
-    href: "/jurisdictions/compare", 
-    icon: Scale,
-    description: "Side-by-side comparison"
-  },
-  { 
-    title: "Permit Intelligence", 
-    href: "/permit-intelligence", 
-    icon: Search,
-    description: "Search permit data"
-  },
-];
-
 const resourcesNavigation = [
-  { 
-    title: "Demos", 
-    href: "/demos", 
-    icon: PlayCircle 
+  {
+    title: "Demos",
+    href: "/demos",
+    icon: PlayCircle
   },
-  { 
-    title: "Pricing", 
-    href: "/pricing", 
-    icon: DollarSign 
+  {
+    title: "Pricing",
+    href: "/pricing",
+    icon: DollarSign
   },
 ];
 
 const helpNavigation = [
-  { 
-    title: "Documentation", 
-    href: "/api-documentation", 
+  {
+    title: "Documentation",
+    href: "/api-docs",
     icon: FileQuestion,
     description: "API docs & guides"
   },
-  { 
-    title: "FAQ", 
-    href: "/faq", 
+  {
+    title: "FAQ",
+    href: "/faq",
     icon: HelpCircle,
     description: "Common questions"
   },
-  { 
-    title: "Contact Support", 
-    href: "/contact", 
+  {
+    title: "Contact Support",
+    href: "/contact",
     icon: MessageSquare,
     description: "Get help from our team"
-  },
-];
-
-const adminNavigation = [
-  { 
-    title: "Analytics", 
-    href: "/analytics", 
-    icon: BarChart3 
-  },
-  { 
-    title: "Projects", 
-    href: "/projects", 
-    icon: Building2 
-  },
-  { 
-    title: "Permit Filing", 
-    href: "/permit-wizard-filing", 
-    icon: Rocket,
-    description: "Multi-municipality 9-agent filing pipeline"
-  },
-  { 
-    title: "Portal Data", 
-    href: "/portal-data", 
-    icon: Globe,
-    description: "View scraped DC DOB portal data"
-  },
-  { 
-    title: "Checklists", 
-    href: "/checklist-history", 
-    icon: FileText 
   },
 ];
 
@@ -699,62 +727,19 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {/* Tools */}
-        <SidebarGroup>
-          <Collapsible defaultOpen className="group/collapsible">
-            <SidebarGroupLabel asChild>
-              <CollapsibleTrigger className="flex w-full items-center justify-between">
-                Tools
-                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
-              </CollapsibleTrigger>
-            </SidebarGroupLabel>
-            <CollapsibleContent>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {toolsNavigation.map((item) => (
-                    <NavItem key={item.href} item={item} />
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </SidebarGroup>
-
-        {/* Jurisdiction Data */}
-        <SidebarGroup>
-          <Collapsible defaultOpen className="group/collapsible">
-            <SidebarGroupLabel asChild>
-              <CollapsibleTrigger className="flex w-full items-center justify-between">
-                Jurisdiction Data
-                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
-              </CollapsibleTrigger>
-            </SidebarGroupLabel>
-            <CollapsibleContent>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {jurisdictionNavigation.map((item) => (
-                    <NavItem key={item.href} item={item} />
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </SidebarGroup>
-
-        {/* User Section - Only show when logged in */}
         {user && (
           <SidebarGroup>
             <Collapsible defaultOpen className="group/collapsible">
               <SidebarGroupLabel asChild>
                 <CollapsibleTrigger className="flex w-full items-center justify-between">
-                  Workspace
+                  Intake & Review
                   <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
                 </CollapsibleTrigger>
               </SidebarGroupLabel>
               <CollapsibleContent>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {adminNavigation.map((item) => (
+                    {intakeNavigation.map((item) => (
                       <NavItem key={item.href} item={item} />
                     ))}
                   </SidebarMenu>
@@ -764,7 +749,92 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {/* Resources */}
+        {user && (
+          <SidebarGroup>
+            <Collapsible defaultOpen className="group/collapsible">
+              <SidebarGroupLabel asChild>
+                <CollapsibleTrigger className="flex w-full items-center justify-between">
+                  Response
+                  <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+              <CollapsibleContent>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {responseNavigation.map((item) => (
+                      <NavItem key={item.href} item={item} />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </CollapsibleContent>
+            </Collapsible>
+          </SidebarGroup>
+        )}
+
+        {user && (
+          <SidebarGroup>
+            <Collapsible defaultOpen className="group/collapsible">
+              <SidebarGroupLabel asChild>
+                <CollapsibleTrigger className="flex w-full items-center justify-between">
+                  Permit Filing
+                  <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+              <CollapsibleContent>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {filingNavigation.map((item) => (
+                      <NavItem key={item.href} item={item} />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </CollapsibleContent>
+            </Collapsible>
+          </SidebarGroup>
+        )}
+
+        {user && (
+          <SidebarGroup>
+            <Collapsible defaultOpen className="group/collapsible">
+              <SidebarGroupLabel asChild>
+                <CollapsibleTrigger className="flex w-full items-center justify-between">
+                  Projects & Tracking
+                  <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+              <CollapsibleContent>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {trackingNavigation.map((item) => (
+                      <NavItem key={item.href} item={item} />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </CollapsibleContent>
+            </Collapsible>
+          </SidebarGroup>
+        )}
+
+        <SidebarGroup>
+          <Collapsible defaultOpen={false} className="group/collapsible">
+            <SidebarGroupLabel asChild>
+              <CollapsibleTrigger className="flex w-full items-center justify-between">
+                Intelligence
+                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+              </CollapsibleTrigger>
+            </SidebarGroupLabel>
+            <CollapsibleContent>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {intelligenceNavigation.map((item) => (
+                    <NavItem key={item.href} item={item} />
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </Collapsible>
+        </SidebarGroup>
+
         <SidebarGroup>
           <SidebarGroupLabel>Resources</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -776,9 +846,8 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Help & Support */}
         <SidebarGroup>
-          <Collapsible defaultOpen className="group/collapsible">
+          <Collapsible defaultOpen={false} className="group/collapsible">
             <SidebarGroupLabel asChild>
               <CollapsibleTrigger className="flex w-full items-center justify-between">
                 <span className="flex items-center gap-1.5">
