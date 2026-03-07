@@ -18,6 +18,9 @@ import demoJurisdiction from '@/assets/videos/demo-jurisdiction.mp4';
 import demoDocuments from '@/assets/videos/demo-documents.mp4';
 import demoAnalytics from '@/assets/videos/demo-analytics.mp4';
 import demoCollaboration from '@/assets/videos/demo-collaboration.mp4';
+import demoPortalIntake from '@/assets/videos/demo-portal-intake.mp4';
+import demoMultiFiling from '@/assets/videos/demo-multi-filing.mp4';
+import demoResponseMatrix from '@/assets/videos/demo-response-matrix.mp4';
 
 interface Voice {
   id: string;
@@ -49,15 +52,27 @@ interface VideoSegment {
 const videoSegments: VideoSegment[] = [
   {
     src: demoDashboard,
-    title: 'Track All Your Permits',
-    description: 'Get a complete overview of all your permit projects in one centralized dashboard.',
-    narration: 'Welcome to PermitPulse. Your centralized dashboard gives you a complete overview of all permit projects. Track status, deadlines, and priorities at a glance.',
+    title: 'Multi-Municipality Permit Tracking',
+    description: 'Track permits across 10 DMV jurisdictions with municipality badges, workflow-aligned navigation, and real-time agent status.',
+    narration: 'Welcome to Insight DesignCheck. Your centralized dashboard tracks permits across 10 DMV jurisdictions. See municipality badges, agent pipeline status, and deadline alerts — all organized by your workflow.',
   },
   {
-    src: demoSubmission,
-    title: 'Easy Permit Submission',
-    description: 'Submit permit applications with smart auto-fill and guided workflows.',
-    narration: 'Submitting permits has never been easier. Our smart auto-fill technology and guided workflows ensure your applications are complete and accurate every time.',
+    src: demoPortalIntake,
+    title: 'Portal Intake & Data Scraping',
+    description: 'Automatically scrape permit data, review comments, and project status from Accela, Momentum, EnerGov, and ASP.NET portals.',
+    narration: 'Our portal intake engine scrapes permit data from four different portal platforms — Accela, Momentum, EnerGov, and A S P dot NET. Review comments, project status, and attachments are extracted and organized automatically.',
+  },
+  {
+    src: demoMultiFiling,
+    title: 'Autonomous Multi-Municipality Filing',
+    description: 'A 9-agent AI pipeline autonomously files permits across DC, Virginia, and Maryland jurisdictions on Accela, Momentum, EnerGov, and ASP.NET portals.',
+    narration: 'Our 9-agent pipeline autonomously files permits across 10 DMV jurisdictions. From property intelligence and license validation through form filing and submission — the system handles Accela, Momentum, EnerGov, and A S P dot NET portals with a mandatory human review gate.',
+  },
+  {
+    src: demoResponseMatrix,
+    title: 'AI-Powered Response Matrix',
+    description: 'Auto-draft responses to plan review comments with code references, quality scoring, plan markup, and branded export packages.',
+    narration: 'The Response Matrix auto-drafts responses to plan review comments using AI with building code references. Quality scoring ensures accuracy, plan markup links responses to drawings, and branded export creates professional response packages.',
   },
   {
     src: demoJurisdiction,

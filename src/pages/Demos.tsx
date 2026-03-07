@@ -9,15 +9,36 @@ import { InteractiveDrawingViewer } from "@/components/demos/InteractiveDrawingV
 import { PreSubmittalDetectionDemo } from "@/components/demos/PreSubmittalDetectionDemo";
 import { AutoFillDemo } from "@/components/demos/AutoFillDemo";
 import { JurisdictionLookupDemo } from "@/components/demos/JurisdictionLookupDemo";
+import { PortalIntakeDemo } from "@/components/demos/PortalIntakeDemo";
+import { MultiMunicipalityFilingDemo } from "@/components/demos/MultiMunicipalityFilingDemo";
+import { ResponseMatrixDemo } from "@/components/demos/ResponseMatrixDemo";
 import { PageTransition } from "@/components/animations/PageTransition";
-import { Bot, Search, FileText, MapPin, Lock, Play } from "lucide-react";
+import { Bot, Search, FileText, MapPin, Lock, Play, Globe, Rocket, Table2 } from "lucide-react";
 
 const demos = [
   {
+    id: "portal-intake",
+    title: "Portal Intake",
+    description: "Gather (Scrape) & view portal data from 10 DMV jurisdictions across 4 platforms",
+    icon: <Globe className="h-6 w-6" />,
+  },
+  {
     id: "compliance",
-    title: "Code Compliance Checking",
+    title: "Code Compliance",
     description: "Interactive drawing viewer with clickable compliance issues",
     icon: <Bot className="h-6 w-6" />,
+  },
+  {
+    id: "response",
+    title: "Response Matrix",
+    description: "AI-drafted responses with quality scoring and branded export packages",
+    icon: <Table2 className="h-6 w-6" />,
+  },
+  {
+    id: "filing",
+    title: "Permit Filing",
+    description: "9-agent autonomous filing across 10 DMV jurisdictions and 4 portal platforms",
+    icon: <Rocket className="h-6 w-6" />,
   },
   {
     id: "detection",
@@ -28,7 +49,7 @@ const demos = [
   {
     id: "autofill",
     title: "Permit Auto-Fill",
-    description: "Watch AI extract data and fill permit forms",
+    description: "AI extracts data from drawings to auto-fill multi-jurisdiction permit applications",
     icon: <FileText className="h-6 w-6" />,
   },
   {
@@ -42,14 +63,12 @@ const demos = [
 const Demos = () => {
   const { isLeadCaptured, setShowLeadModal, setPendingDemoId } = useLeadCapture();
   const { subscription } = useAuth();
-  const [activeDemo, setActiveDemo] = useState("compliance");
+  const [activeDemo, setActiveDemo] = useState("portal-intake");
   const [hasAccessedDemo, setHasAccessedDemo] = useState(false);
 
-  // Unlocked: lead captured OR any active paid plan (starter, professional, business, enterprise)
   const hasPaidPlan = subscription.subscribed && subscription.tier != null;
   const isUnlocked = isLeadCaptured || hasPaidPlan;
 
-  // Check URL hash for direct demo link
   useEffect(() => {
     const hash = window.location.hash.replace("#", "");
     if (hash && demos.find((d) => d.id === hash)) {
@@ -67,7 +86,6 @@ const Demos = () => {
     }
   };
 
-  // If lead is captured after modal, show the demo
   useEffect(() => {
     if (isLeadCaptured && !hasAccessedDemo) {
       setHasAccessedDemo(true);
@@ -88,13 +106,12 @@ const Demos = () => {
 
         <div className="w-full max-w-7xl ml-0 mr-auto pl-2 pr-4 sm:pl-3 sm:pr-6 md:pl-4 md:pr-6 py-6 sm:py-8 md:py-12">
           {!isUnlocked ? (
-          // Gated view - show demo cards (non-paid, no lead captured)
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-5xl mx-auto">
             <div className="text-center mb-12">
               <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h2 className="text-2xl font-bold mb-2">Unlock All Interactive Demos</h2>
               <p className="text-muted-foreground mb-6">
-                Enter your email to get instant access to all four demos
+                Enter your email to get instant access to all seven demos
               </p>
               <Button
                 size="lg"
@@ -109,7 +126,7 @@ const Demos = () => {
               </Button>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {demos.map((demo) => (
                 <Card key={demo.id} className="group hover:shadow-lg transition-all">
                   <CardHeader>
@@ -118,8 +135,8 @@ const Demos = () => {
                         {demo.icon}
                       </div>
                       <div>
-                        <CardTitle>{demo.title}</CardTitle>
-                        <CardDescription>{demo.description}</CardDescription>
+                        <CardTitle className="text-base">{demo.title}</CardTitle>
+                        <CardDescription className="text-xs">{demo.description}</CardDescription>
                       </div>
                     </div>
                   </CardHeader>
@@ -138,17 +155,33 @@ const Demos = () => {
             </div>
           </div>
         ) : (
-          // Unlocked view - show full demos (lead captured or paid plan)
           <div>
             <Tabs value={activeDemo} onValueChange={setActiveDemo}>
-              <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 mb-8">
+              <TabsList className="grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 mb-8 h-auto">
                 {demos.map((demo) => (
-                  <TabsTrigger key={demo.id} value={demo.id} className="flex items-center gap-2">
+                  <TabsTrigger key={demo.id} value={demo.id} className="flex items-center gap-1.5 text-xs px-2 py-2" aria-label={demo.title}>
                     {demo.icon}
-                    <span className="hidden sm:inline">{demo.title}</span>
+                    <span className="hidden lg:inline">{demo.title}</span>
                   </TabsTrigger>
                 ))}
               </TabsList>
+
+              <TabsContent value="portal-intake">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-3">
+                      <Globe className="h-6 w-6 text-accent" />
+                      Portal Intake — Gather (Scrape) & View Portal Data
+                    </CardTitle>
+                    <CardDescription>
+                      Automatically scrape permit data, review comments, and project status from 10 DMV jurisdiction portals across 4 platform types
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <PortalIntakeDemo />
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
               <TabsContent value="compliance">
                 <Card>
@@ -163,6 +196,40 @@ const Demos = () => {
                   </CardHeader>
                   <CardContent>
                     <InteractiveDrawingViewer />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="response">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-3">
+                      <Table2 className="h-6 w-6 text-accent" />
+                      Response Matrix — AI-Powered Comment Responses
+                    </CardTitle>
+                    <CardDescription>
+                      AI auto-drafts responses to plan review comments with code references, quality scoring, and branded export packages
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponseMatrixDemo />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="filing">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-3">
+                      <Rocket className="h-6 w-6 text-accent" />
+                      Multi-Municipality Autonomous Permit Filing
+                    </CardTitle>
+                    <CardDescription>
+                      9-agent AI pipeline autonomously files permits across 10 DMV jurisdictions on 4 portal platforms — from property lookup to submission monitoring
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <MultiMunicipalityFilingDemo />
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -192,7 +259,7 @@ const Demos = () => {
                       Permit Application Auto-Fill
                     </CardTitle>
                     <CardDescription>
-                      Watch AI extract data from drawings and auto-fill permit applications
+                      Watch AI extract data from drawings and auto-fill permit applications across multiple jurisdictions
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
