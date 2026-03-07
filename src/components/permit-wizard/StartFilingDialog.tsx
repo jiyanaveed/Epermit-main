@@ -39,7 +39,10 @@ import {
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+import { useProjects } from '@/hooks/useProjects';
 import type { Project } from '@/types/project';
+import { PROJECT_TYPE_LABELS } from '@/types/project';
+import type { ProjectType } from '@/types/project';
 
 interface Professional {
   id: string;
@@ -78,9 +81,15 @@ interface MunicipalityConfig {
 interface StartFilingDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  project: Project;
+  project?: Project | null;
   onFilingStarted?: (filingId: string) => void;
+  onProjectCreated?: (project: Project) => void;
 }
+
+const PROJECT_TYPES_LIST = Object.entries(PROJECT_TYPE_LABELS).map(([value, label]) => ({
+  value,
+  label,
+}));
 
 const PROPERTY_TYPES = [
   { value: 'residential', label: 'Residential' },
@@ -180,18 +189,26 @@ export function StartFilingDialog({
   onOpenChange,
   project,
   onFilingStarted,
+  onProjectCreated,
 }: StartFilingDialogProps) {
   const { user } = useAuth();
+  const { createProject } = useProjects();
   const [submitting, setSubmitting] = useState(false);
   const [credentials, setCredentials] = useState<PortalCredential[]>([]);
   const [loadingCredentials, setLoadingCredentials] = useState(false);
   const [municipalities, setMunicipalities] = useState<MunicipalityConfig[]>([]);
   const [loadingMunicipalities, setLoadingMunicipalities] = useState(false);
 
-  const [propertyAddress, setPropertyAddress] = useState(project.address || '');
-  const [scopeOfWork, setScopeOfWork] = useState(project.description || '');
+  const [createMode, setCreateMode] = useState(!project);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectAddress, setNewProjectAddress] = useState('');
+  const [newProjectJurisdiction, setNewProjectJurisdiction] = useState('');
+  const [newProjectType, setNewProjectType] = useState<string>('');
+
+  const [propertyAddress, setPropertyAddress] = useState(project?.address || '');
+  const [scopeOfWork, setScopeOfWork] = useState(project?.description || '');
   const [constructionValue, setConstructionValue] = useState<string>(
-    project.estimated_value?.toString() || ''
+    project?.estimated_value?.toString() || ''
   );
   const [propertyType, setPropertyType] = useState<string>('');
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>('');
@@ -206,11 +223,28 @@ export function StartFilingDialog({
 
   useEffect(() => {
     if (open) {
-      setPropertyAddress(project.address || '');
-      setScopeOfWork(project.description || '');
-      setConstructionValue(project.estimated_value?.toString() || '');
+      setCreateMode(!project);
+      if (project) {
+        setPropertyAddress(project.address || '');
+        setScopeOfWork(project.description || '');
+        setConstructionValue(project.estimated_value?.toString() || '');
+      } else {
+        setPropertyAddress('');
+        setScopeOfWork('');
+        setConstructionValue('');
+      }
+      setNewProjectName('');
+      setNewProjectAddress('');
+      setNewProjectJurisdiction('');
+      setNewProjectType('');
     }
   }, [open, project]);
+
+  useEffect(() => {
+    if (createMode && newProjectAddress) {
+      setPropertyAddress(newProjectAddress);
+    }
+  }, [createMode, newProjectAddress]);
 
   async function loadMunicipalities() {
     setLoadingMunicipalities(true);
@@ -349,6 +383,11 @@ export function StartFilingDialog({
       return;
     }
 
+    if (createMode && !newProjectName.trim()) {
+      toast.error('Project name is required');
+      return;
+    }
+
     if (!selectedMunicipalityKey) {
       toast.error('Please select a municipality');
       return;
@@ -372,10 +411,37 @@ export function StartFilingDialog({
     setSubmitting(true);
 
     try {
+      let projectId = project?.id;
+
+      if (createMode) {
+        const newProject = await createProject({
+          name: newProjectName.trim(),
+          address: newProjectAddress.trim() || undefined,
+          jurisdiction: newProjectJurisdiction.trim() || undefined,
+          project_type: (newProjectType as ProjectType) || undefined,
+          estimated_value: constructionValue ? parseFloat(constructionValue) : undefined,
+        });
+
+        if (!newProject) {
+          toast.error('Failed to create project');
+          setSubmitting(false);
+          return;
+        }
+
+        projectId = newProject.id;
+        onProjectCreated?.(newProject);
+      }
+
+      if (!projectId) {
+        toast.error('No project available for filing');
+        setSubmitting(false);
+        return;
+      }
+
       const { data: filing, error: filingError } = await supabase
         .from('permit_filings')
         .insert({
-          project_id: project.id,
+          project_id: projectId,
           user_id: user.id,
           filing_status: 'preflight',
           property_address: propertyAddress.trim(),
@@ -463,7 +529,8 @@ export function StartFilingDialog({
     propertyAddress.trim() !== '' &&
     scopeOfWork.trim() !== '' &&
     propertyType !== '' &&
-    selectedMunicipalityKey !== '';
+    selectedMunicipalityKey !== '' &&
+    (!createMode || newProjectName.trim() !== '');
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -480,6 +547,98 @@ export function StartFilingDialog({
 
         <ScrollArea className="max-h-[60vh] pr-4">
           <div className="space-y-6">
+            {createMode ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold flex items-center gap-2">
+                    <Plus className="h-4 w-4" />
+                    New Project
+                  </h4>
+                  {project && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="text-xs h-auto p-0"
+                      onClick={() => {
+                        setCreateMode(false);
+                        setPropertyAddress(project.address || '');
+                        setScopeOfWork(project.description || '');
+                        setConstructionValue(project.estimated_value?.toString() || '');
+                      }}
+                      data-testid="button-use-existing-project"
+                    >
+                      Use selected project instead
+                    </Button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Project Name *</Label>
+                  <Input
+                    data-testid="input-new-project-name"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    placeholder="My Building Permit Project"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Project Address</Label>
+                  <Input
+                    data-testid="input-new-project-address"
+                    value={newProjectAddress}
+                    onChange={(e) => setNewProjectAddress(e.target.value)}
+                    placeholder="123 Main St NW, Washington, DC 20001"
+                  />
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Jurisdiction</Label>
+                    <Input
+                      data-testid="input-new-project-jurisdiction"
+                      value={newProjectJurisdiction}
+                      onChange={(e) => setNewProjectJurisdiction(e.target.value)}
+                      placeholder="e.g. Washington DC"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Project Type</Label>
+                    <Select value={newProjectType} onValueChange={setNewProjectType}>
+                      <SelectTrigger data-testid="select-new-project-type">
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROJECT_TYPES_LIST.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Project: </span>
+                  <span className="font-medium">{project?.name}</span>
+                </div>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="text-xs h-auto p-0"
+                  onClick={() => setCreateMode(true)}
+                  data-testid="button-create-new-project"
+                >
+                  Create new project instead
+                </Button>
+              </div>
+            )}
+
+            <Separator />
+
             <div className="space-y-4">
               <h4 className="text-sm font-semibold flex items-center gap-2">
                 <MapPin className="h-4 w-4" />
@@ -835,7 +994,7 @@ export function StartFilingDialog({
             data-testid="button-start-preflight"
           >
             {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Start Pre-Flight
+            {createMode ? 'Create Project & Start Pre-Flight' : 'Start Pre-Flight'}
           </Button>
         </DialogFooter>
       </DialogContent>

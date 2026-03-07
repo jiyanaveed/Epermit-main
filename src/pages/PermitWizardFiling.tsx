@@ -191,7 +191,7 @@ function AgentCard({
 
 export default function PermitWizardFiling() {
   const { user, loading: authLoading } = useAuth();
-  const { selectedProjectId } = useSelectedProject();
+  const { selectedProjectId, setSelectedProjectId } = useSelectedProject();
   const { projects } = useProjects();
   const navigate = useNavigate();
 
@@ -391,13 +391,7 @@ export default function PermitWizardFiling() {
               Refresh
             </Button>
             <Button
-              onClick={() => {
-                if (!selectedProject) {
-                  toast.error("Select a project first from the sidebar.");
-                  return;
-                }
-                setStartDialogOpen(true);
-              }}
+              onClick={() => setStartDialogOpen(true)}
               data-testid="button-start-filing"
             >
               <Plus className="h-4 w-4 mr-1" />
@@ -406,14 +400,21 @@ export default function PermitWizardFiling() {
           </div>
         </motion.div>
 
-        {!selectedProjectId && (
+        {!selectedProjectId && !loading && filings.length === 0 && (
           <Card className="border-dashed mb-6">
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
               <Bot className="h-12 w-12 text-muted-foreground/50 mb-4" />
-              <h3 className="font-semibold mb-2" data-testid="text-no-project">Select a Project</h3>
-              <p className="text-sm text-muted-foreground">
-                Choose an active project from the sidebar to view or start filings.
+              <h3 className="font-semibold mb-2" data-testid="text-no-project">Get Started with Permit Filing</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Start a new filing to create a project and initiate the autonomous permit filing pipeline, or select an existing project from the sidebar.
               </p>
+              <Button
+                onClick={() => setStartDialogOpen(true)}
+                data-testid="button-start-filing-no-project"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Start New Filing
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -674,14 +675,15 @@ export default function PermitWizardFiling() {
           </div>
         )}
 
-        {selectedProject && (
-          <StartFilingDialog
-            open={startDialogOpen}
-            onOpenChange={setStartDialogOpen}
-            project={selectedProject}
-            onFilingStarted={handleFilingStarted}
-          />
-        )}
+        <StartFilingDialog
+          open={startDialogOpen}
+          onOpenChange={setStartDialogOpen}
+          project={selectedProject}
+          onFilingStarted={handleFilingStarted}
+          onProjectCreated={(newProject) => {
+            setSelectedProjectId(newProject.id);
+          }}
+        />
 
         <FilingReviewPanel
           filing={selectedFiling}
