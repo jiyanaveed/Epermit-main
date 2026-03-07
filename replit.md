@@ -45,6 +45,34 @@ Preferred communication style: Simple, everyday language.
 - **Weekly Report Export:** Edge function `export-weekly-report` aggregates last 7 days of predictions into a structured CSV (Executive Summary, Agent Performance, Baseline Metrics, Confidence Calibration with high-risk errors, raw predictions). Triggered from dashboard "Export Weekly Report" button.
 - **Circuit Breaker:** Edge function `circuit-breaker-check` enforces ESG safety rule: agent auto-disabled if >10% fail rate in 24h (minimum 10 predictions for statistical significance). Warning at 3 consecutive mismatches. Status badges (ACTIVE/WARNING/DISABLED) shown per-agent in dashboard.
 
+### Plan Markup Workflow
+- **Purpose:** Adds a "Plan Markup" step to the Response Matrix between "Validate Completeness" and "Quality Check."
+- **Components:**
+  - `PlanViewer` (`src/components/plans/PlanViewer.tsx`): Multi-page PDF viewer with zoom, page navigation using `pdfjs-dist`.
+  - `CommentPlanPanel` (`src/components/plans/CommentPlanPanel.tsx`): Side panel grouping parsed comments by page number with click-to-navigate.
+  - `RevisionCloudOverlay` (`src/components/plans/RevisionCloudOverlay.tsx`): SVG overlay for drawing AIA-standard revision clouds, linked to comments. Stores coordinates as normalized 0-1 ratios.
+  - `ArchitectApprovalDialog` (`src/components/plans/ArchitectApprovalDialog.tsx`): Password re-auth gate; approves all pending markups; shows seal watermark on approved pages.
+  - `PlanMarkupWorkspace` (`src/components/plans/PlanMarkupWorkspace.tsx`): Full workspace dialog integrating PlanViewer + overlay + comment panel.
+  - `stampedPdfExport` (`src/lib/stampedPdfExport.ts`): Generates revised PDF with revision clouds, seal stamp, and revision block using `pdf-lib`.
+- **Database:** `plan_markups` and `architect_profiles` tables (migration `20260307000001`).
+- **Hooks:** `usePlanMarkups` (CRUD for markups, filters by project + document + page), `useApprovalGate` (checks pending markup status).
+- **Settings:** `ArchitectProfileManager` in Settings for seal/signature upload and license info.
+
+### Branded Response Package Export
+- **Purpose:** Upgrades the export-response-package PDF with company branding and selectable templates.
+- **Templates** (`src/lib/responsePackageTemplates.ts`): Formal Letter, Technical Memo, Simple Table — all with company logo, contact info, signature block.
+- **Export Dialog** (`src/components/response-matrix/ExportPackageDialog.tsx`): Template selection cards, branding preview, municipality address for letter template, draft management.
+- **Edge Function:** `export-response-package` upgraded to accept `template` parameter, fetch branding/architect profile, render branded PDFs.
+- **Database:** `company_branding` table (migration `20260307000002`).
+- **Settings:** `ExportBrandingManager` in Settings for company branding.
+
+### Multi-Round Draft Management
+- **Purpose:** Supports saving/resuming response package drafts across multiple city review rounds.
+- **Hook:** `useResponsePackageDrafts` (`src/hooks/useResponsePackageDrafts.ts`) — CRUD for drafts, auto-increment rounds, comment snapshots, supersede previous drafts.
+- **Round Comparison:** `RoundChangeSummary` (`src/components/response-matrix/RoundChangeSummary.tsx`) — shows new/modified/resolved comments between rounds.
+- **Database:** `response_package_drafts` table + `review_round` column on `parsed_comments` (migration `20260307000002`).
+- **Integration:** Export dialog shows draft list with status badges, resume/new round buttons, "Modified" badges on changed comments.
+
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).
 

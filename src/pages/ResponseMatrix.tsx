@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -33,8 +33,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Save, Wand2, ArrowLeft, CheckCircle2, ShieldCheck, FileDown, UserCheck, Copy, FileQuestion } from "lucide-react";
+import { Loader2, Save, Wand2, ArrowLeft, CheckCircle2, ShieldCheck, FileDown, UserCheck, Copy, FileQuestion, PenTool, PenLine, AlertCircle } from "lucide-react";
+import { ExportPackageDialog } from "@/components/response-matrix/ExportPackageDialog";
+import { getModifiedCommentIds } from "@/components/response-matrix/RoundChangeSummary";
+import { useResponsePackageDrafts } from "@/hooks/useResponsePackageDrafts";
 import { cn } from "@/lib/utils";
+import { PlanMarkupWorkspace } from "@/components/plans/PlanMarkupWorkspace";
+import { useApprovalGate } from "@/components/plans/ArchitectApprovalDialog";
+import type { PanelComment } from "@/components/plans/CommentPlanPanel";
 
 const RESPONSE_MATRIX_STYLES = `
   @keyframes response-fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -135,6 +141,38 @@ function CodeRefChip({ value }: { value: string | null | undefined }) {
   );
 }
 
+function MarkupStatusBadge({ commentId, projectId }: { commentId: string; projectId: string }) {
+  const [status, setStatus] = useState<"none" | "pending" | "approved" | "rejected">("none");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("plan_markups")
+        .select("status")
+        .eq("project_id", projectId)
+        .eq("comment_id", commentId)
+        .limit(1);
+      if (cancelled || error || !data || data.length === 0) return;
+      setStatus(data[0].status as "pending" | "approved" | "rejected");
+    })();
+    return () => { cancelled = true; };
+  }, [commentId, projectId]);
+
+  if (status === "none") return <span className="text-muted-foreground text-xs">—</span>;
+
+  const variant = status === "approved" ? "default" : status === "rejected" ? "destructive" : "secondary";
+  return (
+    <Badge
+      variant={variant}
+      className="text-[10px]"
+      data-testid={`badge-markup-status-${commentId}`}
+    >
+      {status === "approved" ? "Marked" : status === "pending" ? "Pending" : "Rejected"}
+    </Badge>
+  );
+}
+
 function ResponseCell({
   row,
   draftingId,
@@ -208,8 +246,11 @@ export default function ResponseMatrix() {
   const [validating, setValidating] = useState(false);
   const [qualityCheckOpen, setQualityCheckOpen] = useState(false);
   const [qualityChecking, setQualityChecking] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [routing, setRouting] = useState(false);
+  const [planMarkupOpen, setPlanMarkupOpen] = useState(false);
+  const { hasPendingMarkups, pendingCount, refetch: refetchApproval, qualityCheckBlocked } = useApprovalGate(projectId ?? undefined);
+  const { drafts: allDrafts } = useResponsePackageDrafts(projectId);
   const [qualityCheckResult, setQualityCheckResult] = useState<{
     project_id: string;
     results: Array<{
@@ -253,6 +294,16 @@ export default function ResponseMatrix() {
             String(r.response_text).trim() === ""
         )
       : withoutMetadata;
+
+  const lastSubmittedDraft = useMemo(() => {
+    return [...allDrafts]
+      .filter((d) => d.status === "submitted" && d.comment_snapshot)
+      .sort((a, b) => b.round_number - a.round_number)[0] ?? null;
+  }, [allDrafts]);
+
+  const modifiedCommentIds = useMemo(() => {
+    return getModifiedCommentIds(withoutMetadata, lastSubmittedDraft);
+  }, [withoutMetadata, lastSubmittedDraft]);
 
   useEffect(() => {
     if (projectIdParam && !projectId) setProjectId(projectIdParam);
@@ -380,42 +431,6 @@ export default function ResponseMatrix() {
     }
   }, [projectId]);
 
-  const runExportResponsePackage = useCallback(async () => {
-    if (!projectId) {
-      toast.error("Select a project first");
-      return;
-    }
-    setExporting(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("export-response-package", {
-        body: { project_id: projectId },
-      });
-      if (error) throw error;
-      const payload = data as { url?: string; file_path?: string; error?: string; missing_count?: number };
-      if (payload?.error) {
-        if (payload.error === "Incomplete responses" && typeof payload.missing_count === "number") {
-          toast.error(
-            `Project has ${payload.missing_count} comment(s) without responses. Run "Validate Completeness" first.`,
-            { duration: 6000 }
-          );
-        } else {
-          toast.error(payload.error);
-        }
-        return;
-      }
-      if (payload?.url) {
-        window.open(payload.url, "_blank");
-        toast.success("Response package exported");
-      } else {
-        toast.error("Export succeeded but no download URL returned");
-      }
-    } catch (e) {
-      console.warn("Export response package failed:", e);
-      toast.error("Export failed");
-    } finally {
-      setExporting(false);
-    }
-  }, [projectId]);
 
   const runRouteComments = useCallback(async () => {
     if (!projectId) {
@@ -538,6 +553,7 @@ export default function ResponseMatrix() {
                   onClick={runValidateCompleteness}
                   disabled={!projectId || validating}
                   className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                  data-testid="button-validate-completeness"
                 >
                   {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                   Validate Completeness
@@ -545,21 +561,43 @@ export default function ResponseMatrix() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={runQualityCheck}
-                  disabled={!projectId || qualityChecking}
+                  onClick={() => setPlanMarkupOpen(true)}
+                  disabled={!projectId}
                   className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                  data-testid="button-plan-markup"
                 >
-                  {qualityChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
-                  Quality Check
+                  <PenTool className="h-4 w-4 mr-2" />
+                  Plan Markup
+                  {hasPendingMarkups && (
+                    <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0">
+                      {pendingCount}
+                    </Badge>
+                  )}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={runExportResponsePackage}
-                  disabled={!projectId || exporting}
+                  onClick={runQualityCheck}
+                  disabled={!projectId || qualityChecking || qualityCheckBlocked}
                   className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                  data-testid="button-quality-check"
+                  title={qualityCheckBlocked ? `${pendingCount} unapproved markup(s) — approve before running Quality Check` : undefined}
                 >
-                  {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
+                  {qualityChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
+                  Quality Check
+                  {qualityCheckBlocked && (
+                    <AlertCircle className="h-3.5 w-3.5 ml-1 text-amber-500" />
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExportDialogOpen(true)}
+                  disabled={!projectId}
+                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
+                  data-testid="button-export-response-package"
+                >
+                  <FileDown className="h-4 w-4 mr-2" />
                   Export Response Package
                 </Button>
                 <Button
@@ -700,6 +738,34 @@ export default function ResponseMatrix() {
           </DialogContent>
         </Dialog>
 
+        {projectId && (
+          <ExportPackageDialog
+            open={exportDialogOpen}
+            onOpenChange={setExportDialogOpen}
+            projectId={projectId}
+            comments={rows.map((r) => ({ id: r.id, original_text: r.original_text, status: r.status, response_text: r.response_text }))}
+          />
+        )}
+
+        {projectId && (
+          <PlanMarkupWorkspace
+            open={planMarkupOpen}
+            onOpenChange={setPlanMarkupOpen}
+            projectId={projectId}
+            comments={withoutMetadata.map((r) => ({
+              id: r.id,
+              original_text: r.original_text,
+              discipline: r.discipline,
+              status: r.status,
+              page_number: r.page_number,
+              sheet_reference: r.sheet_reference,
+              code_reference: r.code_reference,
+              response_text: r.response_text,
+            }))}
+            onApprovalChanged={() => refetchApproval()}
+          />
+        )}
+
         {!projectId ? (
           <div className="flex flex-col items-center justify-center py-16 px-4 rounded-xl border border-dashed border-border bg-muted/20">
             <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted/50 mb-4">
@@ -750,6 +816,7 @@ export default function ResponseMatrix() {
                   <TableHead className="min-w-[300px] w-full sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Response</TableHead>
                   <TableHead className="w-[100px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Auto-Draft</TableHead>
                   <TableHead className="w-[140px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Assigned To</TableHead>
+                  <TableHead className="w-[80px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Markup</TableHead>
                   <TableHead className="w-[100px] sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-[0_1px_0_0_hsl(var(--border))]">Sheet Ref.</TableHead>
                 </TableRow>
               </TableHeader>
@@ -798,11 +865,23 @@ export default function ResponseMatrix() {
                       )}
                     </TableCell>
                     <TableCell className="align-top p-2 min-w-[300px]">
-                      <ResponseCell
-                        row={row}
-                        draftingId={draftingId}
-                        onUpdate={(v) => updateRow(row.id, "response_text", v)}
-                      />
+                      <div className="space-y-1">
+                        {modifiedCommentIds.has(row.id) && (
+                          <Badge
+                            variant="secondary"
+                            className="bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px]"
+                            data-testid={`badge-modified-${row.id}`}
+                          >
+                            <PenLine className="h-3 w-3 mr-0.5" />
+                            Modified
+                          </Badge>
+                        )}
+                        <ResponseCell
+                          row={row}
+                          draftingId={draftingId}
+                          onUpdate={(v) => updateRow(row.id, "response_text", v)}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="align-top w-[100px]">
                       <Button
@@ -829,6 +908,9 @@ export default function ResponseMatrix() {
                         placeholder="Name or email"
                         className="h-8"
                       />
+                    </TableCell>
+                    <TableCell className="align-middle w-[80px]">
+                      <MarkupStatusBadge commentId={row.id} projectId={row.project_id} />
                     </TableCell>
                     <TableCell className="align-top p-2">
                       <Input

@@ -31,8 +31,12 @@ import {
   KeyRound,
   Trash2,
   Database,
+  FileSignature,
+  Stamp,
 } from "lucide-react";
 import { PortalCredentialsManager } from "@/components/settings/PortalCredentialsManager";
+import { ArchitectProfileManager } from "@/components/settings/ArchitectProfileManager";
+import { ExportBrandingManager } from "@/components/settings/ExportBrandingManager";
 
 // Validation schemas
 const profileSchema = z.object({
@@ -379,7 +383,7 @@ export default function Settings() {
             transition={{ delay: 0.1 }}
           >
             <Tabs defaultValue="profile" className="space-y-6">
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5">
+              <TabsList className="grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-7">
                 <TabsTrigger value="profile" className="flex items-center gap-2">
                   <User className="h-4 w-4" />
                   <span className="hidden sm:inline">Profile</span>
@@ -395,6 +399,14 @@ export default function Settings() {
                 <TabsTrigger value="portals" className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4" />
                   <span className="hidden sm:inline">Portal Credentials</span>
+                </TabsTrigger>
+                <TabsTrigger value="architect" className="flex items-center gap-2" data-testid="tab-architect-profile">
+                  <Stamp className="h-4 w-4" />
+                  <span className="hidden sm:inline">Architect</span>
+                </TabsTrigger>
+                <TabsTrigger value="branding" className="flex items-center gap-2" data-testid="tab-export-branding">
+                  <FileSignature className="h-4 w-4" />
+                  <span className="hidden sm:inline">Export Branding</span>
                 </TabsTrigger>
                 <TabsTrigger value="cleanup" className="flex items-center gap-2">
                   <Database className="h-4 w-4" />
@@ -780,6 +792,16 @@ export default function Settings() {
               {/* Portal Credentials Tab */}
               <TabsContent value="portals">
                 <PortalCredentialsManager />
+              </TabsContent>
+
+              {/* Architect Profile Tab */}
+              <TabsContent value="architect">
+                <ArchitectProfileManager />
+              </TabsContent>
+
+              {/* Export Branding Tab */}
+              <TabsContent value="branding">
+                <ExportBrandingManager />
               </TabsContent>
 
               {/* Clean Up Data Tab */}
