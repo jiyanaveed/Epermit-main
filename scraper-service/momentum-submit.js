@@ -1,34 +1,22 @@
-const { getSession, PERMITWIZARD_URL } = require("./permitwizard-auth");
+const { getMomentumSession, MOMENTUM_BASE_URL } = require("./momentum-auth");
 
 const SUBMIT_TIMEOUT = 30000;
 const VALIDATION_WAIT_MS = 3000;
 
-const DEFAULT_SUBMIT_CONFIG = {
-  baseUrl: PERMITWIZARD_URL,
-  jurisdictionLabel: "DC DOB",
-};
-
-function resolveSubmitConfig(portalConfig) {
-  return { ...DEFAULT_SUBMIT_CONFIG, ...(portalConfig || {}) };
-}
-
-async function takeSubmitScreenshot(page, stepName, jurisdictionLabel) {
+async function takeSubmitScreenshot(page, stepName) {
   try {
     const buffer = await page.screenshot({ fullPage: true, type: "png" });
     const base64 = buffer.toString("base64");
     const url = `data:image/png;base64,${base64}`;
-    const label = jurisdictionLabel || "DC DOB";
-    const qualifiedStepName = `${label}_${stepName}`;
-    console.log(`  [Submit] Screenshot captured: ${qualifiedStepName} (${Math.round(base64.length / 1024)}KB)`);
+    console.log(`  [Momentum Submit] Screenshot captured: ${stepName} (${Math.round(base64.length / 1024)}KB)`);
     return {
-      step_name: qualifiedStepName,
-      agent_name: "submission_finalization",
+      step_name: stepName,
+      agent_name: "momentum_submission_finalization",
       screenshot_url: url,
       captured_at: new Date().toISOString(),
-      jurisdiction: label,
     };
   } catch (err) {
-    console.log(`  [Submit] Screenshot failed for ${stepName}: ${err.message}`);
+    console.log(`  [Momentum Submit] Screenshot failed for ${stepName}: ${err.message}`);
     return null;
   }
 }
@@ -81,6 +69,21 @@ async function extractReviewPageFields(page) {
         const value = (next.textContent || "").trim();
         if (label && value && label.length < 60 && value.length < 300) {
           fields[label] = value;
+        }
+      }
+    });
+
+    const liferayPanels = document.querySelectorAll(".panel, .portlet-body, .asset-entry, [class*='liferay' i]");
+    liferayPanels.forEach((panel) => {
+      const heading = panel.querySelector("h3, h4, .panel-heading, .panel-title");
+      if (heading) {
+        const content = panel.querySelector(".panel-body, .panel-collapse, .portlet-body-content");
+        if (content) {
+          const label = heading.textContent.trim().replace(/:$/, "");
+          const value = content.textContent.trim();
+          if (label && value && label.length < 60 && value.length < 500) {
+            fields[label] = value;
+          }
         }
       }
     });
@@ -170,7 +173,8 @@ async function detectPortalErrors(page) {
       ".error-message", ".error", ".alert-danger", ".alert-error",
       "[class*='error' i]", "[class*='Error']", "[id*='error' i]",
       ".validation-error", ".field-error", ".form-error",
-      ".ACA_Error", "[role='alert']",
+      ".portlet-msg-error", "[role='alert']",
+      ".has-error", ".alert-warning",
     ];
 
     for (const sel of errorSelectors) {
@@ -220,6 +224,7 @@ async function extractConfirmation(page) {
       /(?:confirmation|reference|tracking)\s*(?:#|number|no\.?|num)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
       /(?:application|permit)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
       /(?:record|case)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
+      /(?:PGCP|PGC|PG)\s*[-#]?\s*(\d{4,}[-\d]*)/i,
     ];
 
     for (const pattern of confirmPatterns) {
@@ -241,6 +246,8 @@ async function extractConfirmation(page) {
       "[id*='confirmation' i]", "[id*='applicationId' i]",
       "[id*='trackingNumber' i]", "[id*='recordId' i]",
       "[class*='confirmation' i]", "[class*='tracking' i]",
+      "[id*='permit' i][id*='number' i]",
+      "[class*='permit' i][class*='number' i]",
     ];
 
     for (const sel of idSelectors) {
@@ -259,6 +266,7 @@ async function extractConfirmation(page) {
 
     const successSelectors = [
       "[class*='success' i]", ".alert-success", "[class*='confirm' i]",
+      ".portlet-msg-success", ".portlet-msg-info",
       "h1", "h2", "h3",
     ];
 
@@ -270,7 +278,8 @@ async function extractConfirmation(page) {
           text.toLowerCase().includes("success") ||
           text.toLowerCase().includes("submitted") ||
           text.toLowerCase().includes("confirmation") ||
-          text.toLowerCase().includes("received")
+          text.toLowerCase().includes("received") ||
+          text.toLowerCase().includes("thank you")
         ) {
           result.message = text.substring(0, 200);
           break;
@@ -282,33 +291,31 @@ async function extractConfirmation(page) {
   });
 }
 
-async function permitWizardSubmit(sessionToken, filingData, supabase, portalConfig) {
-  const config = resolveSubmitConfig(portalConfig);
-  const jLabel = config.jurisdictionLabel;
+async function momentumSubmit(page, sessionData, filingData, supabase) {
+  console.log("  [Momentum Submit] Starting PG County Momentum submission finalization");
+  console.log(`  [Momentum Submit] Filing ID: ${filingData.filing_id}`);
 
-  console.log(`  [Submit] Starting submission finalization for ${jLabel}`);
-  console.log(`  [Submit] Filing ID: ${filingData.filing_id}`);
-
-  const session = getSession(sessionToken);
+  const session = getMomentumSession(sessionData.sessionToken || sessionData);
   if (!session) {
     return {
       success: false,
       error: "session_not_found",
-      message: "PermitWizard session not found or expired. Re-authenticate first.",
+      message: "Momentum session not found or expired. Re-authenticate first.",
     };
   }
 
-  const page = session.page;
+  const sessionPage = session.page;
   const screenshots = [];
 
   try {
-    const currentUrl = page.url();
-    console.log(`  [Submit] Current page URL: ${currentUrl}`);
+    const currentUrl = sessionPage.url();
+    console.log(`  [Momentum Submit] Current page URL: ${currentUrl}`);
 
     if (
-      currentUrl.includes("SessionEnded") ||
-      currentUrl.includes("login") ||
-      currentUrl.includes("b2clogin")
+      currentUrl.includes("/login") ||
+      currentUrl.includes("/Login") ||
+      currentUrl.includes("session-expired") ||
+      currentUrl.includes("SessionExpired")
     ) {
       return {
         success: false,
@@ -318,25 +325,25 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    const reviewScreenshot = await takeSubmitScreenshot(page, "review_page_before_validation", jLabel);
+    const reviewScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_review_page_before_validation");
     if (reviewScreenshot) screenshots.push(reviewScreenshot);
 
-    console.log("  [Submit] Extracting review page fields...");
-    const reviewFields = await extractReviewPageFields(page);
-    console.log(`  [Submit] Found ${Object.keys(reviewFields).length} fields on review page`);
+    console.log("  [Momentum Submit] Extracting review page fields...");
+    const reviewFields = await extractReviewPageFields(sessionPage);
+    console.log(`  [Momentum Submit] Found ${Object.keys(reviewFields).length} fields on review page`);
 
     const validation = validateFieldsMatch(reviewFields, filingData);
-    console.log(`  [Submit] Validation result: ${validation.valid ? "PASS" : "FAIL"}`);
-    console.log(`  [Submit] Matched: ${validation.matched.length}, Mismatches: ${validation.mismatches.length}`);
+    console.log(`  [Momentum Submit] Validation result: ${validation.valid ? "PASS" : "FAIL"}`);
+    console.log(`  [Momentum Submit] Matched: ${validation.matched.length}, Mismatches: ${validation.mismatches.length}`);
 
     if (validation.mismatches.length > 0) {
-      console.log("  [Submit] Mismatches found:");
+      console.log("  [Momentum Submit] Mismatches found:");
       validation.mismatches.forEach((m) => {
         console.log(`    - ${m.field}: expected "${m.expected}", found: ${m.found || "NOT FOUND"}`);
       });
     }
 
-    const validationScreenshot = await takeSubmitScreenshot(page, "review_validation_result", jLabel);
+    const validationScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_review_validation_result");
     if (validationScreenshot) {
       validationScreenshot.field_audit = {
         review_fields: reviewFields,
@@ -370,11 +377,11 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log("  [Submit] Validation passed — proceeding to submit...");
+    console.log("  [Momentum Submit] Validation passed — proceeding to submit...");
 
-    const preSubmitErrors = await detectPortalErrors(page);
+    const preSubmitErrors = await detectPortalErrors(sessionPage);
     if (preSubmitErrors.length > 0) {
-      console.log(`  [Submit] Portal errors detected before submit: ${preSubmitErrors.join("; ")}`);
+      console.log(`  [Momentum Submit] Portal errors detected before submit: ${preSubmitErrors.join("; ")}`);
 
       return {
         success: false,
@@ -385,6 +392,29 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
+    const agreeSelectors = [
+      'input[type="checkbox"][id*="agree" i]',
+      'input[type="checkbox"][id*="terms" i]',
+      'input[type="checkbox"][id*="certif" i]',
+      'input[type="checkbox"][name*="agree" i]',
+      'input[type="checkbox"][name*="terms" i]',
+      'label:has-text("I agree") input[type="checkbox"]',
+      'label:has-text("I certify") input[type="checkbox"]',
+    ];
+
+    for (const sel of agreeSelectors) {
+      const checkbox = await sessionPage.$(sel);
+      if (checkbox && (await checkbox.isVisible().catch(() => false))) {
+        const isChecked = await checkbox.isChecked().catch(() => false);
+        if (!isChecked) {
+          await checkbox.check();
+          console.log(`  [Momentum Submit] Checked agreement checkbox: ${sel}`);
+          await sessionPage.waitForTimeout(500);
+        }
+        break;
+      }
+    }
+
     const submitSelectors = [
       'button:has-text("Submit")',
       'button:has-text("Submit Application")',
@@ -392,6 +422,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       'input[value="Submit Application"]',
       'button[type="submit"]:has-text("Submit")',
       'button.btn-primary:has-text("Submit")',
+      'a:has-text("Submit Application")',
       '[data-action="submit"]',
       '[data-action="submit-application"]',
       ".wizard-submit",
@@ -400,7 +431,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
 
     let submitButton = null;
     for (const sel of submitSelectors) {
-      const btn = await page.$(sel);
+      const btn = await sessionPage.$(sel);
       if (btn && (await btn.isVisible().catch(() => false))) {
         const isDisabled = await btn.evaluate(
           (el) => el.disabled || el.classList.contains("disabled")
@@ -413,7 +444,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
     }
 
     if (!submitButton) {
-      const noSubmitScreenshot = await takeSubmitScreenshot(page, "no_submit_button_found", jLabel);
+      const noSubmitScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_no_submit_button_found");
       if (noSubmitScreenshot) screenshots.push(noSubmitScreenshot);
 
       return {
@@ -424,25 +455,44 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log(`  [Submit] Found submit button: ${submitButton.selector}`);
-    console.log("  [Submit] Clicking submit...");
+    console.log(`  [Momentum Submit] Found submit button: ${submitButton.selector}`);
+    console.log("  [Momentum Submit] Clicking submit...");
 
-    const preSubmitScreenshot = await takeSubmitScreenshot(page, "pre_submit_click", jLabel);
+    const preSubmitScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_pre_submit_click");
     if (preSubmitScreenshot) screenshots.push(preSubmitScreenshot);
 
     await submitButton.element.click();
-    console.log("  [Submit] Submit button clicked");
+    console.log("  [Momentum Submit] Submit button clicked");
 
-    await page.waitForTimeout(VALIDATION_WAIT_MS);
-    await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(2000);
+    await sessionPage.waitForTimeout(VALIDATION_WAIT_MS);
+    await sessionPage.waitForLoadState("networkidle").catch(() => {});
+    await sessionPage.waitForTimeout(2000);
 
-    const immediateErrors = await detectPortalErrors(page);
+    const confirmDialogSelectors = [
+      'button:has-text("Yes")',
+      'button:has-text("OK")',
+      'button:has-text("Confirm")',
+      'input[value="Yes"]',
+      'input[value="OK"]',
+    ];
+
+    for (const sel of confirmDialogSelectors) {
+      const btn = await sessionPage.$(sel);
+      if (btn && (await btn.isVisible().catch(() => false))) {
+        console.log(`  [Momentum Submit] Confirming dialog: ${sel}`);
+        await btn.click();
+        await sessionPage.waitForTimeout(VALIDATION_WAIT_MS);
+        await sessionPage.waitForLoadState("networkidle").catch(() => {});
+        break;
+      }
+    }
+
+    const immediateErrors = await detectPortalErrors(sessionPage);
 
     if (immediateErrors.length > 0) {
-      console.log(`  [Submit] Portal errors after submit: ${immediateErrors.join("; ")}`);
+      console.log(`  [Momentum Submit] Portal errors after submit: ${immediateErrors.join("; ")}`);
 
-      const errorScreenshot = await takeSubmitScreenshot(page, "post_submit_errors", jLabel);
+      const errorScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_post_submit_errors");
       if (errorScreenshot) {
         errorScreenshot.field_audit = { portal_errors: immediateErrors };
         screenshots.push(errorScreenshot);
@@ -471,14 +521,14 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log("  [Submit] No errors detected — extracting confirmation...");
+    console.log("  [Momentum Submit] No errors detected — extracting confirmation...");
 
-    const confirmationData = await extractConfirmation(page);
-    console.log(`  [Submit] Confirmation number: ${confirmationData.confirmation_number || "not found"}`);
-    console.log(`  [Submit] Application ID: ${confirmationData.application_id || "not found"}`);
-    console.log(`  [Submit] Message: ${confirmationData.message || "none"}`);
+    const confirmationData = await extractConfirmation(sessionPage);
+    console.log(`  [Momentum Submit] Confirmation number: ${confirmationData.confirmation_number || "not found"}`);
+    console.log(`  [Momentum Submit] Application ID: ${confirmationData.application_id || "not found"}`);
+    console.log(`  [Momentum Submit] Message: ${confirmationData.message || "none"}`);
 
-    const confirmScreenshot = await takeSubmitScreenshot(page, "confirmation_page", jLabel);
+    const confirmScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_confirmation_page");
     if (confirmScreenshot) {
       confirmScreenshot.field_audit = { confirmation: confirmationData };
       screenshots.push(confirmScreenshot);
@@ -498,9 +548,9 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
           })
           .eq("id", filingData.filing_id);
 
-        console.log(`  [Submit] Updated permit_filings: status=submitted`);
+        console.log("  [Momentum Submit] Updated permit_filings: status=submitted");
       } catch (err) {
-        console.log(`  [Submit] Failed to update permit_filings: ${err.message}`);
+        console.log(`  [Momentum Submit] Failed to update permit_filings: ${err.message}`);
       }
 
       for (const ss of screenshots) {
@@ -516,7 +566,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       }
     }
 
-    console.log("  [Submit] Submission finalization complete");
+    console.log("  [Momentum Submit] Submission finalization complete");
 
     return {
       success: true,
@@ -526,11 +576,13 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       validation,
       screenshots,
       submitted_at: new Date().toISOString(),
+      portal: "momentum_liferay",
+      jurisdiction: "pg_county_md",
     };
   } catch (err) {
-    console.error(`  [Submit] Fatal error: ${err.message}`);
+    console.error(`  [Momentum Submit] Fatal error: ${err.message}`);
 
-    const errorScreenshot = await takeSubmitScreenshot(page, "fatal_error", jLabel).catch(() => null);
+    const errorScreenshot = await takeSubmitScreenshot(sessionPage, "momentum_fatal_error").catch(() => null);
     if (errorScreenshot) screenshots.push(errorScreenshot);
 
     if (supabase && filingData.filing_id) {
@@ -567,11 +619,9 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
 }
 
 module.exports = {
-  permitWizardSubmit,
+  momentumSubmit,
   extractReviewPageFields,
   validateFieldsMatch,
   extractConfirmation,
   detectPortalErrors,
-  resolveSubmitConfig,
-  DEFAULT_SUBMIT_CONFIG,
 };

@@ -73,6 +73,8 @@ interface Filing {
   estimated_fee?: number;
   application_id?: string;
   confirmation_number?: string;
+  municipality?: string | null;
+  credential_id?: string | null;
   approval_package?: ApprovalPackage | null;
   approval_decision?: string | null;
   approved_by?: string | null;
@@ -82,6 +84,19 @@ interface Filing {
   created_at: string;
   updated_at: string;
 }
+
+const MUNICIPALITY_META: Record<string, { displayName: string; state: string; propertySource: string; licenseSource: string; agencyName: string }> = {
+  dc_dob: { displayName: 'DC Department of Buildings', state: 'DC', propertySource: 'via DC Scout', licenseSource: 'via DLCP', agencyName: 'DC Department of Buildings' },
+  fairfax_county_va: { displayName: 'Fairfax County Land Development Services', state: 'VA', propertySource: 'via Fairfax County GIS', licenseSource: 'via VA DPOR', agencyName: 'Fairfax County Land Development Services' },
+  baltimore_city_md: { displayName: 'Baltimore City Permits & Code Enforcement', state: 'MD', propertySource: 'via MD SDAT', licenseSource: 'via MD DLLR', agencyName: 'Baltimore City Permits & Code Enforcement' },
+  howard_county_md: { displayName: 'Howard County DILP', state: 'MD', propertySource: 'via MD SDAT', licenseSource: 'via MD DLLR', agencyName: 'Howard County Dept of Inspections, Licenses & Permits' },
+  arlington_county_va: { displayName: 'Arlington County Inspection Services', state: 'VA', propertySource: 'not available for this jurisdiction', licenseSource: 'via VA DPOR', agencyName: 'Arlington County Inspection Services Division' },
+  anne_arundel_county_md: { displayName: 'Anne Arundel County Inspections & Permits', state: 'MD', propertySource: 'via MD SDAT', licenseSource: 'via MD DLLR', agencyName: 'Anne Arundel County Office of Inspections & Permits' },
+  pg_county_md: { displayName: 'PG County DPIE', state: 'MD', propertySource: 'via MD SDAT', licenseSource: 'via MD DLLR', agencyName: 'Prince George\'s County DPIE' },
+  montgomery_county_md: { displayName: 'Montgomery County DPS', state: 'MD', propertySource: 'via MD SDAT', licenseSource: 'via MD DLLR', agencyName: 'Montgomery County Department of Permitting Services' },
+  alexandria_va: { displayName: 'City of Alexandria Permit Center', state: 'VA', propertySource: 'not available for this jurisdiction', licenseSource: 'via VA DPOR', agencyName: 'City of Alexandria Permit Center' },
+  loudoun_county_va: { displayName: 'Loudoun County Building & Development', state: 'VA', propertySource: 'not available for this jurisdiction', licenseSource: 'via VA DPOR', agencyName: 'Loudoun County Department of Building & Development' },
+};
 
 interface FilingReviewPanelProps {
   filing: Filing | null;
@@ -112,6 +127,7 @@ function ReviewContent({ filing, isLoading, onDecisionMade }: { filing: Filing |
   const hasHardStop = pkg?.hard_stop === true;
   const hasEscalation = pkg?.escalation_required === true;
   const allSucceeded = pkg?.all_agents_succeeded === true;
+  const muniMeta = filing?.municipality ? MUNICIPALITY_META[filing.municipality] ?? null : null;
 
   const handleDecision = useCallback(async (decision: 'approved' | 'rejected') => {
     if (!filing || !user) return;
@@ -227,6 +243,12 @@ function ReviewContent({ filing, isLoading, onDecisionMade }: { filing: Filing |
             {statusConfig.label}
           </Badge>
         </div>
+        {muniMeta && (
+          <p className="text-sm font-medium" data-testid="text-municipality-name">
+            {muniMeta.displayName}
+            <Badge variant="outline" className="ml-2" data-testid="badge-municipality-state">{muniMeta.state}</Badge>
+          </p>
+        )}
         {filing.property_address && (
           <p className="text-sm text-muted-foreground" data-testid="text-filing-address">{filing.property_address}</p>
         )}
@@ -289,11 +311,13 @@ function ReviewContent({ filing, isLoading, onDecisionMade }: { filing: Filing |
       <PropertyIntelligenceCard
         data={pkg?.property_intelligence as Record<string, unknown> | null | undefined}
         error={typeof (pkg?.property_intelligence as Record<string, unknown>)?.error === 'string' ? (pkg?.property_intelligence as Record<string, unknown>).error as string : null}
+        dataSourceLabel={muniMeta?.propertySource ?? null}
       />
 
       <LicenseValidationCard
         data={pkg?.license_validation as Record<string, unknown> | null | undefined}
         error={pkg?.license_validation?.error ?? null}
+        validationSourceLabel={muniMeta?.licenseSource ?? null}
       />
 
       <DocumentChecklistCard
@@ -304,6 +328,7 @@ function ReviewContent({ filing, isLoading, onDecisionMade }: { filing: Filing |
       <PermitClassificationCard
         data={pkg?.permit_classification as Record<string, unknown> | null | undefined}
         error={pkg?.permit_classification?.error ?? null}
+        agencyName={muniMeta?.agencyName ?? null}
       />
 
       {filing.approval_decision && (

@@ -9,7 +9,7 @@ const corsHeaders = {
 
 const CONFIDENCE_THRESHOLD = 0.85;
 
-const PERMIT_TYPES = [
+const DEFAULT_PERMIT_TYPES = [
   "residential",
   "trade",
   "solar",
@@ -17,9 +17,9 @@ const PERMIT_TYPES = [
   "raze",
 ] as const;
 
-const REVIEW_TRACKS = ["walk_through", "projectdox"] as const;
+const DEFAULT_REVIEW_TRACKS = ["walk_through", "projectdox"] as const;
 
-const SISTER_AGENCIES = [
+const DEFAULT_SISTER_AGENCIES = [
   "Historic Preservation Office (HPO)",
   "Department of Energy & Environment (DOEE)",
   "DC Water",
@@ -28,6 +28,26 @@ const SISTER_AGENCIES = [
   "Office of Zoning (OZ)",
   "Public Space Committee",
 ] as const;
+
+interface MunicipalityConfig {
+  municipality_key: string;
+  display_name: string;
+  short_name: string;
+  state: string;
+  county: string | null;
+  portal_type: string;
+  portal_base_url: string;
+  permit_types: Array<{ code: string; label: string }>;
+  agent_config: {
+    agency_name?: string;
+    agency_short?: string;
+    fee_schedule_ref?: string;
+    sister_agencies?: string[];
+    gpt_prompt_context?: string;
+    review_tracks?: string[];
+    [key: string]: unknown;
+  };
+}
 
 interface ClassificationResult {
   permit_type: string;
@@ -116,6 +136,7 @@ serve(async (req) => {
     const propertyType = body.property_type as string | undefined;
     const constructionValue = body.construction_value as number | undefined;
     const propertyIntelligence = body.property_intelligence as PropertyIntelligenceData | undefined;
+    const municipalityKey = (body.municipality_key as string | undefined) ?? "dc_dob";
 
     if (!filingId) {
       return new Response(
@@ -135,6 +156,21 @@ serve(async (req) => {
         JSON.stringify({ code: 404, message: "Filing not found or access denied" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    let muniConfig: MunicipalityConfig | null = null;
+    const { data: muniData } = await adminSupabase
+      .from("municipality_configs")
+      .select("*")
+      .eq("municipality_key", municipalityKey)
+      .eq("is_active", true)
+      .single();
+
+    if (muniData) {
+      muniConfig = muniData as MunicipalityConfig;
+      console.log(`[permit-classifier] Loaded municipality config for ${municipalityKey}: ${muniConfig.display_name}`);
+    } else {
+      console.log(`[permit-classifier] No municipality config found for ${municipalityKey}, using DC defaults`);
     }
 
     const finalScope = scopeOfWork ?? filing.scope_of_work;
@@ -170,6 +206,7 @@ serve(async (req) => {
       status: "running",
       input_data: {
         filing_id: filingId,
+        municipality_key: municipalityKey,
         scope_of_work: finalScope,
         property_type: finalPropertyType,
         construction_value: finalConstructionValue,
@@ -202,6 +239,7 @@ serve(async (req) => {
         constructionValue: finalConstructionValue,
         propertyAddress: filing.property_address,
         propertyIntelligence: propIntel,
+        municipalityConfig: muniConfig,
       });
 
       if (classificationResult.confidence < CONFIDENCE_THRESHOLD) {
@@ -290,6 +328,7 @@ serve(async (req) => {
       JSON.stringify({
         status: agentStatus,
         filing_id: filingId,
+        municipality_key: municipalityKey,
         agent_run_id: runId ?? null,
         classification: {
           permit_type: classificationResult.permit_type,
@@ -334,12 +373,74 @@ interface ClassifyInput {
   constructionValue?: number | null;
   propertyAddress?: string | null;
   propertyIntelligence: PropertyIntelligenceData;
+  municipalityConfig?: MunicipalityConfig | null;
 }
 
-async function classifyPermit(input: ClassifyInput): Promise<ClassificationResult> {
-  const openai = new OpenAI({ apiKey: input.openaiKey });
+function buildSystemPrompt(muniConfig: MunicipalityConfig | null): string {
+  if (!muniConfig) {
+    return buildDcDefaultSystemPrompt();
+  }
 
-  const systemPrompt = `You are a DC Department of Buildings (DOB) permit classification expert. Your job is to analyze a scope of work and property details to determine:
+  const agentCfg = muniConfig.agent_config;
+  const agencyName = agentCfg.agency_name ?? muniConfig.display_name;
+  const agencyShort = agentCfg.agency_short ?? muniConfig.short_name;
+  const feeScheduleRef = agentCfg.fee_schedule_ref ?? "the local permit fee schedule";
+  const sisterAgencies = agentCfg.sister_agencies ?? [];
+  const reviewTracks = agentCfg.review_tracks ?? ["standard"];
+  const gptContext = agentCfg.gpt_prompt_context ?? `You are a ${agencyName} permit classification expert.`;
+  const permitTypes = muniConfig.permit_types ?? [];
+
+  const permitTypeList = permitTypes.length > 0
+    ? permitTypes.map((pt) => `- ${pt.code}: ${pt.label}`).join("\n")
+    : "- BUILDING: Building Permit\n- ELECTRICAL: Electrical Permit\n- MECHANICAL: Mechanical Permit\n- PLUMBING: Plumbing Permit\n- DEMOLITION: Demolition Permit";
+
+  const reviewTrackList = reviewTracks.map((rt) => `"${rt}"`).join(", ");
+
+  const sisterAgencyList = sisterAgencies.length > 0
+    ? sisterAgencies.map((a) => `   - ${a}`).join("\n")
+    : "   - None configured for this jurisdiction";
+
+  return `${gptContext}
+
+Your job is to analyze a scope of work and property details for ${agencyName} (${agencyShort}) in ${muniConfig.state}${muniConfig.county ? `, ${muniConfig.county} County` : ""} to determine:
+
+1. **Permit Type**: One of the following permit type codes for this jurisdiction:
+${permitTypeList}
+
+2. **Permit Subtype**: More specific classification within the permit type (e.g., "interior_alteration", "addition", "new_construction", "residential_electrical", etc.)
+
+3. **Review Track**: One of: ${reviewTrackList}
+   Determine the appropriate review track based on project complexity, construction value, and jurisdiction rules.
+
+4. **Sister Agency Reviews**: Identify which agencies in this jurisdiction must also review the application:
+${sisterAgencyList}
+   Only include agencies that are relevant based on the scope of work and property characteristics.
+
+5. **Fee Estimate**: Estimate the permit fee based on ${feeScheduleRef}.
+   Provide your best estimate based on the scope of work, construction value, and permit type. Include a breakdown by fee category.
+
+6. **Recommended Project Description**: Generate professional language suitable for the permit application that accurately describes the scope of work for ${agencyShort}.
+
+Return a JSON object with these exact keys:
+{
+  "permit_type": "one of the permit type codes listed above",
+  "permit_subtype": "specific subtype string",
+  "confidence": 0.0 to 1.0,
+  "alternatives": [{"permit_type": "type", "confidence": 0.0 to 1.0}],
+  "review_track": "one of the review tracks listed above",
+  "review_track_reasoning": "explanation",
+  "sister_agency_reviews": ["agency names from the list above"],
+  "estimated_fee": total_number,
+  "fee_breakdown": {"category": amount},
+  "recommended_description": "professional description text",
+  "reasoning": "explanation of classification decision"
+}
+
+Always provide at least one alternative classification if your confidence is below 0.95.`;
+}
+
+function buildDcDefaultSystemPrompt(): string {
+  return `You are a DC Department of Buildings (DOB) permit classification expert. Your job is to analyze a scope of work and property details to determine:
 
 1. **Permit Type**: One of: residential, trade, solar, demolition, raze
    - residential: New construction, additions, alterations, interior renovations for residential properties
@@ -392,10 +493,20 @@ Return a JSON object with these exact keys:
 }
 
 Always provide at least one alternative classification if your confidence is below 0.95.`;
+}
+
+async function classifyPermit(input: ClassifyInput): Promise<ClassificationResult> {
+  const openai = new OpenAI({ apiKey: input.openaiKey });
+
+  const systemPrompt = buildSystemPrompt(input.municipalityConfig ?? null);
+
+  const jurisdictionLabel = input.municipalityConfig
+    ? `${input.municipalityConfig.display_name} (${input.municipalityConfig.state})`
+    : "DC";
 
   const propertyContext = buildPropertyContext(input);
 
-  const userContent = `Please classify this DC permit application:
+  const userContent = `Please classify this ${jurisdictionLabel} permit application:
 
 **Scope of Work:** ${input.scopeOfWork}
 
@@ -431,8 +542,13 @@ Classify the permit type, predict the review track, identify required sister age
     throw new Error("Invalid JSON response from OpenAI model");
   }
 
-  const permitType = validatePermitType(parsed.permit_type as string);
-  const reviewTrack = validateReviewTrack(parsed.review_track as string);
+  const muniCfg = input.municipalityConfig ?? null;
+  const validPermitTypes = muniCfg?.permit_types?.map((pt) => pt.code.toLowerCase()) ?? [...DEFAULT_PERMIT_TYPES];
+  const validReviewTracks = muniCfg?.agent_config?.review_tracks ?? [...DEFAULT_REVIEW_TRACKS];
+  const validSisterAgencies = muniCfg?.agent_config?.sister_agencies ?? [...DEFAULT_SISTER_AGENCIES];
+
+  const permitType = validatePermitType(parsed.permit_type as string, validPermitTypes);
+  const reviewTrack = validateReviewTrack(parsed.review_track as string, validReviewTracks);
 
   const result: ClassificationResult = {
     permit_type: permitType,
@@ -440,10 +556,10 @@ Classify the permit type, predict the review track, identify required sister age
     confidence: typeof parsed.confidence === "number"
       ? Math.max(0, Math.min(1, parsed.confidence))
       : 0.5,
-    alternatives: parseAlternatives(parsed.alternatives),
+    alternatives: parseAlternatives(parsed.alternatives, validPermitTypes),
     review_track: reviewTrack,
     review_track_reasoning: (parsed.review_track_reasoning as string) ?? "",
-    sister_agency_reviews: parseSisterAgencies(parsed.sister_agency_reviews),
+    sister_agency_reviews: parseSisterAgencies(parsed.sister_agency_reviews, validSisterAgencies),
     estimated_fee: typeof parsed.estimated_fee === "number" ? parsed.estimated_fee : 0,
     fee_breakdown: (parsed.fee_breakdown as Record<string, number>) ?? {},
     recommended_description: (parsed.recommended_description as string) ?? "",
@@ -486,20 +602,23 @@ function buildPropertyContext(input: ClassifyInput): string {
   return lines.join("\n");
 }
 
-function validatePermitType(value: string | undefined): string {
-  const valid = PERMIT_TYPES as readonly string[];
-  if (value && valid.includes(value)) return value;
-  return "residential";
+function validatePermitType(value: string | undefined, validTypes: string[]): string {
+  if (value && validTypes.some((vt) => vt.toLowerCase() === value.toLowerCase())) {
+    return value;
+  }
+  return validTypes[0] ?? "residential";
 }
 
-function validateReviewTrack(value: string | undefined): string {
-  const valid = REVIEW_TRACKS as readonly string[];
-  if (value && valid.includes(value)) return value;
-  return "walk_through";
+function validateReviewTrack(value: string | undefined, validTracks: string[]): string {
+  if (value && validTracks.some((vt) => vt.toLowerCase() === value.toLowerCase())) {
+    return value;
+  }
+  return validTracks[0] ?? "standard";
 }
 
 function parseAlternatives(
-  raw: unknown
+  raw: unknown,
+  validTypes: string[]
 ): Array<{ permit_type: string; confidence: number }> {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -511,15 +630,14 @@ function parseAlternatives(
         typeof (item as Record<string, unknown>).confidence === "number"
     )
     .map((item) => ({
-      permit_type: validatePermitType(item.permit_type),
+      permit_type: validatePermitType(item.permit_type, validTypes),
       confidence: Math.max(0, Math.min(1, item.confidence)),
     }))
     .slice(0, 3);
 }
 
-function parseSisterAgencies(raw: unknown): string[] {
+function parseSisterAgencies(raw: unknown, validAgencies: string[]): string[] {
   if (!Array.isArray(raw)) return [];
-  const validAgencies = SISTER_AGENCIES as readonly string[];
   return raw.filter(
     (item): item is string =>
       typeof item === "string" && validAgencies.includes(item)

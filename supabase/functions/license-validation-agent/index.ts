@@ -21,10 +21,72 @@ interface ValidationResult {
   validation_status: "active" | "expired" | "not_found" | "pending";
   expiration_date: string | null;
   scope_of_license: string | null;
+  validation_source: string;
   error?: string;
 }
 
-const DLCP_BASE_URL = "https://verify.dcra.dc.gov";
+type LicenseValidationSource = "dlcp_dc" | "dllr_md" | "dpor_va" | "none";
+
+interface ValidationSourceConfig {
+  source: LicenseValidationSource;
+  label: string;
+  baseUrl: string;
+  searchPath: string;
+}
+
+const VALIDATION_SOURCES: Record<string, ValidationSourceConfig> = {
+  dlcp_dc: {
+    source: "dlcp_dc",
+    label: "DC DLCP",
+    baseUrl: "https://verify.dcra.dc.gov",
+    searchPath: "/api/license/search",
+  },
+  dllr_md: {
+    source: "dllr_md",
+    label: "MD DLLR",
+    baseUrl: "https://www.dllr.state.md.us",
+    searchPath: "/api/license/verify",
+  },
+  dpor_va: {
+    source: "dpor_va",
+    label: "VA DPOR",
+    baseUrl: "https://www.dpor.virginia.gov",
+    searchPath: "/api/license/lookup",
+  },
+};
+
+const MUNICIPALITY_TO_SOURCE: Record<string, LicenseValidationSource> = {
+  dc_dob: "dlcp_dc",
+  baltimore_city_md: "dllr_md",
+  howard_county_md: "dllr_md",
+  pg_county_md: "dllr_md",
+  montgomery_county_md: "dllr_md",
+  anne_arundel_county_md: "dllr_md",
+  fairfax_county_va: "dpor_va",
+  arlington_county_va: "dpor_va",
+  alexandria_va: "dpor_va",
+  loudoun_county_va: "dpor_va",
+};
+
+const EXPEDITER_ROLES = ["expediter", "permit_expediter", "permit expediter"];
+
+interface HardStopConfig {
+  requireExpediterLicense: boolean;
+  hardStopRoles: string[];
+}
+
+function getHardStopConfig(municipalityKey: string): HardStopConfig {
+  if (municipalityKey === "dc_dob") {
+    return {
+      requireExpediterLicense: true,
+      hardStopRoles: EXPEDITER_ROLES,
+    };
+  }
+  return {
+    requireExpediterLicense: false,
+    hardStopRoles: [],
+  };
+}
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 1000;
@@ -33,8 +95,42 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function validateLicenseWithDLCP(
-  professional: Professional
+function getValidationSource(municipalityKey: string): ValidationSourceConfig | null {
+  const sourceKey = MUNICIPALITY_TO_SOURCE[municipalityKey];
+  if (!sourceKey || sourceKey === "none") return null;
+  return VALIDATION_SOURCES[sourceKey] || null;
+}
+
+function parseValidationStatus(
+  data: Record<string, unknown>
+): { status: ValidationResult["validation_status"]; expirationDate: string | null; scope: string | null } {
+  const rawStatus = (data.status as string || "").toLowerCase();
+  const expirationDate = data.expiration_date as string | null;
+  const scope = data.scope as string | null;
+
+  let status: ValidationResult["validation_status"] = "not_found";
+
+  if (rawStatus === "active" || rawStatus === "valid" || rawStatus === "current") {
+    if (expirationDate) {
+      const expDate = new Date(expirationDate);
+      if (expDate < new Date()) {
+        status = "expired";
+      } else {
+        status = "active";
+      }
+    } else {
+      status = "active";
+    }
+  } else if (rawStatus === "expired" || rawStatus === "inactive" || rawStatus === "lapsed") {
+    status = "expired";
+  }
+
+  return { status, expirationDate, scope };
+}
+
+async function validateLicenseWithSource(
+  professional: Professional,
+  sourceConfig: ValidationSourceConfig
 ): Promise<ValidationResult> {
   const result: ValidationResult = {
     professional_name: professional.professional_name,
@@ -44,11 +140,12 @@ async function validateLicenseWithDLCP(
     validation_status: "pending",
     expiration_date: null,
     scope_of_license: null,
+    validation_source: sourceConfig.label,
   };
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const searchUrl = `${DLCP_BASE_URL}/api/license/search?number=${encodeURIComponent(professional.license_number)}&type=${encodeURIComponent(professional.license_type)}`;
+      const searchUrl = `${sourceConfig.baseUrl}${sourceConfig.searchPath}?number=${encodeURIComponent(professional.license_number)}&type=${encodeURIComponent(professional.license_type)}`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -67,7 +164,7 @@ async function validateLicenseWithDLCP(
       if (response.status === 404) {
         result.validation_status = "not_found";
         console.log(
-          `[license-validation] License not found: ${professional.license_number} (${professional.license_type})`
+          `[license-validation] [${sourceConfig.label}] License not found: ${professional.license_number} (${professional.license_type})`
         );
         return result;
       }
@@ -75,14 +172,14 @@ async function validateLicenseWithDLCP(
       if (!response.ok) {
         const statusText = response.statusText;
         console.warn(
-          `[license-validation] DLCP returned ${response.status} ${statusText} for ${professional.license_number}, attempt ${attempt + 1}/${MAX_RETRIES}`
+          `[license-validation] [${sourceConfig.label}] returned ${response.status} ${statusText} for ${professional.license_number}, attempt ${attempt + 1}/${MAX_RETRIES}`
         );
         if (attempt < MAX_RETRIES - 1) {
           await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
           continue;
         }
         result.validation_status = "not_found";
-        result.error = `DLCP unavailable after ${MAX_RETRIES} attempts: ${response.status} ${statusText}`;
+        result.error = `${sourceConfig.label} unavailable after ${MAX_RETRIES} attempts: ${response.status} ${statusText}`;
         return result;
       }
 
@@ -90,45 +187,25 @@ async function validateLicenseWithDLCP(
       try {
         data = await response.json();
       } catch {
-        console.warn(`[license-validation] Non-JSON response for ${professional.license_number}`);
+        console.warn(`[license-validation] [${sourceConfig.label}] Non-JSON response for ${professional.license_number}`);
         result.validation_status = "not_found";
-        result.error = "DLCP returned non-JSON response";
+        result.error = `${sourceConfig.label} returned non-JSON response`;
         return result;
       }
 
-      const status = (data.status as string || "").toLowerCase();
-      const expirationDate = data.expiration_date as string | null;
-      const scope = data.scope as string | null;
-
-      result.scope_of_license = scope || null;
-      result.expiration_date = expirationDate || null;
-
-      if (status === "active" || status === "valid" || status === "current") {
-        if (expirationDate) {
-          const expDate = new Date(expirationDate);
-          const now = new Date();
-          if (expDate < now) {
-            result.validation_status = "expired";
-          } else {
-            result.validation_status = "active";
-          }
-        } else {
-          result.validation_status = "active";
-        }
-      } else if (status === "expired" || status === "inactive" || status === "lapsed") {
-        result.validation_status = "expired";
-      } else {
-        result.validation_status = "not_found";
-      }
+      const parsed = parseValidationStatus(data);
+      result.validation_status = parsed.status;
+      result.expiration_date = parsed.expirationDate || null;
+      result.scope_of_license = parsed.scope || null;
 
       console.log(
-        `[license-validation] ${professional.license_number} (${professional.license_type}): ${result.validation_status}`
+        `[license-validation] [${sourceConfig.label}] ${professional.license_number} (${professional.license_type}): ${result.validation_status}`
       );
       return result;
     } catch (err) {
       const isAbort = err instanceof Error && err.name === "AbortError";
       console.warn(
-        `[license-validation] Error validating ${professional.license_number}, attempt ${attempt + 1}/${MAX_RETRIES}:`,
+        `[license-validation] [${sourceConfig.label}] Error validating ${professional.license_number}, attempt ${attempt + 1}/${MAX_RETRIES}:`,
         isAbort ? "timeout" : err
       );
       if (attempt < MAX_RETRIES - 1) {
@@ -137,7 +214,7 @@ async function validateLicenseWithDLCP(
       }
       result.validation_status = "not_found";
       result.error = isAbort
-        ? "DLCP request timed out"
+        ? `${sourceConfig.label} request timed out`
         : err instanceof Error
           ? err.message
           : "Unknown error";
@@ -146,6 +223,23 @@ async function validateLicenseWithDLCP(
   }
 
   return result;
+}
+
+function createFallbackResult(
+  professional: Professional,
+  municipalityKey: string
+): ValidationResult {
+  return {
+    professional_name: professional.professional_name,
+    license_type: professional.license_type,
+    license_number: professional.license_number,
+    role_on_project: professional.role_on_project,
+    validation_status: "pending",
+    expiration_date: null,
+    scope_of_license: null,
+    validation_source: "none",
+    error: `License validation not yet configured for municipality: ${municipalityKey}. Manual verification required.`,
+  };
 }
 
 serve(async (req) => {
@@ -201,8 +295,9 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const filingId = body.filing_id as string | undefined;
     const professionals = body.professionals as Professional[] | undefined;
+    const municipalityKey = (body.municipality_key as string) || "dc_dob";
 
-    console.log("[license-validation] filing_id:", filingId ?? "(missing)", "user.id:", user.id);
+    console.log("[license-validation] filing_id:", filingId ?? "(missing)", "municipality:", municipalityKey, "user.id:", user.id);
 
     if (!filingId) {
       return new Response(
@@ -235,12 +330,20 @@ serve(async (req) => {
       );
     }
 
+    const sourceConfig = getValidationSource(municipalityKey);
+    const hardStopConfig = getHardStopConfig(municipalityKey);
+    const validationSourceLabel = sourceConfig?.label || "none";
+
+    console.log(
+      `[license-validation] Using source: ${validationSourceLabel}, hardStop expediter: ${hardStopConfig.requireExpediterLicense}`
+    );
+
     const agentRunPayload = {
       filing_id: filingId,
       agent_name: "license_validation",
       layer: 1,
       status: "running",
-      input_data: { professionals },
+      input_data: { professionals, municipality_key: municipalityKey, validation_source: validationSourceLabel },
       started_at: new Date().toISOString(),
     };
 
@@ -257,11 +360,21 @@ serve(async (req) => {
     const agentRunId = agentRun?.id;
 
     const validationResults: ValidationResult[] = [];
-    let hasExpediterHardStop = false;
-    let expediterError = "";
+    let hasHardStop = false;
+    let hardStopError = "";
 
     for (const professional of professionals) {
-      const result = await validateLicenseWithDLCP(professional);
+      let result: ValidationResult;
+
+      if (sourceConfig) {
+        result = await validateLicenseWithSource(professional, sourceConfig);
+      } else {
+        result = createFallbackResult(professional, municipalityKey);
+        console.log(
+          `[license-validation] No validation source for ${municipalityKey}, returning fallback for ${professional.license_number}`
+        );
+      }
+
       validationResults.push(result);
 
       const insertPayload = {
@@ -287,25 +400,32 @@ serve(async (req) => {
       }
 
       if (
-        (result.role_on_project?.toLowerCase() === "expediter" || result.role_on_project?.toLowerCase() === "permit_expediter" || result.role_on_project?.toLowerCase() === "permit expediter") &&
+        hardStopConfig.requireExpediterLicense &&
+        hardStopConfig.hardStopRoles.includes(result.role_on_project?.toLowerCase() || "") &&
         result.validation_status !== "active"
       ) {
-        hasExpediterHardStop = true;
-        expediterError = `Commun-ET expediter license ${result.license_number} is ${result.validation_status}. Filing cannot proceed without an active expediter registration.`;
-        console.error("[license-validation] HARD STOP:", expediterError);
+        hasHardStop = true;
+        hardStopError = `Commun-ET expediter license ${result.license_number} is ${result.validation_status}. Filing cannot proceed without an active expediter registration.`;
+        console.error("[license-validation] HARD STOP:", hardStopError);
       }
     }
 
     const allActive = validationResults.every((r) => r.validation_status === "active");
+    const pendingManualVerification = validationResults.some((r) => r.validation_source === "none");
+
+    const hardStopRolesSet = new Set(hardStopConfig.hardStopRoles);
     const warnings = validationResults.filter(
-      (r) => r.validation_status !== "active" && !["expediter", "permit_expediter", "permit expediter"].includes(r.role_on_project?.toLowerCase() || "")
+      (r) => r.validation_status !== "active" && !hardStopRolesSet.has(r.role_on_project?.toLowerCase() || "")
     );
 
     const outputData = {
+      municipality_key: municipalityKey,
+      validation_source: validationSourceLabel,
       total_checked: validationResults.length,
       all_active: allActive,
-      hard_stop: hasExpediterHardStop,
-      hard_stop_reason: hasExpediterHardStop ? expediterError : null,
+      pending_manual_verification: pendingManualVerification,
+      hard_stop: hasHardStop,
+      hard_stop_reason: hasHardStop ? hardStopError : null,
       warnings: warnings.map((w) => ({
         professional_name: w.professional_name,
         license_type: w.license_type,
@@ -317,7 +437,7 @@ serve(async (req) => {
       results: validationResults,
     };
 
-    const agentStatus = hasExpediterHardStop ? "escalated" : "completed";
+    const agentStatus = hasHardStop ? "escalated" : "completed";
 
     if (agentRunId) {
       const { error: updateError } = await dbClient
@@ -325,7 +445,7 @@ serve(async (req) => {
         .update({
           status: agentStatus,
           output_data: outputData,
-          error_message: hasExpediterHardStop ? expediterError : null,
+          error_message: hasHardStop ? hardStopError : null,
           completed_at: new Date().toISOString(),
         })
         .eq("id", agentRunId);
@@ -336,10 +456,10 @@ serve(async (req) => {
     }
 
     console.log(
-      `[license-validation] complete. checked=${validationResults.length} allActive=${allActive} hardStop=${hasExpediterHardStop} duration=${Date.now() - startTime}ms`
+      `[license-validation] complete. municipality=${municipalityKey} source=${validationSourceLabel} checked=${validationResults.length} allActive=${allActive} hardStop=${hasHardStop} duration=${Date.now() - startTime}ms`
     );
 
-    const responseStatus = hasExpediterHardStop ? 422 : 200;
+    const responseStatus = hasHardStop ? 422 : 200;
 
     return new Response(
       JSON.stringify({

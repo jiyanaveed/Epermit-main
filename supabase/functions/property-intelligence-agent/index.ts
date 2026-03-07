@@ -10,6 +10,29 @@ const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000;
 
 const DC_SCOUT_BASE = "https://scout.dcra.dc.gov";
+const MD_SDAT_BASE = "https://sdat.dat.maryland.gov/RealProperty";
+
+const MD_MUNICIPALITIES = [
+  "pg_county_md",
+  "montgomery_county_md",
+  "howard_county_md",
+  "baltimore_city_md",
+  "anne_arundel_county_md",
+];
+
+const VA_MUNICIPALITIES = [
+  "fairfax_county_va",
+  "arlington_county_va",
+  "alexandria_va",
+  "loudoun_county_va",
+];
+
+const VA_GIS_LABELS: Record<string, string> = {
+  fairfax_county_va: "Fairfax County GIS",
+  arlington_county_va: "Arlington County GIS",
+  alexandria_va: "City of Alexandria GIS",
+  loudoun_county_va: "Loudoun County GIS",
+};
 
 interface PropertyIntelligence {
   address: string;
@@ -20,6 +43,7 @@ interface PropertyIntelligence {
   active_permits: Record<string, unknown>[];
   stop_work_orders: Record<string, unknown>[];
   advisory_flags: string[];
+  data_source: string;
   raw_data: Record<string, unknown>;
 }
 
@@ -66,8 +90,21 @@ async function fetchWithRetry(
   throw lastError ?? new Error("fetchWithRetry exhausted");
 }
 
-async function lookupPropertyData(address: string): Promise<PropertyIntelligence> {
-  const result: PropertyIntelligence = {
+async function lookupPropertyData(address: string, municipalityKey: string): Promise<PropertyIntelligence> {
+  if (MD_MUNICIPALITIES.includes(municipalityKey)) {
+    return lookupMdSdatProperty(address, municipalityKey);
+  }
+  if (VA_MUNICIPALITIES.includes(municipalityKey)) {
+    return lookupVaProperty(address, municipalityKey);
+  }
+  if (municipalityKey === "dc_dob") {
+    return lookupDcScoutProperty(address);
+  }
+  return lookupUnknownMunicipality(address, municipalityKey);
+}
+
+function createBaseResult(address: string, dataSource: string): PropertyIntelligence {
+  return {
     address,
     zoning_district: null,
     overlay_zones: [],
@@ -76,9 +113,29 @@ async function lookupPropertyData(address: string): Promise<PropertyIntelligence
     active_permits: [],
     stop_work_orders: [],
     advisory_flags: [],
+    data_source: dataSource,
     raw_data: {},
   };
+}
 
+function applyAdvisoryFlags(result: PropertyIntelligence): void {
+  if (result.historic_district) {
+    result.advisory_flags.push("HISTORIC_DISTRICT");
+  }
+  if (result.flood_hazard_zone) {
+    result.advisory_flags.push("FLOOD_HAZARD_ZONE");
+  }
+  if (result.stop_work_orders.length > 0) {
+    result.advisory_flags.push("ACTIVE_STOP_WORK_ORDER");
+  }
+  const overlayStr = result.overlay_zones.join(" ").toLowerCase();
+  if (overlayStr.includes("ncpc") || overlayStr.includes("national capital")) {
+    result.advisory_flags.push("NCPC_ZONE");
+  }
+}
+
+async function lookupDcScoutProperty(address: string): Promise<PropertyIntelligence> {
+  const result = createBaseResult(address, "dc_scout");
   const encodedAddress = encodeURIComponent(address.trim());
 
   try {
@@ -154,21 +211,72 @@ async function lookupPropertyData(address: string): Promise<PropertyIntelligence
     result.raw_data.permits_error = err instanceof Error ? err.message : String(err);
   }
 
-  if (result.historic_district) {
-    result.advisory_flags.push("HISTORIC_DISTRICT");
-  }
-  if (result.flood_hazard_zone) {
-    result.advisory_flags.push("FLOOD_HAZARD_ZONE");
-  }
-  if (result.stop_work_orders.length > 0) {
-    result.advisory_flags.push("ACTIVE_STOP_WORK_ORDER");
+  applyAdvisoryFlags(result);
+  return result;
+}
+
+async function lookupMdSdatProperty(address: string, municipalityKey: string): Promise<PropertyIntelligence> {
+  const result = createBaseResult(address, "sdat_md");
+  const encodedAddress = encodeURIComponent(address.trim());
+
+  try {
+    const searchUrl = `${MD_SDAT_BASE}/Pages/default.aspx?search=${encodedAddress}`;
+    console.log(`[property-intelligence] Fetching MD SDAT for ${municipalityKey}: ${searchUrl}`);
+    const searchRes = await fetchWithRetry(searchUrl, {
+      method: "GET",
+      headers: { "Accept": "text/html,application/json", "User-Agent": "CommunET-PermitWizard/1.0" },
+    });
+
+    if (searchRes.ok) {
+      const contentType = searchRes.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const searchData = await searchRes.json();
+        result.raw_data.sdat_search = searchData;
+
+        if (searchData && typeof searchData === "object") {
+          const props = searchData.properties ?? searchData.results?.[0] ?? searchData;
+          result.zoning_district = props.zoning ?? props.zoning_district ?? props.zone ?? null;
+
+          result.historic_district = Boolean(
+            props.historic_district ?? props.is_historic ?? false
+          );
+
+          result.flood_hazard_zone = Boolean(
+            props.flood_zone ?? props.flood_hazard_zone ?? false
+          );
+        }
+      } else {
+        result.raw_data.sdat_note = "SDAT returned HTML; structured property data extracted where available";
+      }
+    } else {
+      console.warn(`[property-intelligence] MD SDAT returned ${searchRes.status} for ${municipalityKey}`);
+      result.raw_data.sdat_error = `HTTP ${searchRes.status}`;
+      result.advisory_flags.push("SDAT_LOOKUP_DEGRADED");
+    }
+  } catch (err) {
+    console.error(`[property-intelligence] MD SDAT error for ${municipalityKey}:`, err);
+    result.raw_data.sdat_error = err instanceof Error ? err.message : String(err);
+    result.advisory_flags.push("SDAT_LOOKUP_FAILED");
   }
 
-  const overlayStr = result.overlay_zones.join(" ").toLowerCase();
-  if (overlayStr.includes("ncpc") || overlayStr.includes("national capital")) {
-    result.advisory_flags.push("NCPC_ZONE");
-  }
+  applyAdvisoryFlags(result);
+  return result;
+}
 
+async function lookupVaProperty(address: string, municipalityKey: string): Promise<PropertyIntelligence> {
+  const gisLabel = VA_GIS_LABELS[municipalityKey] ?? `${municipalityKey} GIS`;
+  const result = createBaseResult(address, "none");
+  result.raw_data.note = `Property data lookup via ${gisLabel} not yet configured`;
+  result.advisory_flags.push("PROPERTY_DATA_NOT_AVAILABLE");
+  console.log(`[property-intelligence] VA municipality ${municipalityKey}: property data lookup via ${gisLabel} not yet configured`);
+  return result;
+}
+
+async function lookupUnknownMunicipality(address: string, municipalityKey: string): Promise<PropertyIntelligence> {
+  const result = createBaseResult(address, "unknown");
+  result.raw_data.note = `Unknown municipality '${municipalityKey}'; no property data source configured`;
+  result.advisory_flags.push("UNKNOWN_MUNICIPALITY");
+  console.log(`[property-intelligence] Unknown municipality: ${municipalityKey}`);
   return result;
 }
 
@@ -228,6 +336,7 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const filingId = body.filing_id as string | undefined;
     const propertyAddress = body.property_address as string | undefined;
+    const municipalityKey = (body.municipality_key as string | undefined) ?? "dc_dob";
 
     if (!filingId) {
       return new Response(
@@ -262,7 +371,7 @@ serve(async (req) => {
       agent_name: "property_intelligence",
       layer: 1,
       status: "running",
-      input_data: { address, filing_id: filingId },
+      input_data: { address, filing_id: filingId, municipality_key: municipalityKey },
       started_at: new Date().toISOString(),
     };
 
@@ -282,7 +391,7 @@ serve(async (req) => {
     let errorMessage: string | undefined;
 
     try {
-      propertyData = await lookupPropertyData(address);
+      propertyData = await lookupPropertyData(address, municipalityKey);
 
       if (hasEscalationFlags(propertyData.advisory_flags)) {
         agentStatus = "escalated";
@@ -304,6 +413,7 @@ serve(async (req) => {
         active_permits: [],
         stop_work_orders: [],
         advisory_flags: [],
+        data_source: "error",
         raw_data: { error: errorMessage },
       };
     }
@@ -337,6 +447,8 @@ serve(async (req) => {
         .update({
           status: agentStatus,
           output_data: {
+            municipality_key: municipalityKey,
+            data_source: propertyData.data_source,
             zoning_district: propertyData.zoning_district,
             overlay_zones: propertyData.overlay_zones,
             historic_district: propertyData.historic_district,
@@ -356,12 +468,13 @@ serve(async (req) => {
     }
 
     const duration = Date.now() - startTime;
-    console.log(`[property-intelligence] completed in ${duration}ms, status=${agentStatus}`);
+    console.log(`[property-intelligence] completed in ${duration}ms, status=${agentStatus}, municipality=${municipalityKey}`);
 
     return new Response(
       JSON.stringify({
         status: agentStatus,
         filing_id: filingId,
+        municipality_key: municipalityKey,
         agent_run_id: runId ?? null,
         property_intelligence: {
           address: propertyData.address,
@@ -372,6 +485,7 @@ serve(async (req) => {
           active_permits: propertyData.active_permits,
           stop_work_orders: propertyData.stop_work_orders,
           advisory_flags: propertyData.advisory_flags,
+          data_source: propertyData.data_source,
         },
         escalation_required: hasEscalationFlags(propertyData.advisory_flags),
         escalation_reasons: propertyData.advisory_flags.filter((f) =>

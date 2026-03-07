@@ -1,34 +1,23 @@
-const { getSession, PERMITWIZARD_URL } = require("./permitwizard-auth");
+const { getEnergovSession } = require("./energov-auth");
 
 const SUBMIT_TIMEOUT = 30000;
 const VALIDATION_WAIT_MS = 3000;
+const SPA_RENDER_WAIT_MS = 3000;
 
-const DEFAULT_SUBMIT_CONFIG = {
-  baseUrl: PERMITWIZARD_URL,
-  jurisdictionLabel: "DC DOB",
-};
-
-function resolveSubmitConfig(portalConfig) {
-  return { ...DEFAULT_SUBMIT_CONFIG, ...(portalConfig || {}) };
-}
-
-async function takeSubmitScreenshot(page, stepName, jurisdictionLabel) {
+async function takeSubmitScreenshot(page, stepName) {
   try {
     const buffer = await page.screenshot({ fullPage: true, type: "png" });
     const base64 = buffer.toString("base64");
     const url = `data:image/png;base64,${base64}`;
-    const label = jurisdictionLabel || "DC DOB";
-    const qualifiedStepName = `${label}_${stepName}`;
-    console.log(`  [Submit] Screenshot captured: ${qualifiedStepName} (${Math.round(base64.length / 1024)}KB)`);
+    console.log(`  [EnerGov Submit] Screenshot captured: ${stepName} (${Math.round(base64.length / 1024)}KB)`);
     return {
-      step_name: qualifiedStepName,
+      step_name: stepName,
       agent_name: "submission_finalization",
       screenshot_url: url,
       captured_at: new Date().toISOString(),
-      jurisdiction: label,
     };
   } catch (err) {
-    console.log(`  [Submit] Screenshot failed for ${stepName}: ${err.message}`);
+    console.log(`  [EnerGov Submit] Screenshot failed for ${stepName}: ${err.message}`);
     return null;
   }
 }
@@ -85,6 +74,20 @@ async function extractReviewPageFields(page) {
       }
     });
 
+    const reactSummaryEls = document.querySelectorAll(
+      "[class*='summary' i] [class*='row' i], [class*='review' i] [class*='row' i], [class*='detail' i] [class*='row' i]"
+    );
+    reactSummaryEls.forEach((row) => {
+      const children = row.children;
+      if (children.length >= 2) {
+        const label = children[0].textContent.trim().replace(/:$/, "");
+        const value = children[1].textContent.trim();
+        if (label && value) {
+          fields[label] = value;
+        }
+      }
+    });
+
     return fields;
   });
 }
@@ -135,7 +138,7 @@ function validateFieldsMatch(reviewFields, expectedData) {
   if (expectedData.permit_type) {
     checkField("Permit Type", expectedData.permit_type, [
       "Permit Type", "Type", "Application Type", "permit type",
-      "Permit Category", "Category",
+      "Permit Category", "Category", "Record Type",
     ]);
   }
 
@@ -170,7 +173,8 @@ async function detectPortalErrors(page) {
       ".error-message", ".error", ".alert-danger", ".alert-error",
       "[class*='error' i]", "[class*='Error']", "[id*='error' i]",
       ".validation-error", ".field-error", ".form-error",
-      ".ACA_Error", "[role='alert']",
+      "[role='alert']", ".mat-error", ".ng-invalid.ng-touched",
+      "[class*='snack' i][class*='error' i]",
     ];
 
     for (const sel of errorSelectors) {
@@ -186,7 +190,7 @@ async function detectPortalErrors(page) {
     }
 
     const modals = document.querySelectorAll(
-      "[class*='modal' i], [class*='dialog' i], [class*='popup' i]"
+      "[class*='modal' i], [class*='dialog' i], [class*='popup' i], [role='dialog']"
     );
     modals.forEach((modal) => {
       const style = window.getComputedStyle(modal);
@@ -209,6 +213,7 @@ async function extractConfirmation(page) {
     const result = {
       application_id: null,
       confirmation_number: null,
+      record_number: null,
       message: null,
       raw_text: "",
     };
@@ -220,6 +225,7 @@ async function extractConfirmation(page) {
       /(?:confirmation|reference|tracking)\s*(?:#|number|no\.?|num)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
       /(?:application|permit)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
       /(?:record|case)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
+      /(?:plan|plan case)\s*(?:#|number|no\.?)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
     ];
 
     for (const pattern of confirmPatterns) {
@@ -238,9 +244,12 @@ async function extractConfirmation(page) {
 
     const idSelectors = [
       "[data-field='applicationId']", "[data-field='confirmationNumber']",
+      "[data-field='recordNumber']", "[data-field='recordId']",
       "[id*='confirmation' i]", "[id*='applicationId' i]",
       "[id*='trackingNumber' i]", "[id*='recordId' i]",
+      "[id*='recordNumber' i]", "[id*='planNumber' i]",
       "[class*='confirmation' i]", "[class*='tracking' i]",
+      "[class*='record-number' i]",
     ];
 
     for (const sel of idSelectors) {
@@ -250,6 +259,7 @@ async function extractConfirmation(page) {
         if (text && text.length >= 4 && text.length <= 30) {
           if (sel.toLowerCase().includes("application") || sel.toLowerCase().includes("record")) {
             result.application_id = result.application_id || text;
+            result.record_number = result.record_number || text;
           } else {
             result.confirmation_number = result.confirmation_number || text;
           }
@@ -259,7 +269,7 @@ async function extractConfirmation(page) {
 
     const successSelectors = [
       "[class*='success' i]", ".alert-success", "[class*='confirm' i]",
-      "h1", "h2", "h3",
+      "[class*='complete' i]", "h1", "h2", "h3",
     ];
 
     for (const sel of successSelectors) {
@@ -270,7 +280,8 @@ async function extractConfirmation(page) {
           text.toLowerCase().includes("success") ||
           text.toLowerCase().includes("submitted") ||
           text.toLowerCase().includes("confirmation") ||
-          text.toLowerCase().includes("received")
+          text.toLowerCase().includes("received") ||
+          text.toLowerCase().includes("complete")
         ) {
           result.message = text.substring(0, 200);
           break;
@@ -282,19 +293,18 @@ async function extractConfirmation(page) {
   });
 }
 
-async function permitWizardSubmit(sessionToken, filingData, supabase, portalConfig) {
-  const config = resolveSubmitConfig(portalConfig);
-  const jLabel = config.jurisdictionLabel;
+async function energovSubmit(sessionToken, filingData, config, supabase) {
+  const baseUrl = (config && config.baseUrl) || "";
+  console.log("  [EnerGov Submit] Starting EnerGov submission finalization");
+  console.log(`  [EnerGov Submit] Filing ID: ${filingData.filing_id}`);
+  console.log(`  [EnerGov Submit] Base URL: ${baseUrl}`);
 
-  console.log(`  [Submit] Starting submission finalization for ${jLabel}`);
-  console.log(`  [Submit] Filing ID: ${filingData.filing_id}`);
-
-  const session = getSession(sessionToken);
+  const session = getEnergovSession(sessionToken);
   if (!session) {
     return {
       success: false,
       error: "session_not_found",
-      message: "PermitWizard session not found or expired. Re-authenticate first.",
+      message: "EnerGov session not found or expired. Re-authenticate first.",
     };
   }
 
@@ -303,40 +313,40 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
 
   try {
     const currentUrl = page.url();
-    console.log(`  [Submit] Current page URL: ${currentUrl}`);
+    console.log(`  [EnerGov Submit] Current page URL: ${currentUrl}`);
 
     if (
       currentUrl.includes("SessionEnded") ||
-      currentUrl.includes("login") ||
+      currentUrl.includes("/login") ||
       currentUrl.includes("b2clogin")
     ) {
       return {
         success: false,
         error: "session_expired",
-        message: "Portal session expired. Re-authenticate and try again.",
+        message: "EnerGov portal session expired. Re-authenticate and try again.",
         requiresReauth: true,
       };
     }
 
-    const reviewScreenshot = await takeSubmitScreenshot(page, "review_page_before_validation", jLabel);
+    const reviewScreenshot = await takeSubmitScreenshot(page, "review_page_before_validation");
     if (reviewScreenshot) screenshots.push(reviewScreenshot);
 
-    console.log("  [Submit] Extracting review page fields...");
+    console.log("  [EnerGov Submit] Extracting review page fields...");
     const reviewFields = await extractReviewPageFields(page);
-    console.log(`  [Submit] Found ${Object.keys(reviewFields).length} fields on review page`);
+    console.log(`  [EnerGov Submit] Found ${Object.keys(reviewFields).length} fields on review page`);
 
     const validation = validateFieldsMatch(reviewFields, filingData);
-    console.log(`  [Submit] Validation result: ${validation.valid ? "PASS" : "FAIL"}`);
-    console.log(`  [Submit] Matched: ${validation.matched.length}, Mismatches: ${validation.mismatches.length}`);
+    console.log(`  [EnerGov Submit] Validation result: ${validation.valid ? "PASS" : "FAIL"}`);
+    console.log(`  [EnerGov Submit] Matched: ${validation.matched.length}, Mismatches: ${validation.mismatches.length}`);
 
     if (validation.mismatches.length > 0) {
-      console.log("  [Submit] Mismatches found:");
+      console.log("  [EnerGov Submit] Mismatches found:");
       validation.mismatches.forEach((m) => {
         console.log(`    - ${m.field}: expected "${m.expected}", found: ${m.found || "NOT FOUND"}`);
       });
     }
 
-    const validationScreenshot = await takeSubmitScreenshot(page, "review_validation_result", jLabel);
+    const validationScreenshot = await takeSubmitScreenshot(page, "review_validation_result");
     if (validationScreenshot) {
       validationScreenshot.field_audit = {
         review_fields: reviewFields,
@@ -370,11 +380,11 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log("  [Submit] Validation passed — proceeding to submit...");
+    console.log("  [EnerGov Submit] Validation passed — proceeding to submit...");
 
     const preSubmitErrors = await detectPortalErrors(page);
     if (preSubmitErrors.length > 0) {
-      console.log(`  [Submit] Portal errors detected before submit: ${preSubmitErrors.join("; ")}`);
+      console.log(`  [EnerGov Submit] Portal errors detected before submit: ${preSubmitErrors.join("; ")}`);
 
       return {
         success: false,
@@ -385,9 +395,31 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
+    const agreeSelectors = [
+      'input[type="checkbox"][id*="agree" i]',
+      'input[type="checkbox"][id*="terms" i]',
+      'input[type="checkbox"][id*="accept" i]',
+      'input[type="checkbox"][name*="agree" i]',
+      'label:has-text("I agree") input[type="checkbox"]',
+      'label:has-text("I certify") input[type="checkbox"]',
+    ];
+    for (const sel of agreeSelectors) {
+      const checkbox = await page.$(sel);
+      if (checkbox && (await checkbox.isVisible().catch(() => false))) {
+        const isChecked = await checkbox.isChecked().catch(() => false);
+        if (!isChecked) {
+          await checkbox.check();
+          console.log(`  [EnerGov Submit] Checked agreement checkbox: ${sel}`);
+          await page.waitForTimeout(500);
+        }
+        break;
+      }
+    }
+
     const submitSelectors = [
       'button:has-text("Submit")',
       'button:has-text("Submit Application")',
+      'button:has-text("Submit Permit")',
       'input[value="Submit"]',
       'input[value="Submit Application"]',
       'button[type="submit"]:has-text("Submit")',
@@ -396,6 +428,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       '[data-action="submit-application"]',
       ".wizard-submit",
       ".btn-submit",
+      'button[mat-raised-button]:has-text("Submit")',
     ];
 
     let submitButton = null;
@@ -403,7 +436,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       const btn = await page.$(sel);
       if (btn && (await btn.isVisible().catch(() => false))) {
         const isDisabled = await btn.evaluate(
-          (el) => el.disabled || el.classList.contains("disabled")
+          (el) => el.disabled || el.classList.contains("disabled") || el.hasAttribute("disabled")
         );
         if (!isDisabled) {
           submitButton = { element: btn, selector: sel };
@@ -413,7 +446,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
     }
 
     if (!submitButton) {
-      const noSubmitScreenshot = await takeSubmitScreenshot(page, "no_submit_button_found", jLabel);
+      const noSubmitScreenshot = await takeSubmitScreenshot(page, "no_submit_button_found");
       if (noSubmitScreenshot) screenshots.push(noSubmitScreenshot);
 
       return {
@@ -424,25 +457,44 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log(`  [Submit] Found submit button: ${submitButton.selector}`);
-    console.log("  [Submit] Clicking submit...");
+    console.log(`  [EnerGov Submit] Found submit button: ${submitButton.selector}`);
+    console.log("  [EnerGov Submit] Clicking submit...");
 
-    const preSubmitScreenshot = await takeSubmitScreenshot(page, "pre_submit_click", jLabel);
+    const preSubmitScreenshot = await takeSubmitScreenshot(page, "pre_submit_click");
     if (preSubmitScreenshot) screenshots.push(preSubmitScreenshot);
 
     await submitButton.element.click();
-    console.log("  [Submit] Submit button clicked");
+    console.log("  [EnerGov Submit] Submit button clicked");
 
     await page.waitForTimeout(VALIDATION_WAIT_MS);
-    await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(2000);
+    try {
+      await page.waitForLoadState("networkidle", { timeout: SUBMIT_TIMEOUT });
+    } catch (_) {}
+    await page.waitForTimeout(SPA_RENDER_WAIT_MS);
+
+    const confirmDialogSelectors = [
+      'button:has-text("OK")',
+      'button:has-text("Confirm")',
+      'button:has-text("Yes")',
+      '[role="dialog"] button:has-text("OK")',
+      '.modal button:has-text("OK")',
+    ];
+    for (const sel of confirmDialogSelectors) {
+      const btn = await page.$(sel);
+      if (btn && (await btn.isVisible().catch(() => false))) {
+        await btn.click();
+        console.log(`  [EnerGov Submit] Clicked confirmation dialog button: ${sel}`);
+        await page.waitForTimeout(2000);
+        break;
+      }
+    }
 
     const immediateErrors = await detectPortalErrors(page);
 
     if (immediateErrors.length > 0) {
-      console.log(`  [Submit] Portal errors after submit: ${immediateErrors.join("; ")}`);
+      console.log(`  [EnerGov Submit] Portal errors after submit: ${immediateErrors.join("; ")}`);
 
-      const errorScreenshot = await takeSubmitScreenshot(page, "post_submit_errors", jLabel);
+      const errorScreenshot = await takeSubmitScreenshot(page, "post_submit_errors");
       if (errorScreenshot) {
         errorScreenshot.field_audit = { portal_errors: immediateErrors };
         screenshots.push(errorScreenshot);
@@ -471,14 +523,15 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log("  [Submit] No errors detected — extracting confirmation...");
+    console.log("  [EnerGov Submit] No errors detected — extracting confirmation...");
 
     const confirmationData = await extractConfirmation(page);
-    console.log(`  [Submit] Confirmation number: ${confirmationData.confirmation_number || "not found"}`);
-    console.log(`  [Submit] Application ID: ${confirmationData.application_id || "not found"}`);
-    console.log(`  [Submit] Message: ${confirmationData.message || "none"}`);
+    console.log(`  [EnerGov Submit] Confirmation number: ${confirmationData.confirmation_number || "not found"}`);
+    console.log(`  [EnerGov Submit] Application ID: ${confirmationData.application_id || "not found"}`);
+    console.log(`  [EnerGov Submit] Record number: ${confirmationData.record_number || "not found"}`);
+    console.log(`  [EnerGov Submit] Message: ${confirmationData.message || "none"}`);
 
-    const confirmScreenshot = await takeSubmitScreenshot(page, "confirmation_page", jLabel);
+    const confirmScreenshot = await takeSubmitScreenshot(page, "confirmation_page");
     if (confirmScreenshot) {
       confirmScreenshot.field_audit = { confirmation: confirmationData };
       screenshots.push(confirmScreenshot);
@@ -491,16 +544,16 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
           .from("permit_filings")
           .update({
             filing_status: "submitted",
-            application_id: confirmationData.application_id || null,
+            application_id: confirmationData.application_id || confirmationData.record_number || null,
             confirmation_number: confirmationData.confirmation_number || null,
             submitted_at: submittedAt,
             updated_at: submittedAt,
           })
           .eq("id", filingData.filing_id);
 
-        console.log(`  [Submit] Updated permit_filings: status=submitted`);
+        console.log(`  [EnerGov Submit] Updated permit_filings: status=submitted`);
       } catch (err) {
-        console.log(`  [Submit] Failed to update permit_filings: ${err.message}`);
+        console.log(`  [EnerGov Submit] Failed to update permit_filings: ${err.message}`);
       }
 
       for (const ss of screenshots) {
@@ -516,21 +569,23 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       }
     }
 
-    console.log("  [Submit] Submission finalization complete");
+    console.log("  [EnerGov Submit] Submission finalization complete");
 
     return {
       success: true,
       application_id: confirmationData.application_id,
       confirmation_number: confirmationData.confirmation_number,
+      record_number: confirmationData.record_number,
       confirmation_message: confirmationData.message,
       validation,
       screenshots,
       submitted_at: new Date().toISOString(),
+      portal_type: "energov",
     };
   } catch (err) {
-    console.error(`  [Submit] Fatal error: ${err.message}`);
+    console.error(`  [EnerGov Submit] Fatal error: ${err.message}`);
 
-    const errorScreenshot = await takeSubmitScreenshot(page, "fatal_error", jLabel).catch(() => null);
+    const errorScreenshot = await takeSubmitScreenshot(page, "fatal_error").catch(() => null);
     if (errorScreenshot) screenshots.push(errorScreenshot);
 
     if (supabase && filingData.filing_id) {
@@ -567,11 +622,9 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
 }
 
 module.exports = {
-  permitWizardSubmit,
+  energovSubmit,
   extractReviewPageFields,
   validateFieldsMatch,
   extractConfirmation,
   detectPortalErrors,
-  resolveSubmitConfig,
-  DEFAULT_SUBMIT_CONFIG,
 };

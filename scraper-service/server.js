@@ -8,7 +8,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
-const { accelaLogin, scrapeAccelaRecord } = require("./accela-scraper");
+const { accelaLogin: accelaScraperLogin, scrapeAccelaRecord } = require("./accela-scraper");
 const {
   permitWizardLogin,
   getSession: getPWSession,
@@ -16,9 +16,37 @@ const {
   reAuthenticate,
   destroySession: destroyPWSession,
   getActiveSessionCount,
+  accelaLogin,
+  accelaLogout,
+  getAccelaSession,
 } = require("./permitwizard-auth");
 const { permitWizardFile, WIZARD_STEPS } = require("./permitwizard-filer");
 const { permitWizardSubmit } = require("./permitwizard-submit");
+const {
+  momentumLogin,
+  momentumLogout,
+  getMomentumSession,
+  checkSessionAlive: checkMomentumSessionAlive,
+} = require("./momentum-auth");
+const {
+  montgomeryLogin,
+  montgomeryLogout,
+  getMontgomerySession,
+  checkSessionAlive: checkMontgomerySessionAlive,
+  reAuthenticate: reAuthenticateMontgomery,
+} = require("./montgomery-auth");
+const {
+  energovLogin,
+  energovLogout,
+  getEnergovSession,
+  checkSessionAlive: checkEnergovSessionAlive,
+} = require("./energov-auth");
+const { momentumFile } = require("./momentum-filer");
+const { momentumSubmit } = require("./momentum-submit");
+const { montgomeryFile } = require("./montgomery-filer");
+const { montgomerySubmit } = require("./montgomery-submit");
+const { energovFile } = require("./energov-filer");
+const { energovSubmit } = require("./energov-submit");
 
 function detectPortalType(url) {
   if (!url) return "projectdox";
@@ -254,7 +282,7 @@ app.post("/api/login", async (req, res) => {
     const page = await context.newPage();
 
     if (portalType === "accela") {
-      await accelaLogin(page, username, password, dashboardUrl);
+      await accelaScraperLogin(page, username, password, dashboardUrl);
       console.log("✅ Accela login successful!");
 
       await page.screenshot({
@@ -1329,7 +1357,7 @@ app.post("/api/permitwizard/login", async (req, res) => {
     try {
       const { data: cred, error } = await supabase
         .from("portal_credentials")
-        .select("username, encrypted_password, portal_url")
+        .select("portal_username, portal_password, login_url")
         .eq("id", credentialId)
         .single();
 
@@ -1341,8 +1369,8 @@ app.post("/api/permitwizard/login", async (req, res) => {
         });
       }
 
-      loginUsername = cred.username;
-      loginPassword = cred.encrypted_password;
+      loginUsername = cred.portal_username;
+      loginPassword = cred.portal_password;
     } catch (err) {
       return res.status(500).json({
         success: false,
@@ -1777,6 +1805,669 @@ app.post("/api/permitwizard/submit", async (req, res) => {
           .eq("id", resolvedFilingId);
       } catch (_) {}
     });
+});
+
+// ─── Multi-Municipality Filing Endpoints ─────────────────────────────────────
+const VALID_PORTAL_TYPES = ["accela", "momentum_liferay", "aspnet_webforms", "energov"];
+
+app.post("/api/filing/login", async (req, res) => {
+  const { portal_type, portal_config, credentialId, username, password, userId } = req.body;
+
+  if (!portal_type || !VALID_PORTAL_TYPES.includes(portal_type)) {
+    return res.status(400).json({
+      success: false,
+      error: "invalid_portal_type",
+      message: `portal_type must be one of: ${VALID_PORTAL_TYPES.join(", ")}`,
+    });
+  }
+
+  let loginUsername = username;
+  let loginPassword = password;
+
+  if (credentialId && (!loginUsername || !loginPassword)) {
+    try {
+      const { data: cred, error } = await supabase
+        .from("portal_credentials")
+        .select("portal_username, portal_password, login_url")
+        .eq("id", credentialId)
+        .single();
+
+      if (error || !cred) {
+        return res.status(404).json({
+          success: false,
+          error: "credential_not_found",
+          message: "Portal credential not found",
+        });
+      }
+
+      loginUsername = cred.portal_username;
+      loginPassword = cred.portal_password;
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        error: "credential_lookup_failed",
+        message: err.message,
+      });
+    }
+  }
+
+  if (!loginUsername || !loginPassword) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_credentials",
+      message: "Username and password are required (or provide credentialId)",
+    });
+  }
+
+  let browser;
+  try {
+    console.log(`[Filing] Launching browser for ${portal_type} login...`);
+    browser = await chromium.launch({ headless: true });
+
+    let result;
+    const credentials = { username: loginUsername, password: loginPassword };
+    const config = portal_config || {};
+
+    switch (portal_type) {
+      case "accela":
+        result = await accelaLogin(browser, credentials, config);
+        break;
+      case "momentum_liferay":
+        result = await momentumLogin(browser, credentials);
+        break;
+      case "aspnet_webforms":
+        result = await montgomeryLogin(browser, credentials);
+        break;
+      case "energov":
+        result = await energovLogin(browser, credentials, config);
+        break;
+    }
+
+    if (!result.success) {
+      await browser.close().catch(() => {});
+      if (result.error === "captcha_detected") {
+        return res.status(403).json(result);
+      }
+      if (result.doNotRetry) {
+        return res.status(401).json(result);
+      }
+      return res.status(500).json(result);
+    }
+
+    const responseData = {
+      success: true,
+      sessionToken: result.sessionToken,
+      expiresAt: result.expiresAt,
+      portalUrl: result.portalUrl,
+      portal_type,
+      message: `${portal_type} login successful`,
+    };
+
+    if (userId) {
+      console.log(`  [Filing] Login by user: ${userId} (${portal_type})`);
+    }
+
+    res.json(responseData);
+  } catch (err) {
+    console.error(`[Filing] Login error (${portal_type}):`, err.message);
+    if (browser) await browser.close().catch(() => {});
+    res.status(500).json({
+      success: false,
+      error: "login_error",
+      message: err.message,
+    });
+  }
+});
+
+app.get("/api/filing/session/:token", async (req, res) => {
+  const { token } = req.params;
+  const { portal_type } = req.query;
+
+  if (portal_type && VALID_PORTAL_TYPES.includes(portal_type)) {
+    let status;
+    switch (portal_type) {
+      case "accela":
+        status = await checkSessionAlive(token);
+        break;
+      case "momentum_liferay":
+        status = await checkMomentumSessionAlive(token);
+        break;
+      case "aspnet_webforms":
+        status = await checkMontgomerySessionAlive(token);
+        break;
+      case "energov":
+        status = await checkEnergovSessionAlive(token);
+        break;
+    }
+    return res.json({ ...status, portal_type });
+  }
+
+  const accelaSession = getAccelaSession(token);
+  if (accelaSession) {
+    const status = await checkSessionAlive(token);
+    return res.json({ ...status, portal_type: "accela" });
+  }
+
+  const momentumSession = getMomentumSession(token);
+  if (momentumSession) {
+    const status = await checkMomentumSessionAlive(token);
+    return res.json({ ...status, portal_type: "momentum_liferay" });
+  }
+
+  const montgomerySession = getMontgomerySession(token);
+  if (montgomerySession) {
+    const status = await checkMontgomerySessionAlive(token);
+    return res.json({ ...status, portal_type: "aspnet_webforms" });
+  }
+
+  const energovSession = getEnergovSession(token);
+  if (energovSession) {
+    const status = await checkEnergovSessionAlive(token);
+    return res.json({ ...status, portal_type: "energov" });
+  }
+
+  res.json({ alive: false, reason: "session_not_found" });
+});
+
+app.post("/api/filing/file", async (req, res) => {
+  const { portal_type, portal_config, sessionToken, filingId, filingData } = req.body;
+
+  if (!portal_type || !VALID_PORTAL_TYPES.includes(portal_type)) {
+    return res.status(400).json({
+      success: false,
+      error: "invalid_portal_type",
+      message: `portal_type must be one of: ${VALID_PORTAL_TYPES.join(", ")}`,
+    });
+  }
+
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_session_token",
+      message: "sessionToken is required",
+    });
+  }
+
+  if (!filingId && (!filingData || !filingData.filing_id)) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_filing_id",
+      message: "filingId or filingData.filing_id is required",
+    });
+  }
+
+  let sessionLookup;
+  switch (portal_type) {
+    case "accela":
+      sessionLookup = getAccelaSession(sessionToken) || getPWSession(sessionToken);
+      break;
+    case "momentum_liferay":
+      sessionLookup = getMomentumSession(sessionToken);
+      break;
+    case "aspnet_webforms":
+      sessionLookup = getMontgomerySession(sessionToken);
+      break;
+    case "energov":
+      sessionLookup = getEnergovSession(sessionToken);
+      break;
+  }
+
+  if (!sessionLookup) {
+    return res.status(404).json({
+      success: false,
+      error: "session_not_found",
+      message: `${portal_type} session not found or expired. Perform a fresh login.`,
+    });
+  }
+
+  const resolvedFilingId = filingId || filingData.filing_id;
+  let resolvedFilingData = filingData || {};
+  resolvedFilingData.filing_id = resolvedFilingId;
+
+  if (!resolvedFilingData.property_address && resolvedFilingId) {
+    try {
+      const { data: filing, error } = await supabase
+        .from("permit_filings")
+        .select("*")
+        .eq("id", resolvedFilingId)
+        .single();
+
+      if (!error && filing) {
+        resolvedFilingData = {
+          ...resolvedFilingData,
+          filing_id: filing.id,
+          property_address: resolvedFilingData.property_address || filing.property_address,
+          permit_type: resolvedFilingData.permit_type || filing.permit_type,
+          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          review_track: resolvedFilingData.review_track || filing.review_track,
+          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value: resolvedFilingData.construction_value || filing.construction_value,
+          property_type: resolvedFilingData.property_type || filing.property_type,
+          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+        };
+
+        if (!resolvedFilingData.professionals) {
+          const { data: profs } = await supabase
+            .from("filing_professionals")
+            .select("*")
+            .eq("filing_id", resolvedFilingId);
+          if (profs && profs.length > 0) {
+            resolvedFilingData.professionals = profs;
+          }
+        }
+
+        if (!resolvedFilingData.documents) {
+          const { data: docs } = await supabase
+            .from("filing_documents")
+            .select("*")
+            .eq("filing_id", resolvedFilingId)
+            .order("upload_order", { ascending: true });
+          if (docs && docs.length > 0) {
+            resolvedFilingData.documents = docs;
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`  [Filing File] Could not load filing data: ${err.message}`);
+    }
+  }
+
+  if (!resolvedFilingData.property_address) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_address",
+      message: "property_address is required in filingData or in the permit_filings record",
+    });
+  }
+
+  try {
+    await supabase.from("agent_runs").insert({
+      filing_id: resolvedFilingId,
+      agent_name: "form_filing",
+      layer: 2,
+      status: "running",
+      input_data: {
+        portal_type,
+        property_address: resolvedFilingData.property_address,
+        permit_type: resolvedFilingData.permit_type,
+        documents_count: (resolvedFilingData.documents || []).length,
+        professionals_count: (resolvedFilingData.professionals || []).length,
+      },
+      started_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.log(`  [Filing File] Could not create agent_run: ${err.message}`);
+  }
+
+  console.log(`\n[Filing File] Starting ${portal_type} form filing for: ${resolvedFilingData.property_address}`);
+
+  res.json({
+    success: true,
+    message: "Form filing started",
+    filing_id: resolvedFilingId,
+    portal_type,
+  });
+
+  let filePromise;
+  const config = portal_config || {};
+
+  switch (portal_type) {
+    case "accela":
+      filePromise = permitWizardFile(sessionToken, resolvedFilingData, supabase, config);
+      break;
+    case "momentum_liferay":
+      filePromise = momentumFile(null, sessionToken, resolvedFilingData, supabase);
+      break;
+    case "aspnet_webforms":
+      filePromise = montgomeryFile(sessionToken, resolvedFilingData, supabase);
+      break;
+    case "energov":
+      filePromise = energovFile(sessionToken, resolvedFilingData, config, supabase);
+      break;
+  }
+
+  filePromise
+    .then(async (result) => {
+      console.log(`  [Filing File] (${portal_type}) Filing complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: result.success ? "completed" : "failed",
+            output_data: {
+              portal_type,
+              steps: result.steps,
+              stopped_before_submit: result.stopped_before_submit,
+              field_audits: result.field_audits,
+              screenshots_count: (result.screenshots || []).length,
+            },
+            error_message: result.success ? null : result.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "form_filing")
+          .eq("status", "running");
+      } catch (err) {
+        console.log(`  [Filing File] Could not update agent_run: ${err.message}`);
+      }
+    })
+    .catch(async (err) => {
+      console.error(`  [Filing File] (${portal_type}) Fatal error: ${err.message}`);
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: "failed",
+            error_message: err.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "form_filing")
+          .eq("status", "running");
+      } catch (_) {}
+    });
+});
+
+app.post("/api/filing/submit", async (req, res) => {
+  const { portal_type, portal_config, sessionToken, filingId, filingData } = req.body;
+
+  if (!portal_type || !VALID_PORTAL_TYPES.includes(portal_type)) {
+    return res.status(400).json({
+      success: false,
+      error: "invalid_portal_type",
+      message: `portal_type must be one of: ${VALID_PORTAL_TYPES.join(", ")}`,
+    });
+  }
+
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_session_token",
+      message: "sessionToken is required",
+    });
+  }
+
+  if (!filingId && (!filingData || !filingData.filing_id)) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_filing_id",
+      message: "filingId or filingData.filing_id is required",
+    });
+  }
+
+  let sessionLookup;
+  switch (portal_type) {
+    case "accela":
+      sessionLookup = getAccelaSession(sessionToken) || getPWSession(sessionToken);
+      break;
+    case "momentum_liferay":
+      sessionLookup = getMomentumSession(sessionToken);
+      break;
+    case "aspnet_webforms":
+      sessionLookup = getMontgomerySession(sessionToken);
+      break;
+    case "energov":
+      sessionLookup = getEnergovSession(sessionToken);
+      break;
+  }
+
+  if (!sessionLookup) {
+    return res.status(404).json({
+      success: false,
+      error: "session_not_found",
+      message: `${portal_type} session not found or expired. Perform a fresh login.`,
+    });
+  }
+
+  const resolvedFilingId = filingId || filingData.filing_id;
+  let resolvedFilingData = filingData || {};
+  resolvedFilingData.filing_id = resolvedFilingId;
+
+  if (!resolvedFilingData.property_address && resolvedFilingId) {
+    try {
+      const { data: filing, error } = await supabase
+        .from("permit_filings")
+        .select("*")
+        .eq("id", resolvedFilingId)
+        .single();
+
+      if (!error && filing) {
+        resolvedFilingData = {
+          ...resolvedFilingData,
+          filing_id: filing.id,
+          property_address: resolvedFilingData.property_address || filing.property_address,
+          permit_type: resolvedFilingData.permit_type || filing.permit_type,
+          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          review_track: resolvedFilingData.review_track || filing.review_track,
+          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value: resolvedFilingData.construction_value || filing.construction_value,
+          property_type: resolvedFilingData.property_type || filing.property_type,
+          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+        };
+      }
+    } catch (err) {
+      console.log(`  [Filing Submit] Could not load filing data: ${err.message}`);
+    }
+  }
+
+  try {
+    await supabase.from("agent_runs").insert({
+      filing_id: resolvedFilingId,
+      agent_name: "submission_finalization",
+      layer: 2,
+      status: "running",
+      input_data: {
+        portal_type,
+        filing_id: resolvedFilingId,
+        property_address: resolvedFilingData.property_address,
+        permit_type: resolvedFilingData.permit_type,
+      },
+      started_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.log(`  [Filing Submit] Could not create agent_run: ${err.message}`);
+  }
+
+  console.log(`\n[Filing Submit] Starting ${portal_type} submission for filing: ${resolvedFilingId}`);
+
+  res.json({
+    success: true,
+    message: "Submission finalization started",
+    filing_id: resolvedFilingId,
+    portal_type,
+  });
+
+  let submitPromise;
+  const config = portal_config || {};
+
+  switch (portal_type) {
+    case "accela":
+      submitPromise = permitWizardSubmit(sessionToken, resolvedFilingData, supabase);
+      break;
+    case "momentum_liferay":
+      submitPromise = momentumSubmit(null, sessionToken, resolvedFilingData, supabase);
+      break;
+    case "aspnet_webforms":
+      submitPromise = montgomerySubmit(sessionToken, resolvedFilingData, supabase);
+      break;
+    case "energov":
+      submitPromise = energovSubmit(sessionToken, resolvedFilingData, config, supabase);
+      break;
+  }
+
+  submitPromise
+    .then(async (result) => {
+      console.log(`  [Filing Submit] (${portal_type}) Finalization complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: result.success ? "completed" : "failed",
+            output_data: {
+              portal_type,
+              application_id: result.application_id || null,
+              confirmation_number: result.confirmation_number || null,
+              confirmation_message: result.confirmation_message || null,
+              validation: result.validation || null,
+              screenshots_count: (result.screenshots || []).length,
+              submitted_at: result.submitted_at || null,
+            },
+            error_message: result.success ? null : result.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "submission_finalization")
+          .eq("status", "running");
+      } catch (err) {
+        console.log(`  [Filing Submit] Could not update agent_run: ${err.message}`);
+      }
+
+      if (!result.success && result.error !== "validation_failed") {
+        try {
+          await supabase
+            .from("permit_filings")
+            .update({
+              filing_status: "failed",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", resolvedFilingId);
+        } catch (_) {}
+      }
+    })
+    .catch(async (err) => {
+      console.error(`  [Filing Submit] (${portal_type}) Fatal error: ${err.message}`);
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: "failed",
+            error_message: err.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "submission_finalization")
+          .eq("status", "running");
+
+        await supabase
+          .from("permit_filings")
+          .update({
+            filing_status: "failed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", resolvedFilingId);
+      } catch (_) {}
+    });
+});
+
+app.post("/api/filing/logout", async (req, res) => {
+  const { portal_type, sessionToken } = req.body;
+
+  if (!sessionToken) {
+    return res.status(400).json({ error: "sessionToken is required" });
+  }
+
+  if (portal_type && VALID_PORTAL_TYPES.includes(portal_type)) {
+    switch (portal_type) {
+      case "accela":
+        await accelaLogout(sessionToken);
+        break;
+      case "momentum_liferay":
+        await momentumLogout(sessionToken);
+        break;
+      case "aspnet_webforms":
+        await montgomeryLogout(sessionToken);
+        break;
+      case "energov":
+        await energovLogout(sessionToken);
+        break;
+    }
+    return res.json({ success: true, message: `${portal_type} session destroyed` });
+  }
+
+  if (getAccelaSession(sessionToken)) {
+    await accelaLogout(sessionToken);
+    return res.json({ success: true, message: "accela session destroyed" });
+  }
+  if (getMomentumSession(sessionToken)) {
+    await momentumLogout(sessionToken);
+    return res.json({ success: true, message: "momentum_liferay session destroyed" });
+  }
+  if (getMontgomerySession(sessionToken)) {
+    await montgomeryLogout(sessionToken);
+    return res.json({ success: true, message: "aspnet_webforms session destroyed" });
+  }
+  if (getEnergovSession(sessionToken)) {
+    await energovLogout(sessionToken);
+    return res.json({ success: true, message: "energov session destroyed" });
+  }
+
+  res.json({ success: true, message: "Session not found (may have already expired)" });
+});
+
+// ─── Generic Filing Re-Authentication ────────────────────────────────────────
+app.post("/api/filing/reauth", async (req, res) => {
+  const { portal_type, sessionToken } = req.body;
+
+  if (!sessionToken) {
+    return res.status(400).json({ success: false, error: "sessionToken is required" });
+  }
+
+  try {
+    let resolvedType = portal_type;
+    if (!resolvedType) {
+      if (getAccelaSession(sessionToken)) resolvedType = "accela";
+      else if (getMomentumSession(sessionToken)) resolvedType = "momentum_liferay";
+      else if (getMontgomerySession(sessionToken)) resolvedType = "aspnet_webforms";
+      else if (getEnergovSession(sessionToken)) resolvedType = "energov";
+    }
+
+    if (!resolvedType) {
+      return res.status(404).json({
+        success: false,
+        error: "session_not_found",
+        message: "Session not found. Perform a fresh login.",
+      });
+    }
+
+    let browser;
+    switch (resolvedType) {
+      case "accela":
+        browser = await chromium.launch({ headless: true });
+        await reAuthenticate(browser, sessionToken);
+        break;
+      case "aspnet_webforms":
+        browser = await chromium.launch({ headless: true });
+        await reAuthenticateMontgomery(browser, sessionToken);
+        break;
+      case "momentum_liferay":
+      case "energov":
+        return res.status(501).json({
+          success: false,
+          error: "reauth_not_supported",
+          message: `Re-authentication not yet supported for ${resolvedType}. Perform a fresh login.`,
+        });
+      default:
+        return res.status(400).json({
+          success: false,
+          error: "unsupported_portal_type",
+          message: `Unsupported portal type: ${resolvedType}`,
+        });
+    }
+
+    res.json({
+      success: true,
+      sessionToken,
+      portal_type: resolvedType,
+      message: "Re-authentication successful",
+    });
+  } catch (err) {
+    console.error(`[Filing Reauth] Error:`, err.message);
+    res.status(500).json({
+      success: false,
+      error: "reauth_failed",
+      message: err.message,
+    });
+  }
 });
 
 // ─── Data / Export / Cleanup ─────────────────────────────────────────────────

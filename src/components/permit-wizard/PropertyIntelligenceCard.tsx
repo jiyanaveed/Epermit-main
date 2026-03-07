@@ -25,9 +25,10 @@ interface PropertyIntelligenceData {
 interface PropertyIntelligenceCardProps {
   data: PropertyIntelligenceData | null | undefined;
   error?: string | null;
+  dataSourceLabel?: string | null;
 }
 
-export function PropertyIntelligenceCard({ data, error }: PropertyIntelligenceCardProps) {
+export function PropertyIntelligenceCard({ data, error, dataSourceLabel }: PropertyIntelligenceCardProps) {
   if (error) {
     return (
       <Card>
@@ -80,6 +81,9 @@ export function PropertyIntelligenceCard({ data, error }: PropertyIntelligenceCa
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {dataSourceLabel && (
+          <p className="text-xs text-muted-foreground" data-testid="text-property-data-source">{dataSourceLabel}</p>
+        )}
         {data.address && (
           <div className="flex items-center gap-2 text-sm" data-testid="text-property-address">
             <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />

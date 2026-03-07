@@ -1,34 +1,23 @@
-const { getSession, PERMITWIZARD_URL } = require("./permitwizard-auth");
+const { getMontgomerySession } = require("./montgomery-auth");
 
 const SUBMIT_TIMEOUT = 30000;
+const POSTBACK_WAIT_MS = 3000;
 const VALIDATION_WAIT_MS = 3000;
 
-const DEFAULT_SUBMIT_CONFIG = {
-  baseUrl: PERMITWIZARD_URL,
-  jurisdictionLabel: "DC DOB",
-};
-
-function resolveSubmitConfig(portalConfig) {
-  return { ...DEFAULT_SUBMIT_CONFIG, ...(portalConfig || {}) };
-}
-
-async function takeSubmitScreenshot(page, stepName, jurisdictionLabel) {
+async function takeSubmitScreenshot(page, stepName) {
   try {
     const buffer = await page.screenshot({ fullPage: true, type: "png" });
     const base64 = buffer.toString("base64");
     const url = `data:image/png;base64,${base64}`;
-    const label = jurisdictionLabel || "DC DOB";
-    const qualifiedStepName = `${label}_${stepName}`;
-    console.log(`  [Submit] Screenshot captured: ${qualifiedStepName} (${Math.round(base64.length / 1024)}KB)`);
+    console.log(`  [MoCo Submit] Screenshot captured: ${stepName} (${Math.round(base64.length / 1024)}KB)`);
     return {
-      step_name: qualifiedStepName,
-      agent_name: "submission_finalization",
+      step_name: stepName,
+      agent_name: "montgomery_submission",
       screenshot_url: url,
       captured_at: new Date().toISOString(),
-      jurisdiction: label,
     };
   } catch (err) {
-    console.log(`  [Submit] Screenshot failed for ${stepName}: ${err.message}`);
+    console.log(`  [MoCo Submit] Screenshot failed for ${stepName}: ${err.message}`);
     return null;
   }
 }
@@ -59,17 +48,40 @@ async function extractReviewPageFields(page) {
     const labels = document.querySelectorAll("label");
     labels.forEach((label) => {
       const text = label.textContent.trim().replace(/:$/, "");
-      let sibling = label.nextElementSibling;
-      while (sibling) {
-        const tag = (sibling.tagName || "").toLowerCase();
-        if (["span", "div", "p", "input", "select", "textarea"].includes(tag)) {
-          const value = sibling.value || sibling.textContent.trim();
+      const forId = label.getAttribute("for");
+      if (forId) {
+        const target = document.getElementById(forId);
+        if (target) {
+          const value = target.value || target.textContent.trim();
           if (text && value) {
             fields[text] = value;
           }
-          break;
         }
-        sibling = sibling.nextElementSibling;
+      } else {
+        let sibling = label.nextElementSibling;
+        while (sibling) {
+          const tag = (sibling.tagName || "").toLowerCase();
+          if (["span", "div", "p", "input", "select", "textarea"].includes(tag)) {
+            const value = sibling.value || sibling.textContent.trim();
+            if (text && value) {
+              fields[text] = value;
+            }
+            break;
+          }
+          sibling = sibling.nextElementSibling;
+        }
+      }
+    });
+
+    const spans = document.querySelectorAll("span[id*='lbl'], span[id*='Label'], span[id*='txt']");
+    spans.forEach((span) => {
+      const id = span.id || "";
+      const text = span.textContent.trim();
+      if (id && text && text.length < 300) {
+        const labelName = id.replace(/^.*?(lbl|Label|txt)/i, "").replace(/([A-Z])/g, " $1").trim();
+        if (labelName) {
+          fields[labelName] = text;
+        }
       }
     });
 
@@ -170,12 +182,16 @@ async function detectPortalErrors(page) {
       ".error-message", ".error", ".alert-danger", ".alert-error",
       "[class*='error' i]", "[class*='Error']", "[id*='error' i]",
       ".validation-error", ".field-error", ".form-error",
-      ".ACA_Error", "[role='alert']",
+      "[id*='ValidationSummary']", ".validation-summary-errors",
+      "[role='alert']",
+      "span[id*='rfv']", "span[id*='rev']", "span[id*='cv']",
     ];
 
     for (const sel of errorSelectors) {
       const elements = document.querySelectorAll(sel);
       elements.forEach((el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return;
         const text = el.textContent.trim();
         if (text && text.length > 2 && text.length < 500) {
           if (!errors.includes(text)) {
@@ -184,21 +200,6 @@ async function detectPortalErrors(page) {
         }
       });
     }
-
-    const modals = document.querySelectorAll(
-      "[class*='modal' i], [class*='dialog' i], [class*='popup' i]"
-    );
-    modals.forEach((modal) => {
-      const style = window.getComputedStyle(modal);
-      if (style.display !== "none" && style.visibility !== "hidden") {
-        const text = modal.textContent.trim();
-        if (text.toLowerCase().includes("error") || text.toLowerCase().includes("failed")) {
-          if (text.length < 500 && !errors.includes(text)) {
-            errors.push(text);
-          }
-        }
-      }
-    });
 
     return errors;
   });
@@ -217,8 +218,8 @@ async function extractConfirmation(page) {
     result.raw_text = body.substring(0, 2000);
 
     const confirmPatterns = [
+      /(?:permit|application)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
       /(?:confirmation|reference|tracking)\s*(?:#|number|no\.?|num)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
-      /(?:application|permit)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
       /(?:record|case)\s*(?:#|number|no\.?|num|id)?\s*[:=]?\s*([A-Z0-9\-]+)/i,
     ];
 
@@ -237,10 +238,12 @@ async function extractConfirmation(page) {
     }
 
     const idSelectors = [
+      "span[id*='lblPermitNumber']", "span[id*='lblApplicationNumber']",
+      "span[id*='lblConfirmation']", "span[id*='lblTrackingNumber']",
       "[data-field='applicationId']", "[data-field='confirmationNumber']",
       "[id*='confirmation' i]", "[id*='applicationId' i]",
       "[id*='trackingNumber' i]", "[id*='recordId' i]",
-      "[class*='confirmation' i]", "[class*='tracking' i]",
+      "[id*='permitNumber' i]",
     ];
 
     for (const sel of idSelectors) {
@@ -270,7 +273,8 @@ async function extractConfirmation(page) {
           text.toLowerCase().includes("success") ||
           text.toLowerCase().includes("submitted") ||
           text.toLowerCase().includes("confirmation") ||
-          text.toLowerCase().includes("received")
+          text.toLowerCase().includes("received") ||
+          text.toLowerCase().includes("thank you")
         ) {
           result.message = text.substring(0, 200);
           break;
@@ -282,19 +286,16 @@ async function extractConfirmation(page) {
   });
 }
 
-async function permitWizardSubmit(sessionToken, filingData, supabase, portalConfig) {
-  const config = resolveSubmitConfig(portalConfig);
-  const jLabel = config.jurisdictionLabel;
+async function montgomerySubmit(sessionToken, filingData, supabase) {
+  console.log("  [MoCo Submit] Starting Montgomery County submission finalization");
+  console.log(`  [MoCo Submit] Filing ID: ${filingData.filing_id}`);
 
-  console.log(`  [Submit] Starting submission finalization for ${jLabel}`);
-  console.log(`  [Submit] Filing ID: ${filingData.filing_id}`);
-
-  const session = getSession(sessionToken);
+  const session = getMontgomerySession(sessionToken);
   if (!session) {
     return {
       success: false,
       error: "session_not_found",
-      message: "PermitWizard session not found or expired. Re-authenticate first.",
+      message: "Montgomery County session not found or expired. Re-authenticate first.",
     };
   }
 
@@ -303,12 +304,12 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
 
   try {
     const currentUrl = page.url();
-    console.log(`  [Submit] Current page URL: ${currentUrl}`);
+    console.log(`  [MoCo Submit] Current page URL: ${currentUrl}`);
 
     if (
-      currentUrl.includes("SessionEnded") ||
-      currentUrl.includes("login") ||
-      currentUrl.includes("b2clogin")
+      currentUrl.toLowerCase().includes("login") ||
+      currentUrl.toLowerCase().includes("sessionexpired") ||
+      currentUrl.toLowerCase().includes("timeout")
     ) {
       return {
         success: false,
@@ -318,25 +319,25 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    const reviewScreenshot = await takeSubmitScreenshot(page, "review_page_before_validation", jLabel);
+    const reviewScreenshot = await takeSubmitScreenshot(page, "review_page_before_validation");
     if (reviewScreenshot) screenshots.push(reviewScreenshot);
 
-    console.log("  [Submit] Extracting review page fields...");
+    console.log("  [MoCo Submit] Extracting review page fields...");
     const reviewFields = await extractReviewPageFields(page);
-    console.log(`  [Submit] Found ${Object.keys(reviewFields).length} fields on review page`);
+    console.log(`  [MoCo Submit] Found ${Object.keys(reviewFields).length} fields on review page`);
 
     const validation = validateFieldsMatch(reviewFields, filingData);
-    console.log(`  [Submit] Validation result: ${validation.valid ? "PASS" : "FAIL"}`);
-    console.log(`  [Submit] Matched: ${validation.matched.length}, Mismatches: ${validation.mismatches.length}`);
+    console.log(`  [MoCo Submit] Validation result: ${validation.valid ? "PASS" : "FAIL"}`);
+    console.log(`  [MoCo Submit] Matched: ${validation.matched.length}, Mismatches: ${validation.mismatches.length}`);
 
     if (validation.mismatches.length > 0) {
-      console.log("  [Submit] Mismatches found:");
+      console.log("  [MoCo Submit] Mismatches found:");
       validation.mismatches.forEach((m) => {
         console.log(`    - ${m.field}: expected "${m.expected}", found: ${m.found || "NOT FOUND"}`);
       });
     }
 
-    const validationScreenshot = await takeSubmitScreenshot(page, "review_validation_result", jLabel);
+    const validationScreenshot = await takeSubmitScreenshot(page, "review_validation_result");
     if (validationScreenshot) {
       validationScreenshot.field_audit = {
         review_fields: reviewFields,
@@ -370,11 +371,11 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log("  [Submit] Validation passed — proceeding to submit...");
+    console.log("  [MoCo Submit] Validation passed — proceeding to submit...");
 
     const preSubmitErrors = await detectPortalErrors(page);
     if (preSubmitErrors.length > 0) {
-      console.log(`  [Submit] Portal errors detected before submit: ${preSubmitErrors.join("; ")}`);
+      console.log(`  [MoCo Submit] Portal errors detected before submit: ${preSubmitErrors.join("; ")}`);
 
       return {
         success: false,
@@ -385,17 +386,38 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
+    const agreeSelectors = [
+      'input[type="checkbox"][name*="chkAgree"]',
+      'input[type="checkbox"][id*="chkAgree"]',
+      'input[type="checkbox"][name*="agree" i]',
+      'input[type="checkbox"][id*="agree" i]',
+      'input[type="checkbox"][name*="terms" i]',
+      'input[type="checkbox"][name*="certify" i]',
+    ];
+
+    for (const sel of agreeSelectors) {
+      const checkbox = await page.$(sel);
+      if (checkbox && (await checkbox.isVisible().catch(() => false))) {
+        const isChecked = await checkbox.isChecked().catch(() => false);
+        if (!isChecked) {
+          await checkbox.check();
+          console.log(`  [MoCo Submit] Checked agreement checkbox: ${sel}`);
+          await page.waitForTimeout(500);
+        }
+      }
+    }
+
     const submitSelectors = [
-      'button:has-text("Submit")',
-      'button:has-text("Submit Application")',
+      '[name*="btnSubmit"]',
+      '[name*="cmdSubmit"]',
+      '[id*="btnSubmit"]',
+      '[id*="cmdSubmit"]',
       'input[value="Submit"]',
       'input[value="Submit Application"]',
+      'button:has-text("Submit")',
+      'button:has-text("Submit Application")',
       'button[type="submit"]:has-text("Submit")',
-      'button.btn-primary:has-text("Submit")',
       '[data-action="submit"]',
-      '[data-action="submit-application"]',
-      ".wizard-submit",
-      ".btn-submit",
     ];
 
     let submitButton = null;
@@ -403,7 +425,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       const btn = await page.$(sel);
       if (btn && (await btn.isVisible().catch(() => false))) {
         const isDisabled = await btn.evaluate(
-          (el) => el.disabled || el.classList.contains("disabled")
+          (el) => el.disabled || el.classList.contains("disabled") || el.classList.contains("aspNetDisabled")
         );
         if (!isDisabled) {
           submitButton = { element: btn, selector: sel };
@@ -413,7 +435,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
     }
 
     if (!submitButton) {
-      const noSubmitScreenshot = await takeSubmitScreenshot(page, "no_submit_button_found", jLabel);
+      const noSubmitScreenshot = await takeSubmitScreenshot(page, "no_submit_button_found");
       if (noSubmitScreenshot) screenshots.push(noSubmitScreenshot);
 
       return {
@@ -424,25 +446,25 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log(`  [Submit] Found submit button: ${submitButton.selector}`);
-    console.log("  [Submit] Clicking submit...");
+    console.log(`  [MoCo Submit] Found submit button: ${submitButton.selector}`);
+    console.log("  [MoCo Submit] Clicking submit...");
 
-    const preSubmitScreenshot = await takeSubmitScreenshot(page, "pre_submit_click", jLabel);
+    const preSubmitScreenshot = await takeSubmitScreenshot(page, "pre_submit_click");
     if (preSubmitScreenshot) screenshots.push(preSubmitScreenshot);
 
     await submitButton.element.click();
-    console.log("  [Submit] Submit button clicked");
+    console.log("  [MoCo Submit] Submit button clicked");
 
     await page.waitForTimeout(VALIDATION_WAIT_MS);
     await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(POSTBACK_WAIT_MS);
 
     const immediateErrors = await detectPortalErrors(page);
 
     if (immediateErrors.length > 0) {
-      console.log(`  [Submit] Portal errors after submit: ${immediateErrors.join("; ")}`);
+      console.log(`  [MoCo Submit] Portal errors after submit: ${immediateErrors.join("; ")}`);
 
-      const errorScreenshot = await takeSubmitScreenshot(page, "post_submit_errors", jLabel);
+      const errorScreenshot = await takeSubmitScreenshot(page, "post_submit_errors");
       if (errorScreenshot) {
         errorScreenshot.field_audit = { portal_errors: immediateErrors };
         screenshots.push(errorScreenshot);
@@ -471,14 +493,14 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       };
     }
 
-    console.log("  [Submit] No errors detected — extracting confirmation...");
+    console.log("  [MoCo Submit] No errors detected — extracting confirmation...");
 
     const confirmationData = await extractConfirmation(page);
-    console.log(`  [Submit] Confirmation number: ${confirmationData.confirmation_number || "not found"}`);
-    console.log(`  [Submit] Application ID: ${confirmationData.application_id || "not found"}`);
-    console.log(`  [Submit] Message: ${confirmationData.message || "none"}`);
+    console.log(`  [MoCo Submit] Confirmation number: ${confirmationData.confirmation_number || "not found"}`);
+    console.log(`  [MoCo Submit] Application ID: ${confirmationData.application_id || "not found"}`);
+    console.log(`  [MoCo Submit] Message: ${confirmationData.message || "none"}`);
 
-    const confirmScreenshot = await takeSubmitScreenshot(page, "confirmation_page", jLabel);
+    const confirmScreenshot = await takeSubmitScreenshot(page, "confirmation_page");
     if (confirmScreenshot) {
       confirmScreenshot.field_audit = { confirmation: confirmationData };
       screenshots.push(confirmScreenshot);
@@ -498,9 +520,9 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
           })
           .eq("id", filingData.filing_id);
 
-        console.log(`  [Submit] Updated permit_filings: status=submitted`);
+        console.log("  [MoCo Submit] Updated permit_filings: status=submitted");
       } catch (err) {
-        console.log(`  [Submit] Failed to update permit_filings: ${err.message}`);
+        console.log(`  [MoCo Submit] Failed to update permit_filings: ${err.message}`);
       }
 
       for (const ss of screenshots) {
@@ -516,7 +538,7 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       }
     }
 
-    console.log("  [Submit] Submission finalization complete");
+    console.log("  [MoCo Submit] Submission finalization complete");
 
     return {
       success: true,
@@ -528,9 +550,9 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
       submitted_at: new Date().toISOString(),
     };
   } catch (err) {
-    console.error(`  [Submit] Fatal error: ${err.message}`);
+    console.error(`  [MoCo Submit] Fatal error: ${err.message}`);
 
-    const errorScreenshot = await takeSubmitScreenshot(page, "fatal_error", jLabel).catch(() => null);
+    const errorScreenshot = await takeSubmitScreenshot(page, "fatal_error").catch(() => null);
     if (errorScreenshot) screenshots.push(errorScreenshot);
 
     if (supabase && filingData.filing_id) {
@@ -567,11 +589,9 @@ async function permitWizardSubmit(sessionToken, filingData, supabase, portalConf
 }
 
 module.exports = {
-  permitWizardSubmit,
+  montgomerySubmit,
   extractReviewPageFields,
   validateFieldsMatch,
   extractConfirmation,
   detectPortalErrors,
-  resolveSubmitConfig,
-  DEFAULT_SUBMIT_CONFIG,
 };

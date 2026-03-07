@@ -184,10 +184,10 @@ const adminNavigation = [
     icon: Building2 
   },
   { 
-    title: "PermitWizard Filing", 
+    title: "Permit Filing", 
     href: "/permit-wizard-filing", 
     icon: Rocket,
-    description: "Autonomous 9-agent filing pipeline"
+    description: "Multi-municipality 9-agent filing pipeline"
   },
   { 
     title: "Portal Data", 

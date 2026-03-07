@@ -73,27 +73,33 @@ Preferred communication style: Simple, everyday language.
 - **Database:** `response_package_drafts` table + `review_round` column on `parsed_comments` (migration `20260307000002`).
 - **Integration:** Export dialog shows draft list with status badges, resume/new round buttons, "Modified" badges on changed comments.
 
-### DC DOB PermitWizard Agentic AI Filing System
-- **Purpose:** Autonomous permit filing through DC DOB PermitWizard portal (Accela-based) on behalf of Commun-ET clients.
+### Multi-Municipality Permit Filing System (formerly DC DOB PermitWizard)
+- **Purpose:** Autonomous permit filing across 10 DMV jurisdictions via 9-agent pipeline.
+- **Supported Municipalities (4 portal platforms):**
+  - **Accela Citizen Access (6):** DC DOB, Fairfax County VA, Baltimore City MD, Howard County MD, Arlington County VA, Anne Arundel County MD
+  - **Liferay/Momentum (1):** Prince George's County MD
+  - **ASP.NET WebForms (1):** Montgomery County MD
+  - **Tyler EnerGov (2):** City of Alexandria VA, Loudoun County VA
+- **Municipality Config:** `municipality_configs` table stores portal type, URLs, data sources, license validation sources, permit types, and agent_config JSONB per jurisdiction (migration `20260307000004`).
 - **Architecture:** 9 specialized agents across 3 layers with 1 mandatory human decision gate.
-- **Layer 1 — Pre-Flight Agents:**
-  - Agent 01 `property-intelligence-agent`: Scrapes DC Scout for zoning, historic, flood, active permits, SWOs.
-  - Agent 02 `license-validation-agent`: Validates DLCP professional licenses; hard stop on invalid expediter registration.
-  - Agent 03 `document-preparation-agent`: Validates documents (format, size, naming), generates EIF, creates upload manifest.
-  - Agent 04 `permit-classifier-agent`: Uses GPT-4o to classify permit type, predict review track, estimate fees.
-  - Orchestrator `permitwizard-preflight`: Runs agents 01→(02,03 parallel)→04, assembles approval package.
+- **Layer 1 — Pre-Flight Agents (jurisdiction-aware):**
+  - Agent 01 `property-intelligence-agent`: DC Scout (DC), MD SDAT (MD jurisdictions), or advisory fallback (VA).
+  - Agent 02 `license-validation-agent`: DLCP (DC), MD DLLR (MD), VA DPOR (VA); hard-stop rules vary by jurisdiction.
+  - Agent 03 `document-preparation-agent`: Validates documents (mostly jurisdiction-agnostic).
+  - Agent 04 `permit-classifier-agent`: Dynamic GPT prompt per jurisdiction from `municipality_configs.agent_config`.
+  - Orchestrator `permitwizard-preflight`: Accepts `municipality_key`, routes to correct data sources.
 - **Layer 1.5 — Human Gate:**
-  - Agent 05 `FilingReviewPanel` (frontend): Displays full approval package for expediter review. Mandatory approve/reject. On approval triggers execution pipeline.
-- **Layer 2 — Execution Agents:**
-  - Agent 06 `permitwizard-auth.js`: Access DC SSO login, session management, CAPTCHA detection, re-auth.
-  - Agent 07 `permitwizard-filer.js`: Navigates PermitWizard wizard steps, fills forms, uploads documents, takes screenshots. Stops at Review & Submit.
-  - Agent 08 `permitwizard-submit.js`: Validates review page, clicks submit, captures confirmation.
-  - Orchestrator `permitwizard-execute`: Runs auth→filing→submission→monitoring with checkpoint/resume.
+  - Agent 05 `FilingReviewPanel`: Shows municipality context, data source labels, jurisdiction-specific agency names.
+- **Layer 2 — Execution Agents (portal-routed):**
+  - Auth modules: `permitwizard-auth.js` (Accela), `momentum-auth.js` (Liferay), `montgomery-auth.js` (ASP.NET), `energov-auth.js` (EnerGov)
+  - Filer modules: `permitwizard-filer.js` (Accela), `momentum-filer.js`, `montgomery-filer.js`, `energov-filer.js`
+  - Submit modules: `permitwizard-submit.js` (Accela), `momentum-submit.js`, `montgomery-submit.js`, `energov-submit.js`
+  - Orchestrator `permitwizard-execute`: Routes to correct scraper based on `portal_type` from municipality config.
 - **Layer 3 — Post-Submission:**
-  - Agent 09 `permit-status-monitor`: Monitors via DC Scout, detects ProjectDox assignment, sends notifications.
-- **Database:** `permit_filings`, `agent_runs`, `property_intelligence`, `license_validations`, `filing_documents`, `filing_screenshots`, `filing_professionals` (migration `20260307000003`).
-- **Frontend:** `PermitWizardFiling.tsx` dashboard page with visual 9-agent pipeline, `StartFilingDialog.tsx` for new filings, `AgentRunDetail.tsx` for detailed agent logs.
-- **Scraper endpoints:** `/api/permitwizard/login`, `/api/permitwizard/file`, `/api/permitwizard/submit`, `/api/permitwizard/session/:token`, `/api/permitwizard/reauth`, `/api/permitwizard/logout`.
+  - Agent 09 `permit-status-monitor`: Monitors status per jurisdiction.
+- **Database:** `permit_filings` (+ `municipality`, `credential_id` columns), `agent_runs`, `property_intelligence`, `license_validations`, `filing_documents`, `filing_screenshots`, `filing_professionals`, `municipality_configs` (migrations `20260307000003`, `20260307000004`).
+- **Frontend:** `PermitWizardFiling.tsx` ("Permit Filing" page) with municipality selector/filter, `StartFilingDialog.tsx` with municipality dropdown, `AgentRunDetail.tsx`.
+- **Scraper endpoints:** Legacy `/api/permitwizard/*` (DC backward compat) + generic `/api/filing/login|file|submit|session|reauth|logout` (multi-portal routing by `portal_type`).
 
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).

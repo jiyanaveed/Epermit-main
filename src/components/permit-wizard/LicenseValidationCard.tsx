@@ -30,6 +30,7 @@ interface LicenseValidationData {
 interface LicenseValidationCardProps {
   data: LicenseValidationData | null | undefined;
   error?: string | null;
+  validationSourceLabel?: string | null;
 }
 
 const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: typeof ShieldCheck }> = {
@@ -39,7 +40,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'second
   pending: { label: 'Pending', variant: 'secondary', icon: Clock },
 };
 
-export function LicenseValidationCard({ data, error }: LicenseValidationCardProps) {
+export function LicenseValidationCard({ data, error, validationSourceLabel }: LicenseValidationCardProps) {
   if (error) {
     return (
       <Card>
@@ -92,6 +93,9 @@ export function LicenseValidationCard({ data, error }: LicenseValidationCardProp
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {validationSourceLabel && (
+          <p className="text-xs text-muted-foreground" data-testid="text-license-validation-source">{validationSourceLabel}</p>
+        )}
         {data.hard_stop && data.hard_stop_reason && (
           <div className="bg-destructive/10 p-3 rounded-md flex items-start gap-2" data-testid="text-hard-stop-reason">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />

@@ -34,6 +34,7 @@ import {
   KeyRound,
   AlertTriangle,
   X,
+  MapPin,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -59,6 +60,19 @@ interface PortalCredential {
   jurisdiction: string;
   portal_username: string;
   login_url: string | null;
+}
+
+interface MunicipalityConfig {
+  id: string;
+  municipality_key: string;
+  display_name: string;
+  short_name: string;
+  state: string;
+  county: string | null;
+  portal_type: string;
+  portal_base_url: string;
+  login_url: string | null;
+  is_active: boolean;
 }
 
 interface StartFilingDialogProps {
@@ -105,8 +119,60 @@ const DOCUMENT_TYPES = [
   { value: 'other', label: 'Other' },
 ];
 
+const PORTAL_TYPE_LABELS: Record<string, string> = {
+  accela: 'Accela',
+  momentum_liferay: 'Momentum',
+  aspnet_webforms: 'ASP.NET',
+  energov: 'EnerGov',
+};
+
 function generateId() {
   return crypto.randomUUID();
+}
+
+function matchCredentialToMunicipality(
+  credential: PortalCredential,
+  municipality: MunicipalityConfig
+): boolean {
+  const jurisdictionLower = (credential.jurisdiction || '').toLowerCase();
+  const displayLower = municipality.display_name.toLowerCase();
+  const shortLower = municipality.short_name.toLowerCase();
+  const stateLower = municipality.state.toLowerCase();
+  const countyLower = (municipality.county || '').toLowerCase();
+
+  if (jurisdictionLower.includes(shortLower) || shortLower.includes(jurisdictionLower)) {
+    return true;
+  }
+
+  if (jurisdictionLower.includes(displayLower) || displayLower.includes(jurisdictionLower)) {
+    return true;
+  }
+
+  if (credential.login_url && municipality.login_url) {
+    try {
+      const credHost = new URL(credential.login_url).hostname;
+      const muniHost = new URL(municipality.login_url).hostname;
+      if (credHost === muniHost) return true;
+    } catch {}
+  }
+
+  if (credential.login_url && municipality.portal_base_url) {
+    try {
+      const credHost = new URL(credential.login_url).hostname;
+      const muniHost = new URL(municipality.portal_base_url).hostname;
+      if (credHost === muniHost) return true;
+    } catch {}
+  }
+
+  if (countyLower && jurisdictionLower.includes(countyLower) && jurisdictionLower.includes(stateLower)) {
+    return true;
+  }
+
+  if (municipality.municipality_key === 'dc_dob' && jurisdictionLower.includes('dc')) {
+    return true;
+  }
+
+  return false;
 }
 
 export function StartFilingDialog({
@@ -119,6 +185,8 @@ export function StartFilingDialog({
   const [submitting, setSubmitting] = useState(false);
   const [credentials, setCredentials] = useState<PortalCredential[]>([]);
   const [loadingCredentials, setLoadingCredentials] = useState(false);
+  const [municipalities, setMunicipalities] = useState<MunicipalityConfig[]>([]);
+  const [loadingMunicipalities, setLoadingMunicipalities] = useState(false);
 
   const [propertyAddress, setPropertyAddress] = useState(project.address || '');
   const [scopeOfWork, setScopeOfWork] = useState(project.description || '');
@@ -127,13 +195,12 @@ export function StartFilingDialog({
   );
   const [propertyType, setPropertyType] = useState<string>('');
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>('');
-
-  const [professionals, setProfessionals] = useState<Professional[]>([]);
-  const [documents, setDocuments] = useState<DocumentFile[]>([]);
+  const [selectedMunicipalityKey, setSelectedMunicipalityKey] = useState<string>('');
 
   useEffect(() => {
     if (open && user) {
       loadCredentials();
+      loadMunicipalities();
     }
   }, [open, user]);
 
@@ -144,6 +211,24 @@ export function StartFilingDialog({
       setConstructionValue(project.estimated_value?.toString() || '');
     }
   }, [open, project]);
+
+  async function loadMunicipalities() {
+    setLoadingMunicipalities(true);
+    try {
+      const { data, error } = await supabase
+        .from('municipality_configs')
+        .select('id, municipality_key, display_name, short_name, state, county, portal_type, portal_base_url, login_url, is_active')
+        .eq('is_active', true)
+        .order('display_name', { ascending: true });
+
+      if (error) throw error;
+      setMunicipalities(data || []);
+    } catch (err) {
+      console.error('Failed to load municipalities:', err);
+    } finally {
+      setLoadingMunicipalities(false);
+    }
+  }
 
   async function loadCredentials() {
     if (!user) return;
@@ -157,19 +242,50 @@ export function StartFilingDialog({
 
       if (error) throw error;
       setCredentials(data || []);
-
-      if (data && data.length > 0 && !selectedCredentialId) {
-        const dcCred = data.find((c: PortalCredential) =>
-          c.jurisdiction?.toLowerCase().includes('dc')
-        );
-        if (dcCred) {
-          setSelectedCredentialId(dcCred.id);
-        }
-      }
     } catch (err) {
       console.error('Failed to load credentials:', err);
     } finally {
       setLoadingCredentials(false);
+    }
+  }
+
+  const selectedMunicipality = municipalities.find(
+    (m) => m.municipality_key === selectedMunicipalityKey
+  );
+
+  const filteredCredentials = selectedMunicipality
+    ? credentials.filter((c) => matchCredentialToMunicipality(c, selectedMunicipality))
+    : credentials;
+
+  function handleMunicipalityChange(key: string) {
+    setSelectedMunicipalityKey(key);
+    const muni = municipalities.find((m) => m.municipality_key === key);
+    if (muni && selectedCredentialId) {
+      const currentCred = credentials.find((c) => c.id === selectedCredentialId);
+      if (currentCred && !matchCredentialToMunicipality(currentCred, muni)) {
+        setSelectedCredentialId('');
+      }
+    }
+    if (muni) {
+      const matchingCreds = credentials.filter((c) => matchCredentialToMunicipality(c, muni));
+      if (matchingCreds.length === 1 && !selectedCredentialId) {
+        setSelectedCredentialId(matchingCreds[0].id);
+      }
+    }
+  }
+
+  function handleCredentialChange(credId: string) {
+    setSelectedCredentialId(credId);
+    if (!selectedMunicipalityKey) {
+      const cred = credentials.find((c) => c.id === credId);
+      if (cred) {
+        const matchingMuni = municipalities.find((m) =>
+          matchCredentialToMunicipality(cred, m)
+        );
+        if (matchingMuni) {
+          setSelectedMunicipalityKey(matchingMuni.municipality_key);
+        }
+      }
     }
   }
 
@@ -224,9 +340,17 @@ export function StartFilingDialog({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [documents, setDocuments] = useState<DocumentFile[]>([]);
+
   async function handleStartPreflight() {
     if (!user) {
       toast.error('You must be logged in');
+      return;
+    }
+
+    if (!selectedMunicipalityKey) {
+      toast.error('Please select a municipality');
       return;
     }
 
@@ -258,6 +382,8 @@ export function StartFilingDialog({
           scope_of_work: scopeOfWork.trim(),
           construction_value: constructionValue ? parseFloat(constructionValue) : null,
           property_type: propertyType,
+          municipality: selectedMunicipalityKey,
+          credential_id: selectedCredentialId || null,
         })
         .select('id')
         .single();
@@ -314,6 +440,7 @@ export function StartFilingDialog({
         await supabase.functions.invoke('permitwizard-preflight', {
           body: {
             filing_id: filingId,
+            municipality_key: selectedMunicipalityKey,
             credential_id: selectedCredentialId || null,
           },
         });
@@ -335,7 +462,8 @@ export function StartFilingDialog({
   const isValid =
     propertyAddress.trim() !== '' &&
     scopeOfWork.trim() !== '' &&
-    propertyType !== '';
+    propertyType !== '' &&
+    selectedMunicipalityKey !== '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -343,15 +471,64 @@ export function StartFilingDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2" data-testid="text-dialog-title">
             <Rocket className="h-5 w-5" />
-            Start PermitWizard Filing
+            Start Permit Filing
           </DialogTitle>
           <DialogDescription>
-            Provide project details to initiate the 9-agent autonomous filing pipeline.
+            Select a municipality and provide project details to initiate the 9-agent autonomous filing pipeline.
           </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="max-h-[60vh] pr-4">
           <div className="space-y-6">
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                Municipality
+              </h4>
+
+              {loadingMunicipalities ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading municipalities...
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Jurisdiction *</Label>
+                  <Select value={selectedMunicipalityKey} onValueChange={handleMunicipalityChange}>
+                    <SelectTrigger data-testid="select-municipality">
+                      <SelectValue placeholder="Select municipality" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {municipalities.map((m) => (
+                        <SelectItem key={m.municipality_key} value={m.municipality_key}>
+                          <span className="flex items-center gap-2">
+                            <span>{m.display_name}</span>
+                            <Badge variant="secondary" className="text-xs">
+                              {m.state}
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              {PORTAL_TYPE_LABELS[m.portal_type] || m.portal_type}
+                            </Badge>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {selectedMunicipality && (
+                    <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground" data-testid="text-municipality-context">
+                      <span>{selectedMunicipality.short_name}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {PORTAL_TYPE_LABELS[selectedMunicipality.portal_type] || selectedMunicipality.portal_type}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
             <div className="space-y-4">
               <h4 className="text-sm font-semibold flex items-center gap-2">
                 <Building2 className="h-4 w-4" />
@@ -612,20 +789,22 @@ export function StartFilingDialog({
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading credentials...
                 </div>
-              ) : credentials.length === 0 ? (
+              ) : filteredCredentials.length === 0 ? (
                 <div className="flex items-center gap-2 p-3 rounded-md bg-muted">
                   <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
                   <p className="text-sm text-muted-foreground">
-                    No portal credentials found. Add them in Settings to enable portal automation.
+                    {selectedMunicipalityKey
+                      ? 'No matching credentials found for the selected municipality. Add them in Settings.'
+                      : 'No portal credentials found. Add them in Settings to enable portal automation.'}
                   </p>
                 </div>
               ) : (
-                <Select value={selectedCredentialId} onValueChange={setSelectedCredentialId}>
+                <Select value={selectedCredentialId} onValueChange={handleCredentialChange}>
                   <SelectTrigger data-testid="select-portal-credential">
                     <SelectValue placeholder="Select portal credential" />
                   </SelectTrigger>
                   <SelectContent>
-                    {credentials.map((cred) => (
+                    {filteredCredentials.map((cred) => (
                       <SelectItem key={cred.id} value={cred.id}>
                         <span className="flex items-center gap-2">
                           <span>{cred.jurisdiction}</span>

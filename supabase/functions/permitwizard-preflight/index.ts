@@ -107,6 +107,8 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const filingId = body.filing_id as string | undefined;
+    const municipalityKeyParam = body.municipality_key as string | undefined;
+    const credentialIdParam = body.credential_id as string | undefined;
 
     if (!filingId) {
       return new Response(
@@ -128,6 +130,42 @@ serve(async (req) => {
       );
     }
 
+    const municipalityKey = municipalityKeyParam ?? (filing.municipality as string | undefined) ?? "dc_dob";
+    const credentialId = credentialIdParam ?? (filing.credential_id as string | undefined) ?? undefined;
+
+    console.log(`[permitwizard-preflight] municipality_key=${municipalityKey} credential_id=${credentialId ?? "none"}`);
+
+    let municipalityConfig: Record<string, unknown> | null = null;
+    const { data: muniData, error: muniError } = await adminSupabase
+      .from("municipality_configs")
+      .select("*")
+      .eq("municipality_key", municipalityKey)
+      .single();
+
+    if (muniError || !muniData) {
+      console.warn(`[permitwizard-preflight] Municipality config not found for key=${municipalityKey}, using defaults`);
+    } else {
+      municipalityConfig = muniData as Record<string, unknown>;
+      console.log(`[permitwizard-preflight] Loaded municipality config: ${municipalityConfig.display_name} (${municipalityConfig.portal_type})`);
+    }
+
+    const filingUpdateFields: Record<string, unknown> = {};
+    if (municipalityKey && filing.municipality !== municipalityKey) {
+      filingUpdateFields.municipality = municipalityKey;
+    }
+    if (credentialId && filing.credential_id !== credentialId) {
+      filingUpdateFields.credential_id = credentialId;
+    }
+    if (Object.keys(filingUpdateFields).length > 0) {
+      const { error: earlyUpdateError } = await adminSupabase
+        .from("permit_filings")
+        .update(filingUpdateFields)
+        .eq("id", filingId);
+      if (earlyUpdateError) {
+        console.error("[permitwizard-preflight] Failed to set municipality/credential_id on filing:", earlyUpdateError);
+      }
+    }
+
     const baseUrl = `${supabaseUrl.replace(/\/$/, "")}/functions/v1`;
     const agentHeaders: Record<string, string> = {
       "Content-Type": "application/json",
@@ -142,6 +180,7 @@ serve(async (req) => {
     const agent01Res = await callAgent(baseUrl, "property-intelligence-agent", agentHeaders, {
       filing_id: filingId,
       property_address: filing.property_address,
+      municipality_key: municipalityKey,
     });
     const agent01Result: AgentResult = {
       agent_name: "property_intelligence",
@@ -171,6 +210,7 @@ serve(async (req) => {
 
     const agent02Body: Record<string, unknown> = {
       filing_id: filingId,
+      municipality_key: municipalityKey,
       professionals: professionals && professionals.length > 0
         ? professionals
         : body.professionals ?? [],
@@ -185,6 +225,7 @@ serve(async (req) => {
 
     const agent03Body: Record<string, unknown> = {
       filing_id: filingId,
+      municipality_key: municipalityKey,
       documents: documentsForAgent03.length > 0 ? documentsForAgent03 : (body.documents ?? []),
       scope_of_work: filing.scope_of_work ?? body.scope_of_work,
       property_type: filing.property_type ?? body.property_type,
@@ -224,6 +265,7 @@ serve(async (req) => {
     const agent04Start = Date.now();
     const agent04Res = await callAgent(baseUrl, "permit-classifier-agent", agentHeaders, {
       filing_id: filingId,
+      municipality_key: municipalityKey,
       scope_of_work: filing.scope_of_work ?? body.scope_of_work,
       property_type: filing.property_type ?? body.property_type,
       construction_value: filing.construction_value ?? body.construction_value,
@@ -248,6 +290,9 @@ serve(async (req) => {
 
     const approvalPackage: Record<string, unknown> = {
       assembled_at: new Date().toISOString(),
+      municipality_key: municipalityKey,
+      municipality_display_name: municipalityConfig?.display_name ?? municipalityKey,
+      portal_type: municipalityConfig?.portal_type ?? "unknown",
       property_intelligence: propertyIntelligence,
       license_validation: agent02Res.ok ? {
         all_active: agent02Res.data.all_active,
@@ -289,13 +334,21 @@ serve(async (req) => {
       newFilingStatus = "awaiting_approval";
     }
 
+    const finalUpdateFields: Record<string, unknown> = {
+      approval_package: approvalPackage,
+      filing_status: newFilingStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (municipalityKey) {
+      finalUpdateFields.municipality = municipalityKey;
+    }
+    if (credentialId) {
+      finalUpdateFields.credential_id = credentialId;
+    }
+
     const { error: updateError } = await adminSupabase
       .from("permit_filings")
-      .update({
-        approval_package: approvalPackage,
-        filing_status: newFilingStatus,
-        updated_at: new Date().toISOString(),
-      })
+      .update(finalUpdateFields)
       .eq("id", filingId);
 
     if (updateError) {
@@ -303,11 +356,13 @@ serve(async (req) => {
     }
 
     const totalDuration = Date.now() - startTime;
-    console.log(`[permitwizard-preflight] complete. status=${newFilingStatus} allSucceeded=${allSucceeded} anyFailed=${anyFailed} escalation=${hasEscalation} hardStop=${hasHardStop} duration=${totalDuration}ms`);
+    console.log(`[permitwizard-preflight] complete. municipality=${municipalityKey} status=${newFilingStatus} allSucceeded=${allSucceeded} anyFailed=${anyFailed} escalation=${hasEscalation} hardStop=${hasHardStop} duration=${totalDuration}ms`);
 
     return new Response(
       JSON.stringify({
         filing_id: filingId,
+        municipality_key: municipalityKey,
+        municipality_display_name: municipalityConfig?.display_name ?? municipalityKey,
         filing_status: newFilingStatus,
         all_agents_succeeded: allSucceeded,
         has_escalation: hasEscalation,

@@ -28,7 +28,16 @@ import {
   Activity,
   ChevronRight,
   Plus,
+  Filter,
+  Globe,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
@@ -37,6 +46,16 @@ import { toast } from "sonner";
 import { FilingReviewPanel } from "@/components/permit-wizard/FilingReviewPanel";
 import { StartFilingDialog } from "@/components/permit-wizard/StartFilingDialog";
 import { AgentRunDetail } from "@/components/permit-wizard/AgentRunDetail";
+
+interface Municipality {
+  id: string;
+  municipality_key: string;
+  display_name: string;
+  short_name: string;
+  state: string;
+  portal_type: string;
+  is_active: boolean;
+}
 
 interface Filing {
   id: string;
@@ -53,6 +72,8 @@ interface Filing {
   estimated_fee?: number;
   application_id?: string;
   confirmation_number?: string;
+  municipality?: string | null;
+  credential_id?: string | null;
   approval_package?: Record<string, unknown> | null;
   approval_decision?: string | null;
   approved_by?: string | null;
@@ -184,6 +205,8 @@ export default function PermitWizardFiling() {
   const [selectedAgentRun, setSelectedAgentRun] = useState<AgentRun | null>(null);
   const [agentDetailOpen, setAgentDetailOpen] = useState(false);
   const [screenshots, setScreenshots] = useState<Array<{ id: string; filing_id: string; agent_name: string; step_name: string; screenshot_url: string; field_audit?: Record<string, unknown> | null; created_at: string }>>([]);
+  const [municipalities, setMunicipalities] = useState<Municipality[]>([]);
+  const [municipalityFilter, setMunicipalityFilter] = useState<string>("__all__");
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
 
@@ -192,6 +215,31 @@ export default function PermitWizardFiling() {
       navigate("/auth");
     }
   }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    supabase
+      .from("municipality_configs")
+      .select("id, municipality_key, display_name, short_name, state, portal_type, is_active")
+      .eq("is_active", true)
+      .order("display_name", { ascending: true })
+      .then(({ data }) => setMunicipalities(data || []));
+  }, []);
+
+  const getMunicipalityInfo = useCallback((key: string | null | undefined) => {
+    if (!key) return null;
+    return municipalities.find((m) => m.municipality_key === key) || null;
+  }, [municipalities]);
+
+  const PORTAL_TYPE_LABELS: Record<string, string> = {
+    accela: "Accela",
+    momentum_liferay: "Momentum",
+    aspnet_webforms: "ASP.NET",
+    energov: "EnerGov",
+  };
+
+  const filteredFilings = municipalityFilter === "__all__"
+    ? filings
+    : filings.filter((f) => f.municipality === municipalityFilter);
 
   const fetchFilings = useCallback(async () => {
     if (!user) return;
@@ -325,10 +373,10 @@ export default function PermitWizardFiling() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
               <Rocket className="h-6 w-6" />
-              PermitWizard Filing
+              Permit Filing
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              9-agent autonomous permit filing pipeline
+              Multi-municipality 9-agent autonomous filing pipeline
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -381,6 +429,27 @@ export default function PermitWizardFiling() {
           </div>
         )}
 
+        {selectedProjectId && !loading && filings.length > 0 && municipalities.length > 0 && (
+          <div className="mb-4">
+            <Select value={municipalityFilter} onValueChange={setMunicipalityFilter}>
+              <SelectTrigger className="w-[260px]" data-testid="select-municipality-filter">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <SelectValue placeholder="Filter by municipality" />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Municipalities</SelectItem>
+                {municipalities.map((m) => (
+                  <SelectItem key={m.municipality_key} value={m.municipality_key}>
+                    {m.short_name} ({m.state})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         {selectedProjectId && !loading && filings.length === 0 && (
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
@@ -408,9 +477,10 @@ export default function PermitWizardFiling() {
               </h3>
               <ScrollArea className="max-h-[calc(100vh-220px)]">
                 <div className="space-y-2 pr-2">
-                  {filings.map((filing) => {
+                  {filteredFilings.map((filing) => {
                     const statusCfg = FILING_STATUS_CONFIG[filing.filing_status] || { label: filing.filing_status, className: "" };
                     const isSelected = selectedFiling?.id === filing.id;
+                    const muniInfo = getMunicipalityInfo(filing.municipality);
                     return (
                       <Card
                         key={filing.id}
@@ -425,6 +495,17 @@ export default function PermitWizardFiling() {
                             </Badge>
                             <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                           </div>
+                          {muniInfo && (
+                            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                              <Badge variant="outline" className="text-xs" data-testid={`badge-filing-municipality-${filing.id}`}>
+                                <Globe className="h-3 w-3 mr-1" />
+                                {muniInfo.short_name} ({muniInfo.state})
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {PORTAL_TYPE_LABELS[muniInfo.portal_type] || muniInfo.portal_type}
+                              </span>
+                            </div>
+                          )}
                           <p className="text-sm font-medium truncate" data-testid={`text-filing-address-${filing.id}`}>
                             {filing.property_address || "No address"}
                           </p>
@@ -440,6 +521,11 @@ export default function PermitWizardFiling() {
                       </Card>
                     );
                   })}
+                  {filteredFilings.length === 0 && filings.length > 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-filtered-filings">
+                      No filings match the selected municipality filter.
+                    </p>
+                  )}
                 </div>
               </ScrollArea>
             </div>
@@ -467,6 +553,10 @@ export default function PermitWizardFiling() {
                       </div>
                       <CardDescription>
                         {selectedFiling.property_address || "Filing"} — {FILING_STATUS_CONFIG[selectedFiling.filing_status]?.label || selectedFiling.filing_status}
+                        {(() => {
+                          const muni = getMunicipalityInfo(selectedFiling.municipality);
+                          return muni ? ` — ${muni.short_name} (${PORTAL_TYPE_LABELS[muni.portal_type] || muni.portal_type})` : "";
+                        })()}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>

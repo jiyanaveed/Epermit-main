@@ -26,6 +26,34 @@ interface FilingRecord {
   application_id: string | null;
   confirmation_number: string | null;
   approval_package: Record<string, unknown> | null;
+  municipality: string | null;
+  credential_id: string | null;
+}
+
+interface MunicipalityConfig {
+  id: string;
+  municipality_key: string;
+  display_name: string;
+  short_name: string;
+  state: string;
+  county: string | null;
+  portal_type: string;
+  portal_base_url: string;
+  login_url: string | null;
+  property_data_source: string | null;
+  license_validation_source: string | null;
+  permit_types: unknown;
+  agent_config: Record<string, unknown>;
+  is_active: boolean;
+}
+
+interface PortalConfig {
+  portal_type: string;
+  portal_base_url: string;
+  login_url: string | null;
+  municipality_key: string;
+  display_name: string;
+  agent_config: Record<string, unknown>;
 }
 
 interface AgentRunRecord {
@@ -49,6 +77,43 @@ interface ExecutionCheckpoint {
   monitor_started: boolean;
   last_error: string | null;
   reauth_attempts: number;
+}
+
+const DEFAULT_PORTAL_CONFIG: PortalConfig = {
+  portal_type: "accela",
+  portal_base_url: "https://permitwizard.dcra.dc.gov",
+  login_url: "https://login.dc.gov",
+  municipality_key: "dc_dob",
+  display_name: "DC Department of Buildings",
+  agent_config: {
+    sso_type: "access_dc",
+    agency_short: "DC DOB",
+  },
+};
+
+function getLoginEndpoint(portalConfig: PortalConfig): string {
+  return "/api/filing/login";
+}
+
+function getFileEndpoint(portalConfig: PortalConfig): string {
+  return "/api/filing/file";
+}
+
+function getSubmitEndpoint(portalConfig: PortalConfig): string {
+  return "/api/filing/submit";
+}
+
+function getLogoutEndpoint(portalConfig: PortalConfig): string {
+  return "/api/filing/logout";
+}
+
+function getReauthEndpoint(portalConfig: PortalConfig): string {
+  return "/api/filing/reauth";
+}
+
+function useLegacyEndpoints(portalConfig: PortalConfig): boolean {
+  return portalConfig.municipality_key === "dc_dob" &&
+    portalConfig.portal_type === "accela";
 }
 
 async function createAgentRun(
@@ -191,24 +256,62 @@ async function callEdgeFunction(
   }
 }
 
+async function loadMunicipalityConfig(
+  supabase: ReturnType<typeof createClient>,
+  municipalityKey: string,
+): Promise<MunicipalityConfig | null> {
+  const { data, error } = await supabase
+    .from("municipality_configs")
+    .select("*")
+    .eq("municipality_key", municipalityKey)
+    .eq("is_active", true)
+    .single();
+
+  if (error || !data) {
+    console.warn(`[permitwizard-execute] Municipality config not found for key: ${municipalityKey}`);
+    return null;
+  }
+
+  return data as MunicipalityConfig;
+}
+
+function buildPortalConfig(municipalityConfig: MunicipalityConfig): PortalConfig {
+  return {
+    portal_type: municipalityConfig.portal_type,
+    portal_base_url: municipalityConfig.portal_base_url,
+    login_url: municipalityConfig.login_url,
+    municipality_key: municipalityConfig.municipality_key,
+    display_name: municipalityConfig.display_name,
+    agent_config: municipalityConfig.agent_config || {},
+  };
+}
+
 async function executeAuthentication(
   supabase: ReturnType<typeof createClient>,
   filing: FilingRecord,
   checkpoint: ExecutionCheckpoint,
+  portalConfig: PortalConfig,
 ): Promise<{ success: boolean; sessionToken: string | null; error: string | null; requiresHuman: boolean }> {
   const startedAt = new Date().toISOString();
 
-  const { data: credentials } = await supabase
+  let credentialQuery = supabase
     .from("portal_credentials")
-    .select("id, portal_username, portal_password")
-    .eq("user_id", filing.user_id)
-    .limit(1)
-    .maybeSingle();
+    .select("id, portal_username, portal_password");
+
+  if (filing.credential_id) {
+    credentialQuery = credentialQuery.eq("id", filing.credential_id);
+  } else {
+    credentialQuery = credentialQuery.eq("user_id", filing.user_id).limit(1);
+  }
+
+  const { data: credentials } = await credentialQuery.maybeSingle();
 
   const inputData: Record<string, unknown> = {
     filing_id: filing.id,
     has_credentials: !!credentials,
     credential_id: credentials?.id || null,
+    municipality_key: portalConfig.municipality_key,
+    portal_type: portalConfig.portal_type,
   };
 
   const runId = await createAgentRun(supabase, {
@@ -240,9 +343,18 @@ async function executeAuthentication(
     username: credentials.portal_username,
     password: credentials.portal_password,
     userId: filing.user_id,
+    portal_type: portalConfig.portal_type,
+    portal_config: {
+      baseUrl: portalConfig.portal_base_url,
+      loginUrl: portalConfig.login_url,
+      ssoType: portalConfig.agent_config.sso_type || null,
+      municipalityKey: portalConfig.municipality_key,
+    },
   };
 
-  const loginRes = await callScraperService("/api/permitwizard/login", loginBody);
+  const isLegacy = useLegacyEndpoints(portalConfig);
+  const loginEndpoint = isLegacy ? "/api/permitwizard/login" : getLoginEndpoint(portalConfig);
+  const loginRes = await callScraperService(loginEndpoint, loginBody);
 
   if (!loginRes.ok) {
     const isCaptcha = loginRes.data.error === "captcha_detected";
@@ -274,6 +386,8 @@ async function executeAuthentication(
         session_token_prefix: sessionToken ? sessionToken.substring(0, 8) + "..." : null,
         expires_at: loginRes.data.expiresAt,
         portal_url: loginRes.data.portalUrl,
+        portal_type: portalConfig.portal_type,
+        municipality_key: portalConfig.municipality_key,
       },
       completed_at: new Date().toISOString(),
     });
@@ -286,6 +400,7 @@ async function executeFormFiling(
   supabase: ReturnType<typeof createClient>,
   filing: FilingRecord,
   sessionToken: string,
+  portalConfig: PortalConfig,
 ): Promise<{ success: boolean; error: string | null; requiresReauth: boolean; data: Record<string, unknown> | null }> {
   const startedAt = new Date().toISOString();
 
@@ -325,6 +440,8 @@ async function executeFormFiling(
     permit_type: filing.permit_type,
     professionals_count: (professionals || []).length,
     documents_count: (documents || []).length,
+    portal_type: portalConfig.portal_type,
+    municipality_key: portalConfig.municipality_key,
   };
 
   const runId = await createAgentRun(supabase, {
@@ -339,10 +456,18 @@ async function executeFormFiling(
     completed_at: null,
   });
 
-  const fileRes = await callScraperService("/api/permitwizard/file", {
+  const isLegacy = useLegacyEndpoints(portalConfig);
+  const fileEndpoint = isLegacy ? "/api/permitwizard/file" : getFileEndpoint(portalConfig);
+  const fileRes = await callScraperService(fileEndpoint, {
     sessionToken,
     filingId: filing.id,
     filingData,
+    portal_type: portalConfig.portal_type,
+    portal_config: {
+      baseUrl: portalConfig.portal_base_url,
+      municipalityKey: portalConfig.municipality_key,
+      agentConfig: portalConfig.agent_config,
+    },
   }, 180_000);
 
   if (!fileRes.ok || !(fileRes.data.success as boolean)) {
@@ -375,6 +500,7 @@ async function executeFormFiling(
           ? (fileRes.data.screenshots as unknown[]).length
           : 0,
         stopped_before_submit: fileRes.data.stopped_before_submit,
+        portal_type: portalConfig.portal_type,
       },
       completed_at: new Date().toISOString(),
     });
@@ -387,6 +513,7 @@ async function executeSubmission(
   supabase: ReturnType<typeof createClient>,
   filing: FilingRecord,
   sessionToken: string,
+  portalConfig: PortalConfig,
 ): Promise<{ success: boolean; error: string | null; requiresReauth: boolean; data: Record<string, unknown> | null }> {
   const startedAt = new Date().toISOString();
 
@@ -403,17 +530,29 @@ async function executeSubmission(
     agent_name: "submission_finalization",
     layer: 2,
     status: "running",
-    input_data: { filing_id: filing.id },
+    input_data: {
+      filing_id: filing.id,
+      portal_type: portalConfig.portal_type,
+      municipality_key: portalConfig.municipality_key,
+    },
     output_data: null,
     error_message: null,
     started_at: startedAt,
     completed_at: null,
   });
 
-  const submitRes = await callScraperService("/api/permitwizard/submit", {
+  const isLegacy = useLegacyEndpoints(portalConfig);
+  const submitEndpoint = isLegacy ? "/api/permitwizard/submit" : getSubmitEndpoint(portalConfig);
+  const submitRes = await callScraperService(submitEndpoint, {
     sessionToken,
     filingId: filing.id,
     filingData,
+    portal_type: portalConfig.portal_type,
+    portal_config: {
+      baseUrl: portalConfig.portal_base_url,
+      municipalityKey: portalConfig.municipality_key,
+      agentConfig: portalConfig.agent_config,
+    },
   }, 120_000);
 
   if (!submitRes.ok || !(submitRes.data.success as boolean)) {
@@ -444,6 +583,7 @@ async function executeSubmission(
         confirmation_number: submitRes.data.confirmation_number,
         confirmation_message: submitRes.data.confirmation_message,
         submitted_at: submitRes.data.submitted_at,
+        portal_type: portalConfig.portal_type,
       },
       completed_at: new Date().toISOString(),
     });
@@ -457,6 +597,7 @@ async function executeStatusMonitor(
   agentHeaders: Record<string, string>,
   supabase: ReturnType<typeof createClient>,
   filing: FilingRecord,
+  portalConfig: PortalConfig,
 ): Promise<{ success: boolean; error: string | null; data: Record<string, unknown> | null }> {
   const startedAt = new Date().toISOString();
 
@@ -469,6 +610,8 @@ async function executeStatusMonitor(
       filing_id: filing.id,
       application_id: filing.application_id,
       confirmation_number: filing.confirmation_number,
+      municipality_key: portalConfig.municipality_key,
+      portal_type: portalConfig.portal_type,
     },
     output_data: null,
     error_message: null,
@@ -479,6 +622,7 @@ async function executeStatusMonitor(
   const monitorRes = await callEdgeFunction(supabaseUrl, "permit-status-monitor", agentHeaders, {
     filing_id: filing.id,
     project_id: filing.project_id,
+    municipality_key: portalConfig.municipality_key,
   });
 
   if (!monitorRes.ok) {
@@ -591,6 +735,22 @@ serve(async (req) => {
       );
     }
 
+    let portalConfig: PortalConfig = DEFAULT_PORTAL_CONFIG;
+
+    if (filing.municipality) {
+      console.log(`[permitwizard-execute] Loading municipality config for: ${filing.municipality}`);
+      const muniConfig = await loadMunicipalityConfig(adminSupabase, filing.municipality);
+
+      if (muniConfig) {
+        portalConfig = buildPortalConfig(muniConfig);
+        console.log(`[permitwizard-execute] Using portal_type=${portalConfig.portal_type} for ${portalConfig.display_name}`);
+      } else {
+        console.warn(`[permitwizard-execute] Municipality config not found for '${filing.municipality}', falling back to DC defaults`);
+      }
+    } else {
+      console.log("[permitwizard-execute] No municipality set on filing, using DC defaults");
+    }
+
     await updateFilingStatus(adminSupabase, filingId, "filing");
 
     const agentHeaders: Record<string, string> = {
@@ -620,15 +780,17 @@ serve(async (req) => {
     };
 
     if (shouldRunStep("authentication")) {
-      console.log("[permitwizard-execute] Step 1: Authentication (Agent 06)");
+      console.log(`[permitwizard-execute] Step 1: Authentication (Agent 06) — portal_type=${portalConfig.portal_type}`);
       checkpoint.current_step = "authentication";
 
-      const authResult = await executeAuthentication(adminSupabase, filing as FilingRecord, checkpoint);
+      const authResult = await executeAuthentication(adminSupabase, filing as FilingRecord, checkpoint, portalConfig);
       executionLog.push({
         step: "authentication",
         success: authResult.success,
         error: authResult.error,
         requires_human: authResult.requiresHuman,
+        portal_type: portalConfig.portal_type,
+        municipality_key: portalConfig.municipality_key,
       });
 
       if (!authResult.success) {
@@ -649,6 +811,8 @@ serve(async (req) => {
               current_step: "authentication",
               error: authResult.error,
               requires_human_intervention: true,
+              portal_type: portalConfig.portal_type,
+              municipality_key: portalConfig.municipality_key,
               execution_log: executionLog,
               duration_ms: Date.now() - startTime,
             }),
@@ -664,6 +828,8 @@ serve(async (req) => {
             status: "failed",
             current_step: "authentication",
             error: authResult.error,
+            portal_type: portalConfig.portal_type,
+            municipality_key: portalConfig.municipality_key,
             execution_log: executionLog,
             duration_ms: Date.now() - startTime,
           }),
@@ -677,23 +843,31 @@ serve(async (req) => {
     }
 
     if (shouldRunStep("form_filing") && checkpoint.session_token) {
-      console.log("[permitwizard-execute] Step 2: Form Filing (Agent 07)");
+      console.log(`[permitwizard-execute] Step 2: Form Filing (Agent 07) — portal_type=${portalConfig.portal_type}`);
       checkpoint.current_step = "form_filing";
 
-      let formResult = await executeFormFiling(adminSupabase, filing as FilingRecord, checkpoint.session_token);
+      let formResult = await executeFormFiling(adminSupabase, filing as FilingRecord, checkpoint.session_token, portalConfig);
 
       if (!formResult.success && formResult.requiresReauth && checkpoint.reauth_attempts < MAX_REAUTH_ATTEMPTS) {
         console.log("[permitwizard-execute] Session expired during form filing — attempting re-auth");
         checkpoint.reauth_attempts++;
 
-        const reauthRes = await callScraperService("/api/permitwizard/reauth", {
+        const isLegacy = useLegacyEndpoints(portalConfig);
+        const reauthEndpoint = isLegacy ? "/api/permitwizard/reauth" : getReauthEndpoint(portalConfig);
+        const reauthRes = await callScraperService(reauthEndpoint, {
           sessionToken: checkpoint.session_token,
+          portal_type: portalConfig.portal_type,
+          portal_config: {
+            baseUrl: portalConfig.portal_base_url,
+            loginUrl: portalConfig.login_url,
+            municipalityKey: portalConfig.municipality_key,
+          },
         });
 
         if (reauthRes.ok && reauthRes.data.success) {
           checkpoint.session_token = reauthRes.data.sessionToken as string;
           console.log("[permitwizard-execute] Re-authentication successful — retrying form filing");
-          formResult = await executeFormFiling(adminSupabase, filing as FilingRecord, checkpoint.session_token!);
+          formResult = await executeFormFiling(adminSupabase, filing as FilingRecord, checkpoint.session_token!, portalConfig);
         } else {
           console.log("[permitwizard-execute] Re-authentication failed");
           formResult = {
@@ -710,6 +884,7 @@ serve(async (req) => {
         success: formResult.success,
         error: formResult.error,
         reauth_attempts: checkpoint.reauth_attempts,
+        portal_type: portalConfig.portal_type,
       });
 
       if (!formResult.success) {
@@ -732,6 +907,8 @@ serve(async (req) => {
             error: formResult.error,
             can_retry: true,
             resume_from: "form_filing",
+            portal_type: portalConfig.portal_type,
+            municipality_key: portalConfig.municipality_key,
             execution_log: executionLog,
             duration_ms: Date.now() - startTime,
           }),
@@ -744,23 +921,31 @@ serve(async (req) => {
     }
 
     if (shouldRunStep("submission") && checkpoint.session_token) {
-      console.log("[permitwizard-execute] Step 3: Submission Finalization (Agent 08)");
+      console.log(`[permitwizard-execute] Step 3: Submission Finalization (Agent 08) — portal_type=${portalConfig.portal_type}`);
       checkpoint.current_step = "submission";
 
-      let submitResult = await executeSubmission(adminSupabase, filing as FilingRecord, checkpoint.session_token);
+      let submitResult = await executeSubmission(adminSupabase, filing as FilingRecord, checkpoint.session_token, portalConfig);
 
       if (!submitResult.success && submitResult.requiresReauth && checkpoint.reauth_attempts < MAX_REAUTH_ATTEMPTS) {
         console.log("[permitwizard-execute] Session expired during submission — attempting re-auth");
         checkpoint.reauth_attempts++;
 
-        const reauthRes = await callScraperService("/api/permitwizard/reauth", {
+        const isLegacy = useLegacyEndpoints(portalConfig);
+        const reauthEndpoint = isLegacy ? "/api/permitwizard/reauth" : getReauthEndpoint(portalConfig);
+        const reauthRes = await callScraperService(reauthEndpoint, {
           sessionToken: checkpoint.session_token,
+          portal_type: portalConfig.portal_type,
+          portal_config: {
+            baseUrl: portalConfig.portal_base_url,
+            loginUrl: portalConfig.login_url,
+            municipalityKey: portalConfig.municipality_key,
+          },
         });
 
         if (reauthRes.ok && reauthRes.data.success) {
           checkpoint.session_token = reauthRes.data.sessionToken as string;
           console.log("[permitwizard-execute] Re-authentication successful — retrying submission");
-          submitResult = await executeSubmission(adminSupabase, filing as FilingRecord, checkpoint.session_token!);
+          submitResult = await executeSubmission(adminSupabase, filing as FilingRecord, checkpoint.session_token!, portalConfig);
         } else {
           submitResult = {
             success: false,
@@ -777,6 +962,7 @@ serve(async (req) => {
         error: submitResult.error,
         application_id: submitResult.data?.application_id,
         confirmation_number: submitResult.data?.confirmation_number,
+        portal_type: portalConfig.portal_type,
       });
 
       if (!submitResult.success) {
@@ -799,6 +985,8 @@ serve(async (req) => {
             error: submitResult.error,
             can_retry: true,
             resume_from: "submission",
+            portal_type: portalConfig.portal_type,
+            municipality_key: portalConfig.municipality_key,
             execution_log: executionLog,
             duration_ms: Date.now() - startTime,
           }),
@@ -824,8 +1012,11 @@ serve(async (req) => {
 
     if (checkpoint.session_token) {
       console.log("[permitwizard-execute] Cleaning up session...");
-      await callScraperService("/api/permitwizard/logout", {
+      const isLegacy = useLegacyEndpoints(portalConfig);
+      const logoutEndpoint = isLegacy ? "/api/permitwizard/logout" : getLogoutEndpoint(portalConfig);
+      await callScraperService(logoutEndpoint, {
         sessionToken: checkpoint.session_token,
+        portal_type: portalConfig.portal_type,
       }).catch(() => {});
     }
 
@@ -839,12 +1030,14 @@ serve(async (req) => {
         agentHeaders,
         adminSupabase,
         filing as FilingRecord,
+        portalConfig,
       );
 
       executionLog.push({
         step: "status_monitor",
         success: monitorResult.success,
         error: monitorResult.error,
+        portal_type: portalConfig.portal_type,
       });
 
       if (!monitorResult.success) {
@@ -867,6 +1060,8 @@ serve(async (req) => {
         monitor_started: checkpoint.monitor_started,
         application_id: (filing as FilingRecord).application_id,
         confirmation_number: (filing as FilingRecord).confirmation_number,
+        portal_type: portalConfig.portal_type,
+        municipality_key: portalConfig.municipality_key,
         execution_log: executionLog,
         duration_ms: totalDuration,
       }),

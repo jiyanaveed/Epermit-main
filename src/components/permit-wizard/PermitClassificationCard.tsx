@@ -30,6 +30,7 @@ interface PermitClassificationData {
 interface PermitClassificationCardProps {
   data: PermitClassificationData | null | undefined;
   error?: string | null;
+  agencyName?: string | null;
 }
 
 function formatCurrency(amount: number): string {
@@ -40,7 +41,7 @@ function formatReviewTrack(track: string): string {
   return track === 'walk_through' ? 'Digital Walk-Through' : track === 'projectdox' ? 'ProjectDox' : track;
 }
 
-export function PermitClassificationCard({ data, error }: PermitClassificationCardProps) {
+export function PermitClassificationCard({ data, error, agencyName }: PermitClassificationCardProps) {
   if (error) {
     return (
       <Card>
@@ -92,6 +93,9 @@ export function PermitClassificationCard({ data, error }: PermitClassificationCa
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {agencyName && (
+          <p className="text-xs text-muted-foreground" data-testid="text-classification-agency">{agencyName}</p>
+        )}
         <div className="space-y-3">
           <div className="flex items-center gap-2" data-testid="text-permit-type">
             <Building className="h-4 w-4 text-muted-foreground shrink-0" />

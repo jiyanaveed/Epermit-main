@@ -5,10 +5,47 @@ const ACCESS_DC_SSO_URL = "https://login.dc.gov";
 const SESSION_TTL_MS = 25 * 60 * 1000;
 const MAX_LOGIN_TIMEOUT = 60000;
 
+const ACCELA_PORTAL_CONFIGS = {
+  dc_dob: {
+    baseUrl: "https://permitwizard.dcra.dc.gov",
+    loginUrl: null,
+    ssoType: "access_dc",
+  },
+  fairfax_county_va: {
+    baseUrl: "https://plus.fairfaxcounty.gov/CitizenAccess",
+    loginUrl: "https://plus.fairfaxcounty.gov/CitizenAccess/Account/Login.aspx",
+    ssoType: "direct",
+  },
+  baltimore_city_md: {
+    baseUrl: "https://aca-prod.accela.com/BALTIMORE",
+    loginUrl: "https://aca-prod.accela.com/BALTIMORE/Account/Login.aspx",
+    ssoType: "direct",
+  },
+  howard_county_md: {
+    baseUrl: "https://dilp.howardcountymd.gov/CitizenAccess",
+    loginUrl: "https://dilp.howardcountymd.gov/CitizenAccess/Account/Login.aspx",
+    ssoType: "direct",
+  },
+  arlington_county_va: {
+    baseUrl: "https://aca-prod.accela.com/ARLINGTONCO",
+    loginUrl: "https://aca-prod.accela.com/ARLINGTONCO/Account/Login.aspx",
+    ssoType: "direct",
+  },
+  anne_arundel_county_md: {
+    baseUrl: "https://aca-prod.accela.com/aaco",
+    loginUrl: "https://aca-prod.accela.com/aaco/Account/Login.aspx",
+    ssoType: "direct",
+  },
+};
+
 const activeSessions = {};
 
 function generateSessionToken() {
   return crypto.randomBytes(32).toString("hex");
+}
+
+function buildSessionKey(portalType, baseUrl) {
+  return `${portalType}:${baseUrl}`;
 }
 
 function detectCaptcha(page) {
@@ -37,7 +74,7 @@ async function handleAccessDCSSOLogin(page, username, password) {
     url.includes("signin") ||
     url.includes("login")
   ) {
-    console.log("  [PermitWizard Auth] Detected SSO login page");
+    console.log("  [Accela Auth] Detected SSO login page");
 
     const hasCaptcha = await detectCaptcha(page);
     if (hasCaptcha) {
@@ -86,7 +123,7 @@ async function handleAccessDCSSOLogin(page, username, password) {
     }
 
     await usernameField.fill(username);
-    console.log("  [PermitWizard Auth] Filled username");
+    console.log("  [Accela Auth] Filled username");
 
     const passwordSelectors = [
       'input[name="credentials.passcode"]',
@@ -108,7 +145,7 @@ async function handleAccessDCSSOLogin(page, username, password) {
     }
 
     if (!passwordField) {
-      console.log("  [PermitWizard Auth] Two-step login flow detected");
+      console.log("  [Accela Auth] Two-step login flow detected");
       const nextBtn = await page.$(
         'input[type="submit"], button[type="submit"]'
       );
@@ -142,7 +179,7 @@ async function handleAccessDCSSOLogin(page, username, password) {
     }
 
     await passwordField.fill(password);
-    console.log("  [PermitWizard Auth] Filled password");
+    console.log("  [Accela Auth] Filled password");
 
     const hasCaptchaBeforeSubmit = await detectCaptcha(page);
     if (hasCaptchaBeforeSubmit) {
@@ -161,7 +198,7 @@ async function handleAccessDCSSOLogin(page, username, password) {
     await page.waitForTimeout(3000);
 
     const postLoginUrl = page.url();
-    console.log(`  [PermitWizard Auth] After login URL: ${postLoginUrl}`);
+    console.log(`  [Accela Auth] After login URL: ${postLoginUrl}`);
 
     if (
       postLoginUrl.includes("SSOLanding") ||
@@ -185,8 +222,117 @@ async function handleAccessDCSSOLogin(page, username, password) {
   return { success: true };
 }
 
-async function permitWizardLogin(browser, username, password) {
-  console.log("  [PermitWizard Auth] Starting Access DC SSO login flow");
+async function handleStandardAccelaLogin(page, username, password) {
+  console.log("  [Accela Auth] Performing standard Accela direct login");
+
+  const hasCaptcha = await detectCaptcha(page);
+  if (hasCaptcha) {
+    return { success: false, error: "captcha_detected" };
+  }
+
+  const userIdSelectors = [
+    "#ctl00_PlaceHolderMain_LoginBox_txtUserId",
+    'input[name*="txtUserId"]',
+    'input[name*="UserName"]',
+    'input[id*="UserId" i]',
+    'input[id*="UserName" i]',
+    'input[type="text"]',
+  ];
+
+  let userIdField = null;
+  for (const sel of userIdSelectors) {
+    userIdField = await page.$(sel);
+    if (userIdField && (await userIdField.isVisible().catch(() => false))) {
+      break;
+    }
+    userIdField = null;
+  }
+
+  if (!userIdField) {
+    return { success: false, error: "cannot_find_username_field" };
+  }
+
+  await userIdField.fill(username);
+  console.log("  [Accela Auth] Filled user ID");
+
+  const passwordSelectors = [
+    "#ctl00_PlaceHolderMain_LoginBox_txtPassword",
+    'input[name*="txtPassword"]',
+    'input[name*="Password"]',
+    'input[id*="Password" i]',
+    'input[type="password"]',
+  ];
+
+  let passwordField = null;
+  for (const sel of passwordSelectors) {
+    passwordField = await page.$(sel);
+    if (
+      passwordField &&
+      (await passwordField.isVisible().catch(() => false))
+    ) {
+      break;
+    }
+    passwordField = null;
+  }
+
+  if (!passwordField) {
+    return { success: false, error: "cannot_find_password_field" };
+  }
+
+  await passwordField.fill(password);
+  console.log("  [Accela Auth] Filled password");
+
+  const hasCaptchaBeforeSubmit = await detectCaptcha(page);
+  if (hasCaptchaBeforeSubmit) {
+    return { success: false, error: "captcha_detected" };
+  }
+
+  const loginBtnSelectors = [
+    "#ctl00_PlaceHolderMain_LoginBox_btnLogin",
+    'input[name*="btnLogin"]',
+    'a[id*="btnLogin"]',
+    'input[type="submit"][value*="Sign In" i]',
+    'input[type="submit"][value*="Login" i]',
+    'button[type="submit"]',
+    'input[type="submit"]',
+  ];
+
+  let loginBtn = null;
+  for (const sel of loginBtnSelectors) {
+    loginBtn = await page.$(sel);
+    if (loginBtn && (await loginBtn.isVisible().catch(() => false))) {
+      break;
+    }
+    loginBtn = null;
+  }
+
+  if (loginBtn) {
+    await loginBtn.click();
+  } else {
+    await page.keyboard.press("Enter");
+  }
+
+  await page
+    .waitForNavigation({ waitUntil: "networkidle", timeout: 30000 })
+    .catch(() => {});
+  await page.waitForTimeout(3000);
+
+  const postLoginUrl = page.url();
+  console.log(`  [Accela Auth] After login URL: ${postLoginUrl}`);
+
+  return { success: true };
+}
+
+async function accelaLogin(browser, credentials, config) {
+  const portalConfig = config || ACCELA_PORTAL_CONFIGS.dc_dob;
+  const baseUrl = portalConfig.baseUrl;
+  const ssoType = portalConfig.ssoType || "direct";
+  const loginUrl = portalConfig.loginUrl || baseUrl;
+  const username = credentials.username;
+  const password = credentials.password;
+
+  const label = portalConfig.label || baseUrl;
+  console.log(`  [Accela Auth] Starting login for ${label} (ssoType: ${ssoType})`);
 
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
@@ -198,15 +344,16 @@ async function permitWizardLogin(browser, username, password) {
   const page = await context.newPage();
 
   try {
-    console.log(`  [PermitWizard Auth] Navigating to ${PERMITWIZARD_URL}`);
-    await page.goto(PERMITWIZARD_URL, {
+    const targetUrl = ssoType === "access_dc" ? baseUrl : loginUrl;
+    console.log(`  [Accela Auth] Navigating to ${targetUrl}`);
+    await page.goto(targetUrl, {
       waitUntil: "networkidle",
       timeout: MAX_LOGIN_TIMEOUT,
     });
     await page.waitForTimeout(3000);
 
     let currentUrl = page.url();
-    console.log(`  [PermitWizard Auth] Landed on: ${currentUrl}`);
+    console.log(`  [Accela Auth] Landed on: ${currentUrl}`);
 
     if (currentUrl.includes("SessionEnded")) {
       const loginLink = await page.$(
@@ -222,12 +369,18 @@ async function permitWizardLogin(browser, username, password) {
       }
     }
 
-    const ssoResult = await handleAccessDCSSOLogin(page, username, password);
+    let loginResult;
 
-    if (!ssoResult.success) {
-      if (ssoResult.error === "captcha_detected") {
+    if (ssoType === "access_dc") {
+      loginResult = await handleAccessDCSSOLogin(page, username, password);
+    } else {
+      loginResult = await handleStandardAccelaLogin(page, username, password);
+    }
+
+    if (!loginResult.success) {
+      if (loginResult.error === "captcha_detected") {
         console.log(
-          "  [PermitWizard Auth] CAPTCHA detected — pausing for human intervention"
+          "  [Accela Auth] CAPTCHA detected — pausing for human intervention"
         );
         await context.close();
         return {
@@ -241,23 +394,24 @@ async function permitWizardLogin(browser, username, password) {
       await context.close();
       return {
         success: false,
-        error: ssoResult.error,
-        message: `Login failed: ${ssoResult.error}`,
+        error: loginResult.error,
+        message: `Login failed: ${loginResult.error}`,
       };
     }
 
     const finalUrl = page.url();
-    console.log(`  [PermitWizard Auth] Final URL: ${finalUrl}`);
+    console.log(`  [Accela Auth] Final URL: ${finalUrl}`);
 
-    const isLoginPage =
+    const isStillLoginPage =
       finalUrl.includes("b2clogin") ||
       finalUrl.includes("SessionEnded") ||
       finalUrl.includes("okta.com/signin") ||
-      finalUrl.includes("login.dc.gov");
+      finalUrl.includes("login.dc.gov") ||
+      finalUrl.includes("Account/Login.aspx");
 
-    if (isLoginPage) {
+    if (isStillLoginPage) {
       const errorEl = await page.$(
-        ".error-message, [id*='Error'], [id*='error'], .alert-danger, .ACA_Error"
+        ".error-message, [id*='Error'], [id*='error'], .alert-danger, .ACA_Error, .ACA_SmLabel_FontSize_Error"
       );
       const errorText = errorEl
         ? await errorEl.textContent().catch(() => "")
@@ -276,6 +430,7 @@ async function permitWizardLogin(browser, username, password) {
 
     const sessionToken = generateSessionToken();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+    const sessionKey = buildSessionKey("accela", baseUrl);
 
     activeSessions[sessionToken] = {
       context,
@@ -285,11 +440,15 @@ async function permitWizardLogin(browser, username, password) {
       createdAt: new Date(),
       expiresAt,
       lastActivity: new Date(),
-      portalUrl: PERMITWIZARD_URL,
+      portalUrl: baseUrl,
+      portalType: "accela",
+      ssoType,
+      sessionKey,
+      portalConfig,
     };
 
     console.log(
-      `  [PermitWizard Auth] Login successful — session ${sessionToken.substring(0, 8)}... expires at ${expiresAt.toISOString()}`
+      `  [Accela Auth] Login successful — session ${sessionToken.substring(0, 8)}... key=${sessionKey} expires at ${expiresAt.toISOString()}`
     );
 
     return {
@@ -297,9 +456,11 @@ async function permitWizardLogin(browser, username, password) {
       sessionToken,
       expiresAt: expiresAt.toISOString(),
       portalUrl: finalUrl,
+      portalType: "accela",
+      sessionKey,
     };
   } catch (err) {
-    console.error(`  [PermitWizard Auth] Login error: ${err.message}`);
+    console.error(`  [Accela Auth] Login error: ${err.message}`);
     await context.close().catch(() => {});
     return {
       success: false,
@@ -309,13 +470,24 @@ async function permitWizardLogin(browser, username, password) {
   }
 }
 
+async function permitWizardLogin(browser, username, password) {
+  return accelaLogin(
+    browser,
+    { username, password },
+    {
+      ...ACCELA_PORTAL_CONFIGS.dc_dob,
+      label: "DC DOB (PermitWizard)",
+    }
+  );
+}
+
 function getSession(sessionToken) {
   const session = activeSessions[sessionToken];
   if (!session) return null;
 
   if (new Date() > session.expiresAt) {
     console.log(
-      `  [PermitWizard Auth] Session ${sessionToken.substring(0, 8)}... expired`
+      `  [Accela Auth] Session ${sessionToken.substring(0, 8)}... expired`
     );
     destroySession(sessionToken);
     return null;
@@ -323,6 +495,10 @@ function getSession(sessionToken) {
 
   session.lastActivity = new Date();
   return session;
+}
+
+function getAccelaSession(sessionToken) {
+  return getSession(sessionToken);
 }
 
 async function checkSessionAlive(sessionToken) {
@@ -334,13 +510,13 @@ async function checkSessionAlive(sessionToken) {
 
     const isSessionExpired =
       currentUrl.includes("SessionEnded") ||
-      currentUrl.includes("Login") ||
+      currentUrl.includes("Account/Login.aspx") ||
       currentUrl.includes("b2clogin") ||
       currentUrl.includes("login.dc.gov");
 
     if (isSessionExpired) {
       console.log(
-        `  [PermitWizard Auth] Portal session expired (URL: ${currentUrl})`
+        `  [Accela Auth] Portal session expired (URL: ${currentUrl})`
       );
       return { alive: false, reason: "portal_session_expired" };
     }
@@ -349,10 +525,12 @@ async function checkSessionAlive(sessionToken) {
       alive: true,
       expiresAt: session.expiresAt.toISOString(),
       lastActivity: session.lastActivity.toISOString(),
+      portalType: session.portalType,
+      sessionKey: session.sessionKey,
     };
   } catch (err) {
     console.log(
-      `  [PermitWizard Auth] Session check failed: ${err.message}`
+      `  [Accela Auth] Session check failed: ${err.message}`
     );
     return { alive: false, reason: "session_check_error" };
   }
@@ -363,17 +541,23 @@ async function reAuthenticate(browser, sessionToken) {
   if (!session) return null;
 
   console.log(
-    `  [PermitWizard Auth] Re-authenticating session ${sessionToken.substring(0, 8)}...`
+    `  [Accela Auth] Re-authenticating session ${sessionToken.substring(0, 8)}...`
   );
+
+  const { username, password, portalConfig } = session;
 
   await destroySession(sessionToken);
 
-  const result = await permitWizardLogin(
+  const result = await accelaLogin(
     browser,
-    session.username,
-    session.password
+    { username, password },
+    portalConfig
   );
   return result;
+}
+
+async function accelaLogout(sessionToken) {
+  return destroySession(sessionToken);
 }
 
 async function destroySession(sessionToken) {
@@ -383,12 +567,12 @@ async function destroySession(sessionToken) {
       await session.context.close();
     } catch (err) {
       console.log(
-        `  [PermitWizard Auth] Error closing context: ${err.message}`
+        `  [Accela Auth] Error closing context: ${err.message}`
       );
     }
     delete activeSessions[sessionToken];
     console.log(
-      `  [PermitWizard Auth] Session ${sessionToken.substring(0, 8)}... destroyed`
+      `  [Accela Auth] Session ${sessionToken.substring(0, 8)}... destroyed`
     );
   }
 }
@@ -402,7 +586,7 @@ setInterval(() => {
   for (const [token, session] of Object.entries(activeSessions)) {
     if (now > session.expiresAt) {
       console.log(
-        `  [PermitWizard Auth] Cleaning up expired session ${token.substring(0, 8)}...`
+        `  [Accela Auth] Cleaning up expired session ${token.substring(0, 8)}...`
       );
       destroySession(token);
     }
@@ -418,4 +602,8 @@ module.exports = {
   getActiveSessionCount,
   PERMITWIZARD_URL,
   SESSION_TTL_MS,
+  accelaLogin,
+  accelaLogout,
+  getAccelaSession,
+  ACCELA_PORTAL_CONFIGS,
 };
