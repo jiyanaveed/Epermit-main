@@ -73,6 +73,28 @@ Preferred communication style: Simple, everyday language.
 - **Database:** `response_package_drafts` table + `review_round` column on `parsed_comments` (migration `20260307000002`).
 - **Integration:** Export dialog shows draft list with status badges, resume/new round buttons, "Modified" badges on changed comments.
 
+### DC DOB PermitWizard Agentic AI Filing System
+- **Purpose:** Autonomous permit filing through DC DOB PermitWizard portal (Accela-based) on behalf of Commun-ET clients.
+- **Architecture:** 9 specialized agents across 3 layers with 1 mandatory human decision gate.
+- **Layer 1 — Pre-Flight Agents:**
+  - Agent 01 `property-intelligence-agent`: Scrapes DC Scout for zoning, historic, flood, active permits, SWOs.
+  - Agent 02 `license-validation-agent`: Validates DLCP professional licenses; hard stop on invalid expediter registration.
+  - Agent 03 `document-preparation-agent`: Validates documents (format, size, naming), generates EIF, creates upload manifest.
+  - Agent 04 `permit-classifier-agent`: Uses GPT-4o to classify permit type, predict review track, estimate fees.
+  - Orchestrator `permitwizard-preflight`: Runs agents 01→(02,03 parallel)→04, assembles approval package.
+- **Layer 1.5 — Human Gate:**
+  - Agent 05 `FilingReviewPanel` (frontend): Displays full approval package for expediter review. Mandatory approve/reject. On approval triggers execution pipeline.
+- **Layer 2 — Execution Agents:**
+  - Agent 06 `permitwizard-auth.js`: Access DC SSO login, session management, CAPTCHA detection, re-auth.
+  - Agent 07 `permitwizard-filer.js`: Navigates PermitWizard wizard steps, fills forms, uploads documents, takes screenshots. Stops at Review & Submit.
+  - Agent 08 `permitwizard-submit.js`: Validates review page, clicks submit, captures confirmation.
+  - Orchestrator `permitwizard-execute`: Runs auth→filing→submission→monitoring with checkpoint/resume.
+- **Layer 3 — Post-Submission:**
+  - Agent 09 `permit-status-monitor`: Monitors via DC Scout, detects ProjectDox assignment, sends notifications.
+- **Database:** `permit_filings`, `agent_runs`, `property_intelligence`, `license_validations`, `filing_documents`, `filing_screenshots`, `filing_professionals` (migration `20260307000003`).
+- **Frontend:** `PermitWizardFiling.tsx` dashboard page with visual 9-agent pipeline, `StartFilingDialog.tsx` for new filings, `AgentRunDetail.tsx` for detailed agent logs.
+- **Scraper endpoints:** `/api/permitwizard/login`, `/api/permitwizard/file`, `/api/permitwizard/submit`, `/api/permitwizard/session/:token`, `/api/permitwizard/reauth`, `/api/permitwizard/logout`.
+
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).
 

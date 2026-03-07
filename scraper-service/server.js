@@ -9,6 +9,16 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const { accelaLogin, scrapeAccelaRecord } = require("./accela-scraper");
+const {
+  permitWizardLogin,
+  getSession: getPWSession,
+  checkSessionAlive,
+  reAuthenticate,
+  destroySession: destroyPWSession,
+  getActiveSessionCount,
+} = require("./permitwizard-auth");
+const { permitWizardFile, WIZARD_STEPS } = require("./permitwizard-filer");
+const { permitWizardSubmit } = require("./permitwizard-submit");
 
 function detectPortalType(url) {
   if (!url) return "projectdox";
@@ -1307,6 +1317,467 @@ async function extractPageData(page) {
   });
   return data;
 }
+
+// ─── PermitWizard Authentication Endpoints ──────────────────────────────────
+app.post("/api/permitwizard/login", async (req, res) => {
+  const { credentialId, username, password, userId } = req.body;
+
+  let loginUsername = username;
+  let loginPassword = password;
+
+  if (credentialId && (!loginUsername || !loginPassword)) {
+    try {
+      const { data: cred, error } = await supabase
+        .from("portal_credentials")
+        .select("username, encrypted_password, portal_url")
+        .eq("id", credentialId)
+        .single();
+
+      if (error || !cred) {
+        return res.status(404).json({
+          success: false,
+          error: "credential_not_found",
+          message: "Portal credential not found",
+        });
+      }
+
+      loginUsername = cred.username;
+      loginPassword = cred.encrypted_password;
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        error: "credential_lookup_failed",
+        message: err.message,
+      });
+    }
+  }
+
+  if (!loginUsername || !loginPassword) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_credentials",
+      message: "Username and password are required (or provide credentialId)",
+    });
+  }
+
+  let browser;
+  try {
+    console.log("🔐 [PermitWizard] Launching browser for SSO login...");
+    browser = await chromium.launch({ headless: true });
+
+    const result = await permitWizardLogin(browser, loginUsername, loginPassword);
+
+    if (!result.success) {
+      await browser.close().catch(() => {});
+
+      if (result.error === "captcha_detected") {
+        return res.status(403).json(result);
+      }
+      if (result.doNotRetry) {
+        return res.status(401).json(result);
+      }
+      return res.status(500).json(result);
+    }
+
+    const responseData = {
+      success: true,
+      sessionToken: result.sessionToken,
+      expiresAt: result.expiresAt,
+      portalUrl: result.portalUrl,
+      message: "PermitWizard SSO login successful",
+    };
+
+    if (userId) {
+      console.log(`  [PermitWizard] Login by user: ${userId}`);
+    }
+
+    res.json(responseData);
+  } catch (err) {
+    console.error("❌ [PermitWizard] Login error:", err.message);
+    if (browser) await browser.close().catch(() => {});
+    res.status(500).json({
+      success: false,
+      error: "login_error",
+      message: err.message,
+    });
+  }
+});
+
+app.get("/api/permitwizard/session/:sessionToken", async (req, res) => {
+  const { sessionToken } = req.params;
+  const status = await checkSessionAlive(sessionToken);
+  res.json(status);
+});
+
+app.post("/api/permitwizard/reauth", async (req, res) => {
+  const { sessionToken } = req.body;
+
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_session_token",
+      message: "sessionToken is required",
+    });
+  }
+
+  const session = getPWSession(sessionToken);
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: "session_not_found",
+      message: "Session not found or expired. Perform a fresh login.",
+    });
+  }
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const result = await reAuthenticate(browser, sessionToken);
+
+    if (!result || !result.success) {
+      await browser.close().catch(() => {});
+      return res.status(401).json(result || {
+        success: false,
+        error: "reauth_failed",
+        message: "Re-authentication failed",
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    if (browser) await browser.close().catch(() => {});
+    res.status(500).json({
+      success: false,
+      error: "reauth_error",
+      message: err.message,
+    });
+  }
+});
+
+app.post("/api/permitwizard/logout", async (req, res) => {
+  const { sessionToken } = req.body;
+
+  if (!sessionToken) {
+    return res.status(400).json({ error: "sessionToken is required" });
+  }
+
+  await destroyPWSession(sessionToken);
+  res.json({ success: true, message: "PermitWizard session destroyed" });
+});
+
+app.get("/api/permitwizard/sessions/count", (req, res) => {
+  res.json({ activeSessions: getActiveSessionCount() });
+});
+
+app.get("/api/permitwizard/wizard-steps", (req, res) => {
+  res.json({ steps: WIZARD_STEPS });
+});
+
+app.post("/api/permitwizard/file", async (req, res) => {
+  const { sessionToken, filingId, filingData } = req.body;
+
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_session_token",
+      message: "sessionToken is required",
+    });
+  }
+
+  if (!filingId && (!filingData || !filingData.filing_id)) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_filing_id",
+      message: "filingId or filingData.filing_id is required",
+    });
+  }
+
+  const session = getPWSession(sessionToken);
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: "session_not_found",
+      message: "PermitWizard session not found or expired. Perform a fresh login.",
+    });
+  }
+
+  const resolvedFilingId = filingId || filingData.filing_id;
+  let resolvedFilingData = filingData || {};
+  resolvedFilingData.filing_id = resolvedFilingId;
+
+  if (!resolvedFilingData.property_address && resolvedFilingId) {
+    try {
+      const { data: filing, error } = await supabase
+        .from("permit_filings")
+        .select("*")
+        .eq("id", resolvedFilingId)
+        .single();
+
+      if (!error && filing) {
+        resolvedFilingData = {
+          ...resolvedFilingData,
+          filing_id: filing.id,
+          property_address: resolvedFilingData.property_address || filing.property_address,
+          permit_type: resolvedFilingData.permit_type || filing.permit_type,
+          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          review_track: resolvedFilingData.review_track || filing.review_track,
+          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value: resolvedFilingData.construction_value || filing.construction_value,
+          property_type: resolvedFilingData.property_type || filing.property_type,
+          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+        };
+
+        if (!resolvedFilingData.professionals) {
+          const { data: profs } = await supabase
+            .from("filing_professionals")
+            .select("*")
+            .eq("filing_id", resolvedFilingId);
+          if (profs && profs.length > 0) {
+            resolvedFilingData.professionals = profs;
+          }
+        }
+
+        if (!resolvedFilingData.documents) {
+          const { data: docs } = await supabase
+            .from("filing_documents")
+            .select("*")
+            .eq("filing_id", resolvedFilingId)
+            .order("upload_order", { ascending: true });
+          if (docs && docs.length > 0) {
+            resolvedFilingData.documents = docs;
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`  [PermitWizard File] Could not load filing data: ${err.message}`);
+    }
+  }
+
+  if (!resolvedFilingData.property_address) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_address",
+      message: "property_address is required in filingData or in the permit_filings record",
+    });
+  }
+
+  try {
+    await supabase.from("agent_runs").insert({
+      filing_id: resolvedFilingId,
+      agent_name: "form_filing",
+      layer: 2,
+      status: "running",
+      input_data: {
+        property_address: resolvedFilingData.property_address,
+        permit_type: resolvedFilingData.permit_type,
+        documents_count: (resolvedFilingData.documents || []).length,
+        professionals_count: (resolvedFilingData.professionals || []).length,
+      },
+      started_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.log(`  [PermitWizard File] Could not create agent_run: ${err.message}`);
+  }
+
+  console.log(`\n🏛️ [PermitWizard File] Starting form filing for: ${resolvedFilingData.property_address}`);
+
+  res.json({
+    success: true,
+    message: "Form filing started",
+    filing_id: resolvedFilingId,
+    steps: WIZARD_STEPS,
+  });
+
+  permitWizardFile(sessionToken, resolvedFilingData, supabase)
+    .then(async (result) => {
+      console.log(`  [PermitWizard File] Filing complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: result.success ? "completed" : "failed",
+            output_data: {
+              steps: result.steps,
+              stopped_before_submit: result.stopped_before_submit,
+              field_audits: result.field_audits,
+              screenshots_count: (result.screenshots || []).length,
+            },
+            error_message: result.success ? null : result.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "form_filing")
+          .eq("status", "running");
+      } catch (err) {
+        console.log(`  [PermitWizard File] Could not update agent_run: ${err.message}`);
+      }
+    })
+    .catch(async (err) => {
+      console.error(`  [PermitWizard File] Fatal error: ${err.message}`);
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: "failed",
+            error_message: err.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "form_filing")
+          .eq("status", "running");
+      } catch (_) {}
+    });
+});
+
+// ─── PermitWizard Submission Finalization (Agent 08) ─────────────────────────
+app.post("/api/permitwizard/submit", async (req, res) => {
+  const { sessionToken, filingId, filingData } = req.body;
+
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_session_token",
+      message: "sessionToken is required",
+    });
+  }
+
+  if (!filingId && (!filingData || !filingData.filing_id)) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_filing_id",
+      message: "filingId or filingData.filing_id is required",
+    });
+  }
+
+  const session = getPWSession(sessionToken);
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: "session_not_found",
+      message: "PermitWizard session not found or expired. Perform a fresh login.",
+    });
+  }
+
+  const resolvedFilingId = filingId || filingData.filing_id;
+  let resolvedFilingData = filingData || {};
+  resolvedFilingData.filing_id = resolvedFilingId;
+
+  if (!resolvedFilingData.property_address && resolvedFilingId) {
+    try {
+      const { data: filing, error } = await supabase
+        .from("permit_filings")
+        .select("*")
+        .eq("id", resolvedFilingId)
+        .single();
+
+      if (!error && filing) {
+        resolvedFilingData = {
+          ...resolvedFilingData,
+          filing_id: filing.id,
+          property_address: resolvedFilingData.property_address || filing.property_address,
+          permit_type: resolvedFilingData.permit_type || filing.permit_type,
+          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          review_track: resolvedFilingData.review_track || filing.review_track,
+          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value: resolvedFilingData.construction_value || filing.construction_value,
+          property_type: resolvedFilingData.property_type || filing.property_type,
+          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+        };
+      }
+    } catch (err) {
+      console.log(`  [PermitWizard Submit] Could not load filing data: ${err.message}`);
+    }
+  }
+
+  try {
+    await supabase.from("agent_runs").insert({
+      filing_id: resolvedFilingId,
+      agent_name: "submission_finalization",
+      layer: 2,
+      status: "running",
+      input_data: {
+        filing_id: resolvedFilingId,
+        property_address: resolvedFilingData.property_address,
+        permit_type: resolvedFilingData.permit_type,
+      },
+      started_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.log(`  [PermitWizard Submit] Could not create agent_run: ${err.message}`);
+  }
+
+  console.log(`\n🏛️ [PermitWizard Submit] Starting submission finalization for filing: ${resolvedFilingId}`);
+
+  res.json({
+    success: true,
+    message: "Submission finalization started",
+    filing_id: resolvedFilingId,
+  });
+
+  permitWizardSubmit(sessionToken, resolvedFilingData, supabase)
+    .then(async (result) => {
+      console.log(`  [PermitWizard Submit] Finalization complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: result.success ? "completed" : "failed",
+            output_data: {
+              application_id: result.application_id || null,
+              confirmation_number: result.confirmation_number || null,
+              confirmation_message: result.confirmation_message || null,
+              validation: result.validation || null,
+              screenshots_count: (result.screenshots || []).length,
+              submitted_at: result.submitted_at || null,
+            },
+            error_message: result.success ? null : result.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "submission_finalization")
+          .eq("status", "running");
+      } catch (err) {
+        console.log(`  [PermitWizard Submit] Could not update agent_run: ${err.message}`);
+      }
+
+      if (!result.success && result.error !== "validation_failed") {
+        try {
+          await supabase
+            .from("permit_filings")
+            .update({
+              filing_status: "failed",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", resolvedFilingId);
+        } catch (_) {}
+      }
+    })
+    .catch(async (err) => {
+      console.error(`  [PermitWizard Submit] Fatal error: ${err.message}`);
+      try {
+        await supabase
+          .from("agent_runs")
+          .update({
+            status: "failed",
+            error_message: err.message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("filing_id", resolvedFilingId)
+          .eq("agent_name", "submission_finalization")
+          .eq("status", "running");
+
+        await supabase
+          .from("permit_filings")
+          .update({
+            filing_status: "failed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", resolvedFilingId);
+      } catch (_) {}
+    });
+});
 
 // ─── Data / Export / Cleanup ─────────────────────────────────────────────────
 app.get("/api/data/:sessionId", (req, res) => {

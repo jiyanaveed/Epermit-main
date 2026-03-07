@@ -49,6 +49,7 @@ import CommentReview from "./pages/CommentReview";
 import ResponseMatrix from "./pages/ResponseMatrix";
 import PortalDataViewer from "./pages/PortalDataViewer";
 import ClassifiedComments from "./pages/ClassifiedComments";
+import PermitWizardFiling from "./pages/PermitWizardFiling";
 
 const queryClient = new QueryClient();
 
@@ -301,6 +302,14 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <PortalDataViewer />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/permit-wizard-filing"
+                  element={
+                    <ProtectedRoute>
+                      <PermitWizardFiling />
                     </ProtectedRoute>
                   }
                 />

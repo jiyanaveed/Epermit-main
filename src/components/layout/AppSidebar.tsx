@@ -26,7 +26,8 @@ import {
   StarOff,
   X,
   Table2,
-  KeyRound
+  KeyRound,
+  Rocket
 } from "lucide-react";
 import { useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
@@ -181,6 +182,12 @@ const adminNavigation = [
     title: "Projects", 
     href: "/projects", 
     icon: Building2 
+  },
+  { 
+    title: "PermitWizard Filing", 
+    href: "/permit-wizard-filing", 
+    icon: Rocket,
+    description: "Autonomous 9-agent filing pipeline"
   },
   { 
     title: "Portal Data", 
