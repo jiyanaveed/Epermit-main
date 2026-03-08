@@ -120,6 +120,13 @@ const intakeNavigation = [
     description: "Check code compliance",
     requiresAuth: true
   },
+  {
+    title: "Permit Filing",
+    href: "/permit-wizard-filing",
+    icon: Rocket,
+    description: "Multi-municipality filing pipeline",
+    requiresAuth: true
+  },
 ];
 
 const responseNavigation = [
@@ -128,16 +135,6 @@ const responseNavigation = [
     href: "/response-matrix",
     icon: Table2,
     description: "Manage comment responses",
-    requiresAuth: true
-  },
-];
-
-const filingNavigation = [
-  {
-    title: "Permit Filing",
-    href: "/permit-wizard-filing",
-    icon: Rocket,
-    description: "Multi-municipality filing pipeline",
     requiresAuth: true
   },
 ];
@@ -762,28 +759,6 @@ export function AppSidebar() {
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {responseNavigation.map((item) => (
-                      <NavItem key={item.href} item={item} />
-                    ))}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </CollapsibleContent>
-            </Collapsible>
-          </SidebarGroup>
-        )}
-
-        {user && (
-          <SidebarGroup>
-            <Collapsible defaultOpen className="group/collapsible">
-              <SidebarGroupLabel asChild>
-                <CollapsibleTrigger className="flex w-full items-center justify-between">
-                  Permit Filing
-                  <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
-                </CollapsibleTrigger>
-              </SidebarGroupLabel>
-              <CollapsibleContent>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {filingNavigation.map((item) => (
                       <NavItem key={item.href} item={item} />
                     ))}
                   </SidebarMenu>
