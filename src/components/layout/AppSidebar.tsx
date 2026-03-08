@@ -93,7 +93,14 @@ const mainNavigation = [
 
 const intakeNavigation = [
   {
-    title: "Portal Intake",
+    title: "Permit Filing",
+    href: "/permit-wizard-filing",
+    icon: Rocket,
+    description: "Multi-municipality filing pipeline",
+    requiresAuth: true
+  },
+  {
+    title: "Portal Harvest",
     href: "/portal-data",
     icon: Globe,
     description: "Gather (Scrape) & View Portal Data",
@@ -118,13 +125,6 @@ const intakeNavigation = [
     href: "/code-compliance",
     icon: Shield,
     description: "Check code compliance",
-    requiresAuth: true
-  },
-  {
-    title: "Permit Filing",
-    href: "/permit-wizard-filing",
-    icon: Rocket,
-    description: "Multi-municipality filing pipeline",
     requiresAuth: true
   },
 ];

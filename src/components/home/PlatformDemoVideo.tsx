@@ -58,9 +58,9 @@ const videoSegments: VideoSegment[] = [
   },
   {
     src: demoPortalIntake,
-    title: 'Portal Intake & Data Scraping',
+    title: 'Portal Harvest & Data Scraping',
     description: 'Automatically scrape permit data, review comments, and project status from Accela, Momentum, EnerGov, and ASP.NET portals.',
-    narration: 'Our portal intake engine scrapes permit data from four different portal platforms — Accela, Momentum, EnerGov, and A S P dot NET. Review comments, project status, and attachments are extracted and organized automatically.',
+    narration: 'Our Portal Harvest engine scrapes permit data from four different portal platforms — Accela, Momentum, EnerGov, and A S P dot NET. Review comments, project status, and attachments are extracted and organized automatically.',
   },
   {
     src: demoMultiFiling,

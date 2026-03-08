@@ -18,7 +18,7 @@ import { Bot, Search, FileText, MapPin, Lock, Play, Globe, Rocket, Table2 } from
 const demos = [
   {
     id: "portal-intake",
-    title: "Portal Intake",
+    title: "Portal Harvest",
     description: "Gather (Scrape) & view portal data from 10 DMV jurisdictions across 4 platforms",
     icon: <Globe className="h-6 w-6" />,
   },
@@ -171,7 +171,7 @@ const Demos = () => {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-3">
                       <Globe className="h-6 w-6 text-accent" />
-                      Portal Intake — Gather (Scrape) & View Portal Data
+                      Portal Harvest — Gather (Scrape) & View Portal Data
                     </CardTitle>
                     <CardDescription>
                       Automatically scrape permit data, review comments, and project status from 10 DMV jurisdiction portals across 4 platform types

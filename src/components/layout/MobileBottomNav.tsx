@@ -7,7 +7,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 const navItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: FolderKanban, label: "Projects", path: "/projects" },
-  { icon: Globe, label: "Portal Intake", path: "/portal-data" },
+  { icon: Globe, label: "Portal Harvest", path: "/portal-data" },
   { icon: Rocket, label: "Filing", path: "/permit-wizard-filing" },
 ];
 
