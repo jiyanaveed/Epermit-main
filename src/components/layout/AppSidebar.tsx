@@ -28,7 +28,8 @@ import {
   KeyRound,
   Rocket,
   FileSearch,
-  Tags
+  Tags,
+  Layers
 } from "lucide-react";
 import { useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
@@ -152,12 +153,6 @@ const trackingNavigation = [
     icon: FileText,
     requiresAuth: true
   },
-  {
-    title: "Analytics",
-    href: "/analytics",
-    icon: BarChart3,
-    requiresAuth: true
-  },
 ];
 
 const intelligenceNavigation = [
@@ -185,15 +180,27 @@ const intelligenceNavigation = [
     icon: BookOpen,
     description: "Reference materials"
   },
+];
+
+const resourcesNavigation = [
   {
     title: "ROI Calculator",
     href: "/roi-calculator",
     icon: Calculator,
     description: "Calculate savings"
   },
-];
-
-const resourcesNavigation = [
+  {
+    title: "Tool Consolidation",
+    href: "/consolidation-calculator",
+    icon: Layers,
+    description: "Compare tool costs"
+  },
+  {
+    title: "Analytics & Reporting",
+    href: "/analytics",
+    icon: BarChart3,
+    description: "Reports & metrics"
+  },
   {
     title: "Demos",
     href: "/demos",

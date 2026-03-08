@@ -170,7 +170,24 @@ export function JurisdictionComparisonTool() {
     }
 
     if (searchQuery.length >= 2) {
-      query = query.ilike('name', `%${searchQuery}%`);
+      const SEARCH_ALIASES: Record<string, string[]> = {
+        'district of columbia': ['Washington', 'DC'],
+        'washington dc': ['Washington', 'DC'],
+        'washington d.c.': ['Washington', 'DC'],
+        'd.c.': ['Washington', 'DC'],
+      };
+
+      const lowerQuery = searchQuery.toLowerCase();
+      const aliasTerms = Object.entries(SEARCH_ALIASES)
+        .filter(([key]) => key.includes(lowerQuery) || lowerQuery.includes(key))
+        .flatMap(([, terms]) => terms);
+
+      const allTerms = [searchQuery, ...aliasTerms];
+      const orConditions = allTerms
+        .map(term => `name.ilike.%${term}%,city.ilike.%${term}%,county.ilike.%${term}%,state.ilike.%${term}%`)
+        .join(',');
+
+      query = query.or(orConditions);
     }
 
     const { data, error } = await query;
