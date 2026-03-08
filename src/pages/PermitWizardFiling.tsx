@@ -57,6 +57,19 @@ interface Municipality {
   is_active: boolean;
 }
 
+const FALLBACK_MUNICIPALITIES: Municipality[] = [
+  { id: 'fb-1', municipality_key: 'dc_dob', display_name: 'DC Department of Buildings', short_name: 'DC DOB', state: 'DC', portal_type: 'accela', is_active: true },
+  { id: 'fb-2', municipality_key: 'fairfax_county_va', display_name: 'Fairfax County Land Development Services', short_name: 'Fairfax Co.', state: 'VA', portal_type: 'accela', is_active: true },
+  { id: 'fb-3', municipality_key: 'baltimore_city_md', display_name: 'Baltimore City Housing & Community Development', short_name: 'Baltimore City', state: 'MD', portal_type: 'accela', is_active: true },
+  { id: 'fb-4', municipality_key: 'howard_county_md', display_name: 'Howard County Inspections, Licenses & Permits', short_name: 'Howard Co.', state: 'MD', portal_type: 'accela', is_active: true },
+  { id: 'fb-5', municipality_key: 'arlington_county_va', display_name: 'Arlington County Inspection Services', short_name: 'Arlington Co.', state: 'VA', portal_type: 'accela', is_active: true },
+  { id: 'fb-6', municipality_key: 'anne_arundel_county_md', display_name: 'Anne Arundel County Inspections & Permits', short_name: 'Anne Arundel Co.', state: 'MD', portal_type: 'accela', is_active: true },
+  { id: 'fb-7', municipality_key: 'pg_county_md', display_name: "Prince George's County DPIE", short_name: 'PG County', state: 'MD', portal_type: 'momentum_liferay', is_active: true },
+  { id: 'fb-8', municipality_key: 'montgomery_county_md', display_name: 'Montgomery County DPS', short_name: 'Montgomery Co.', state: 'MD', portal_type: 'aspnet_webforms', is_active: true },
+  { id: 'fb-9', municipality_key: 'alexandria_va', display_name: 'City of Alexandria Code Administration', short_name: 'Alexandria', state: 'VA', portal_type: 'energov', is_active: true },
+  { id: 'fb-10', municipality_key: 'loudoun_county_va', display_name: 'Loudoun County Building & Development', short_name: 'Loudoun Co.', state: 'VA', portal_type: 'energov', is_active: true },
+];
+
 interface Filing {
   id: string;
   project_id?: string;
@@ -222,7 +235,13 @@ export default function PermitWizardFiling() {
       .select("id, municipality_key, display_name, short_name, state, portal_type, is_active")
       .eq("is_active", true)
       .order("display_name", { ascending: true })
-      .then(({ data }) => setMunicipalities(data || []));
+      .then(({ data, error }) => {
+        if (error || !data || data.length === 0) {
+          setMunicipalities(FALLBACK_MUNICIPALITIES);
+        } else {
+          setMunicipalities(data);
+        }
+      });
   }, []);
 
   const getMunicipalityInfo = useCallback((key: string | null | undefined) => {

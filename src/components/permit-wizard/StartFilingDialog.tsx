@@ -14,7 +14,9 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -91,12 +93,87 @@ const PROJECT_TYPES_LIST = Object.entries(PROJECT_TYPE_LABELS).map(([value, labe
   label,
 }));
 
-const PROPERTY_TYPES = [
-  { value: 'residential', label: 'Residential' },
-  { value: 'commercial', label: 'Commercial' },
-  { value: 'mixed_use', label: 'Mixed Use' },
-  { value: 'industrial', label: 'Industrial' },
-  { value: 'institutional', label: 'Institutional' },
+const PROPERTY_TYPE_GROUPS = [
+  {
+    group: 'Residential',
+    items: [
+      { value: 'single_family', label: 'Single-Family Dwelling' },
+      { value: 'two_family_duplex', label: 'Two-Family / Duplex' },
+      { value: 'townhouse_rowhouse', label: 'Townhouse / Rowhouse' },
+      { value: 'multi_family_small', label: 'Multi-Family (3–4 Units)' },
+      { value: 'multi_family_large', label: 'Multi-Family (5+ Units)' },
+      { value: 'adu', label: 'Accessory Dwelling Unit (ADU)' },
+      { value: 'mixed_use_residential', label: 'Mixed-Use Residential' },
+    ],
+  },
+  {
+    group: 'Commercial',
+    items: [
+      { value: 'office', label: 'Office' },
+      { value: 'retail_store', label: 'Retail / Store' },
+      { value: 'restaurant_food_service', label: 'Restaurant / Food Service' },
+      { value: 'hotel_motel', label: 'Hotel / Motel' },
+      { value: 'shopping_center', label: 'Shopping Center / Mall' },
+      { value: 'medical_dental_office', label: 'Medical / Dental Office' },
+      { value: 'bank_financial', label: 'Bank / Financial Institution' },
+      { value: 'gas_station_auto', label: 'Gas Station / Auto Service' },
+      { value: 'parking_garage', label: 'Parking Garage / Lot' },
+    ],
+  },
+  {
+    group: 'Industrial',
+    items: [
+      { value: 'warehouse', label: 'Warehouse / Distribution' },
+      { value: 'manufacturing', label: 'Manufacturing / Factory' },
+      { value: 'data_center', label: 'Data Center' },
+      { value: 'self_storage', label: 'Self-Storage Facility' },
+      { value: 'laboratory', label: 'Laboratory / R&D' },
+    ],
+  },
+  {
+    group: 'Institutional',
+    items: [
+      { value: 'school_educational', label: 'School / Educational' },
+      { value: 'hospital_healthcare', label: 'Hospital / Healthcare' },
+      { value: 'church_religious', label: 'Church / Religious' },
+      { value: 'government_public', label: 'Government / Public' },
+      { value: 'library_museum', label: 'Library / Museum' },
+      { value: 'community_center', label: 'Community Center' },
+    ],
+  },
+  {
+    group: 'Assembly & Recreation',
+    items: [
+      { value: 'theater_auditorium', label: 'Theater / Auditorium' },
+      { value: 'sports_recreation', label: 'Sports / Recreation Facility' },
+      { value: 'convention_center', label: 'Convention / Event Center' },
+    ],
+  },
+  {
+    group: 'Infrastructure & Other',
+    items: [
+      { value: 'utility', label: 'Utility / Infrastructure' },
+      { value: 'telecom', label: 'Telecommunications' },
+      { value: 'transportation', label: 'Transportation Facility' },
+      { value: 'vacant_land', label: 'Vacant Land' },
+      { value: 'agricultural', label: 'Agricultural' },
+      { value: 'temporary_structure', label: 'Temporary Structure' },
+      { value: 'other', label: 'Other' },
+    ],
+  },
+];
+
+const FALLBACK_MUNICIPALITIES: MunicipalityConfig[] = [
+  { id: 'fb-1', municipality_key: 'dc_dob', display_name: 'DC Department of Buildings', short_name: 'DC DOB', state: 'DC', county: null, portal_type: 'accela', portal_base_url: 'https://permitwizard.dcra.dc.gov', login_url: 'https://login.dc.gov', is_active: true },
+  { id: 'fb-2', municipality_key: 'fairfax_county_va', display_name: 'Fairfax County Land Development Services', short_name: 'Fairfax Co.', state: 'VA', county: 'Fairfax', portal_type: 'accela', portal_base_url: 'https://plus.fairfaxcounty.gov/CitizenAccess', login_url: null, is_active: true },
+  { id: 'fb-3', municipality_key: 'baltimore_city_md', display_name: 'Baltimore City Housing & Community Development', short_name: 'Baltimore City', state: 'MD', county: null, portal_type: 'accela', portal_base_url: 'https://aca-prod.accela.com/BALTIMORE', login_url: null, is_active: true },
+  { id: 'fb-4', municipality_key: 'howard_county_md', display_name: 'Howard County Inspections, Licenses & Permits', short_name: 'Howard Co.', state: 'MD', county: 'Howard', portal_type: 'accela', portal_base_url: 'https://aca-prod.accela.com/HOWARD', login_url: null, is_active: true },
+  { id: 'fb-5', municipality_key: 'arlington_county_va', display_name: 'Arlington County Inspection Services', short_name: 'Arlington Co.', state: 'VA', county: 'Arlington', portal_type: 'accela', portal_base_url: 'https://aca-prod.accela.com/ARLINGTON', login_url: null, is_active: true },
+  { id: 'fb-6', municipality_key: 'anne_arundel_county_md', display_name: 'Anne Arundel County Inspections & Permits', short_name: 'Anne Arundel Co.', state: 'MD', county: 'Anne Arundel', portal_type: 'accela', portal_base_url: 'https://aca-prod.accela.com/AACOUNTY', login_url: null, is_active: true },
+  { id: 'fb-7', municipality_key: 'pg_county_md', display_name: "Prince George's County DPIE", short_name: 'PG County', state: 'MD', county: "Prince George's", portal_type: 'momentum_liferay', portal_base_url: 'https://permits.mypgc.us', login_url: null, is_active: true },
+  { id: 'fb-8', municipality_key: 'montgomery_county_md', display_name: 'Montgomery County DPS', short_name: 'Montgomery Co.', state: 'MD', county: 'Montgomery', portal_type: 'aspnet_webforms', portal_base_url: 'https://eplans.montgomeryplanning.org', login_url: null, is_active: true },
+  { id: 'fb-9', municipality_key: 'alexandria_va', display_name: 'City of Alexandria Code Administration', short_name: 'Alexandria', state: 'VA', county: null, portal_type: 'energov', portal_base_url: 'https://permits.alexandriava.gov', login_url: null, is_active: true },
+  { id: 'fb-10', municipality_key: 'loudoun_county_va', display_name: 'Loudoun County Building & Development', short_name: 'Loudoun Co.', state: 'VA', county: 'Loudoun', portal_type: 'energov', portal_base_url: 'https://permits.loudoun.gov', login_url: null, is_active: true },
 ];
 
 const LICENSE_TYPES = [
@@ -256,9 +333,10 @@ export function StartFilingDialog({
         .order('display_name', { ascending: true });
 
       if (error) throw error;
-      setMunicipalities(data || []);
+      setMunicipalities(data && data.length > 0 ? data : FALLBACK_MUNICIPALITIES);
     } catch (err) {
-      console.error('Failed to load municipalities:', err);
+      console.error('Failed to load municipalities, using fallback:', err);
+      setMunicipalities(FALLBACK_MUNICIPALITIES);
     } finally {
       setLoadingMunicipalities(false);
     }
@@ -711,11 +789,16 @@ export function StartFilingDialog({
                     <SelectTrigger data-testid="select-property-type">
                       <SelectValue placeholder="Select type" />
                     </SelectTrigger>
-                    <SelectContent>
-                      {PROPERTY_TYPES.map((t) => (
-                        <SelectItem key={t.value} value={t.value}>
-                          {t.label}
-                        </SelectItem>
+                    <SelectContent className="max-h-[300px]">
+                      {PROPERTY_TYPE_GROUPS.map((group) => (
+                        <SelectGroup key={group.group}>
+                          <SelectLabel>{group.group}</SelectLabel>
+                          {group.items.map((t) => (
+                            <SelectItem key={t.value} value={t.value}>
+                              {t.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
                       ))}
                     </SelectContent>
                   </Select>

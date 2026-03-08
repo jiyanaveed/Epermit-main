@@ -1,5 +1,38 @@
 export type ProjectStatus = 'draft' | 'submitted' | 'in_review' | 'corrections' | 'approved';
-export type ProjectType = 'new_construction' | 'renovation' | 'addition' | 'tenant_improvement' | 'demolition' | 'other';
+export type ProjectType =
+  | 'new_construction'
+  | 'renovation'
+  | 'addition'
+  | 'tenant_improvement'
+  | 'demolition'
+  | 'interior_renovation'
+  | 'exterior_renovation'
+  | 'change_of_use'
+  | 'foundation'
+  | 'structural_modification'
+  | 'mep_upgrade'
+  | 'fire_protection'
+  | 'roofing'
+  | 'facade'
+  | 'site_work'
+  | 'excavation'
+  | 'sheeting_shoring'
+  | 'crane_derrick'
+  | 'solar_installation'
+  | 'sign_awning'
+  | 'elevator_conveyance'
+  | 'pool_spa'
+  | 'retaining_wall'
+  | 'deck_porch'
+  | 'fence_gate'
+  | 'accessory_structure'
+  | 'historic_preservation'
+  | 'accessibility_ada'
+  | 'environmental_remediation'
+  | 'right_of_way'
+  | 'grading_sediment'
+  | 'temporary_structure'
+  | 'other';
 
 export interface Project {
   id: string;
@@ -73,6 +106,33 @@ export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   addition: 'Addition',
   tenant_improvement: 'Tenant Improvement',
   demolition: 'Demolition',
+  interior_renovation: 'Interior Renovation',
+  exterior_renovation: 'Exterior Renovation',
+  change_of_use: 'Change of Use / Occupancy',
+  foundation: 'Foundation',
+  structural_modification: 'Structural Modification',
+  mep_upgrade: 'MEP (Mechanical / Electrical / Plumbing)',
+  fire_protection: 'Fire Protection / Suppression',
+  roofing: 'Roofing',
+  facade: 'Facade / Exterior Cladding',
+  site_work: 'Site Work / Grading',
+  excavation: 'Excavation',
+  sheeting_shoring: 'Sheeting & Shoring',
+  crane_derrick: 'Crane / Derrick',
+  solar_installation: 'Solar Installation',
+  sign_awning: 'Sign / Awning / Canopy',
+  elevator_conveyance: 'Elevator / Conveyance',
+  pool_spa: 'Pool / Spa',
+  retaining_wall: 'Retaining Wall',
+  deck_porch: 'Deck / Porch / Patio',
+  fence_gate: 'Fence / Gate',
+  accessory_structure: 'Accessory Structure / Shed',
+  historic_preservation: 'Historic Preservation',
+  accessibility_ada: 'Accessibility / ADA Compliance',
+  environmental_remediation: 'Environmental Remediation',
+  right_of_way: 'Right-of-Way / Public Space',
+  grading_sediment: 'Grading / Sediment Control',
+  temporary_structure: 'Temporary Structure',
   other: 'Other',
 };
 
