@@ -37,6 +37,9 @@ import {
   AlertTriangle,
   X,
   MapPin,
+  Home,
+  Mail,
+  Phone,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -199,9 +202,38 @@ const DOCUMENT_TYPES = [
   { value: 'plan', label: 'Plans / Drawings' },
   { value: 'cost_estimate', label: 'Cost Estimate' },
   { value: 'contract', label: 'Contract' },
+  { value: 'specification', label: 'Specification Sheet' },
+  { value: 'approved_documents', label: 'Approved Documents' },
+  { value: 'menu', label: 'Menus' },
+  { value: 'plat_survey', label: 'Plats / Surveys' },
+  { value: 'geotech_report', label: 'Geotech Report' },
+  { value: 'letter_of_authorization', label: 'Letter of Authorization' },
   { value: 'eif', label: 'Environmental Intake Form (EIF)' },
   { value: 'checklist', label: 'Checklist' },
-  { value: 'specification', label: 'Specification' },
+  { value: 'other', label: 'Other' },
+];
+
+const PERMIT_TYPES = [
+  { value: 'building', label: 'Building Permit' },
+  { value: 'construction', label: 'Construction Permit' },
+  { value: 'electrical', label: 'Electrical Permit' },
+  { value: 'mechanical', label: 'Mechanical Permit' },
+  { value: 'plumbing', label: 'Plumbing Permit' },
+  { value: 'fire_protection', label: 'Fire Protection Permit' },
+  { value: 'demolition', label: 'Demolition Permit' },
+  { value: 'supplemental', label: 'Supplemental Permit' },
+  { value: 'postcard', label: 'Postcard Permit' },
+  { value: 'excavation', label: 'Excavation Permit' },
+  { value: 'crane_derrick', label: 'Crane / Derrick Permit' },
+  { value: 'sheeting_shoring', label: 'Sheeting & Shoring Permit' },
+  { value: 'raze', label: 'Raze Permit' },
+  { value: 'solar', label: 'Solar Permit' },
+  { value: 'grading', label: 'Grading Permit' },
+  { value: 'sediment_control', label: 'Sediment Control Permit' },
+  { value: 'use_occupancy', label: 'Use & Occupancy Permit' },
+  { value: 'right_of_way', label: 'Right-of-Way Permit' },
+  { value: 'sign', label: 'Sign Permit' },
+  { value: 'site_plan', label: 'Site Plan Permit' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -288,6 +320,14 @@ export function StartFilingDialog({
     project?.estimated_value?.toString() || ''
   );
   const [propertyType, setPropertyType] = useState<string>('');
+  const [permitType, setPermitType] = useState<string>('');
+  const [squareFootage, setSquareFootage] = useState<string>(
+    project?.square_footage?.toString() || ''
+  );
+  const [numberOfStories, setNumberOfStories] = useState<string>('');
+  const [ownerName, setOwnerName] = useState('');
+  const [ownerPhone, setOwnerPhone] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>('');
   const [selectedMunicipalityKey, setSelectedMunicipalityKey] = useState<string>('');
 
@@ -305,15 +345,22 @@ export function StartFilingDialog({
         setPropertyAddress(project.address || '');
         setScopeOfWork(project.description || '');
         setConstructionValue(project.estimated_value?.toString() || '');
+        setSquareFootage(project.square_footage?.toString() || '');
       } else {
         setPropertyAddress('');
         setScopeOfWork('');
         setConstructionValue('');
+        setSquareFootage('');
       }
       setNewProjectName('');
       setNewProjectAddress('');
       setNewProjectJurisdiction('');
       setNewProjectType('');
+      setPermitType('');
+      setNumberOfStories('');
+      setOwnerName('');
+      setOwnerPhone('');
+      setOwnerEmail('');
     }
   }, [open, project]);
 
@@ -526,6 +573,12 @@ export function StartFilingDialog({
           scope_of_work: scopeOfWork.trim(),
           construction_value: constructionValue ? parseFloat(constructionValue) : null,
           property_type: propertyType,
+          permit_type: permitType || null,
+          square_footage: squareFootage ? parseFloat(squareFootage) : null,
+          number_of_stories: numberOfStories ? parseInt(numberOfStories) : null,
+          owner_name: ownerName.trim() || null,
+          owner_phone: ownerPhone.trim() || null,
+          owner_email: ownerEmail.trim() || null,
           municipality: selectedMunicipalityKey,
           credential_id: selectedCredentialId || null,
         })
@@ -804,6 +857,24 @@ export function StartFilingDialog({
                   </Select>
                 </div>
                 <div className="space-y-2">
+                  <Label>Permit Type</Label>
+                  <Select value={permitType} onValueChange={setPermitType}>
+                    <SelectTrigger data-testid="select-permit-type">
+                      <SelectValue placeholder="Select permit type" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      {PERMIT_TYPES.map((pt) => (
+                        <SelectItem key={pt.value} value={pt.value}>
+                          {pt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div className="space-y-2">
                   <Label>Construction Value ($)</Label>
                   <Input
                     data-testid="input-construction-value"
@@ -811,6 +882,26 @@ export function StartFilingDialog({
                     value={constructionValue}
                     onChange={(e) => setConstructionValue(e.target.value)}
                     placeholder="150000"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Square Footage</Label>
+                  <Input
+                    data-testid="input-square-footage"
+                    type="number"
+                    value={squareFootage}
+                    onChange={(e) => setSquareFootage(e.target.value)}
+                    placeholder="2500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Number of Stories</Label>
+                  <Input
+                    data-testid="input-number-of-stories"
+                    type="number"
+                    value={numberOfStories}
+                    onChange={(e) => setNumberOfStories(e.target.value)}
+                    placeholder="3"
                   />
                 </div>
               </div>
@@ -824,6 +915,54 @@ export function StartFilingDialog({
                   onChange={(e) => setScopeOfWork(e.target.value)}
                   placeholder="Describe the construction work to be performed..."
                 />
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold flex items-center gap-2">
+                <Home className="h-4 w-4" />
+                Owner Information
+              </h4>
+
+              <div className="space-y-2">
+                <Label>Owner / Applicant Name</Label>
+                <Input
+                  data-testid="input-owner-name"
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  placeholder="Property owner or applicant full name"
+                />
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1">
+                    <Phone className="h-3 w-3" />
+                    Owner Phone
+                  </Label>
+                  <Input
+                    data-testid="input-owner-phone"
+                    type="tel"
+                    value={ownerPhone}
+                    onChange={(e) => setOwnerPhone(e.target.value)}
+                    placeholder="(202) 555-0100"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1">
+                    <Mail className="h-3 w-3" />
+                    Owner Email
+                  </Label>
+                  <Input
+                    data-testid="input-owner-email"
+                    type="email"
+                    value={ownerEmail}
+                    onChange={(e) => setOwnerEmail(e.target.value)}
+                    placeholder="owner@example.com"
+                  />
+                </div>
               </div>
             </div>
 

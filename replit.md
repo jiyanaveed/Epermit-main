@@ -97,8 +97,8 @@ Preferred communication style: Simple, everyday language.
   - Orchestrator `permitwizard-execute`: Routes to correct scraper based on `portal_type` from municipality config.
 - **Layer 3 — Post-Submission:**
   - Agent 09 `permit-status-monitor`: Monitors status per jurisdiction.
-- **Database:** `permit_filings` (+ `municipality`, `credential_id` columns), `agent_runs`, `property_intelligence`, `license_validations`, `filing_documents`, `filing_screenshots`, `filing_professionals`, `municipality_configs` (migrations `20260307000003`, `20260307000004`).
-- **Frontend:** `PermitWizardFiling.tsx` ("Permit Filing" page) with municipality selector/filter, `StartFilingDialog.tsx` with municipality dropdown, `AgentRunDetail.tsx`.
+- **Database:** `permit_filings` (+ `municipality`, `credential_id`, `permit_type`, `square_footage`, `number_of_stories`, `owner_name`, `owner_phone`, `owner_email` columns), `agent_runs`, `property_intelligence`, `license_validations`, `filing_documents` (12 document types: plan, cost_estimate, contract, specification, approved_documents, menu, plat_survey, geotech_report, letter_of_authorization, eif, checklist, other), `filing_screenshots`, `filing_professionals`, `municipality_configs` (migrations `20260307000003`, `20260307000004`, `20260308000002`).
+- **Frontend:** `PermitWizardFiling.tsx` ("Permit Filing" page) with municipality selector/filter, `StartFilingDialog.tsx` with municipality dropdown + permit type selector + owner info + square footage/stories fields, `AgentRunDetail.tsx`.
 - **Scraper endpoints:** Legacy `/api/permitwizard/*` (DC backward compat) + generic `/api/filing/login|file|submit|session|reauth|logout` (multi-portal routing by `portal_type`).
 
 ### Auth & Roles
