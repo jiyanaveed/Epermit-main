@@ -147,27 +147,9 @@ const trackingNavigation = [
     icon: Building2,
     requiresAuth: true
   },
-  {
-    title: "Checklists",
-    href: "/checklist-history",
-    icon: FileText,
-    requiresAuth: true
-  },
 ];
 
 const intelligenceNavigation = [
-  {
-    title: "Jurisdiction Map",
-    href: "/jurisdictions/map",
-    icon: Map,
-    description: "Interactive coverage map"
-  },
-  {
-    title: "Compare Jurisdictions",
-    href: "/jurisdictions/compare",
-    icon: Scale,
-    description: "Side-by-side comparison"
-  },
   {
     title: "Permit Intelligence",
     href: "/permit-intelligence",
@@ -200,6 +182,25 @@ const resourcesNavigation = [
     href: "/analytics",
     icon: BarChart3,
     description: "Reports & metrics"
+  },
+  {
+    title: "Jurisdiction Map",
+    href: "/jurisdictions/map",
+    icon: Map,
+    description: "Interactive coverage map"
+  },
+  {
+    title: "Compare Jurisdictions",
+    href: "/jurisdictions/compare",
+    icon: Scale,
+    description: "Side-by-side comparison"
+  },
+  {
+    title: "Checklists",
+    href: "/checklist-history",
+    icon: FileText,
+    description: "View saved checklists",
+    requiresAuth: true
   },
   {
     title: "Demos",

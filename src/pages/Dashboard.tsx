@@ -21,10 +21,7 @@ import {
   Loader2,
   RefreshCw,
   FolderKanban,
-  Scale,
-  Map,
   Database,
-  ClipboardList,
 } from "lucide-react";
 import { format } from "date-fns";
 import { staggerContainer, staggerItem } from "@/components/animations/variants";
@@ -278,34 +275,6 @@ export default function Dashboard() {
               </Card>
             </motion.div>
             <motion.div variants={staggerItem} className="h-full min-h-[120px]">
-              <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/jurisdictions/compare")}>
-                <CardContent className="flex items-center gap-3 sm:gap-4 p-4 sm:p-6 h-full">
-                  <div className="w-12 h-12 rounded-lg bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
-                    <Scale className="h-6 w-6 text-blue-500" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">Compare Jurisdictions</h3>
-                    <p className="text-sm text-muted-foreground">Fees & SLAs</p>
-                  </div>
-                  <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={staggerItem} className="h-full min-h-[120px]">
-              <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/jurisdictions/map")}>
-                <CardContent className="flex items-center gap-3 sm:gap-4 p-4 sm:p-6 h-full">
-                  <div className="w-12 h-12 rounded-lg bg-teal-500/10 flex items-center justify-center group-hover:bg-teal-500/20 transition-colors">
-                    <Map className="h-6 w-6 text-teal-500" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">Jurisdiction Map</h3>
-                    <p className="text-sm text-muted-foreground">Permit hotspots</p>
-                  </div>
-                  <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={staggerItem} className="h-full min-h-[120px]">
               <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/permit-intelligence")}>
                 <CardContent className="flex items-center gap-3 sm:gap-4 p-4 sm:p-6 h-full">
                   <div className="w-12 h-12 rounded-lg bg-orange-500/10 flex items-center justify-center group-hover:bg-orange-500/20 transition-colors">
@@ -314,20 +283,6 @@ export default function Dashboard() {
                   <div>
                     <h3 className="font-semibold">Permit Intelligence</h3>
                     <p className="text-sm text-muted-foreground">Shovels data</p>
-                  </div>
-                  <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={staggerItem} className="h-full min-h-[120px]">
-              <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/checklist-history")}>
-                <CardContent className="flex items-center gap-3 sm:gap-4 p-4 sm:p-6 h-full">
-                  <div className="w-12 h-12 rounded-lg bg-indigo-500/10 flex items-center justify-center group-hover:bg-indigo-500/20 transition-colors">
-                    <ClipboardList className="h-6 w-6 text-indigo-500" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">Checklist History</h3>
-                    <p className="text-sm text-muted-foreground">View saved checklists</p>
                   </div>
                   <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
                 </CardContent>
