@@ -10,7 +10,6 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import {
   Calculator,
-  TrendingUp,
   Clock,
   Plus,
   Trash2,
@@ -22,7 +21,6 @@ import {
   Loader2,
   RefreshCw,
   FolderKanban,
-  BarChart3,
   Scale,
   Map,
   Database,
@@ -276,48 +274,6 @@ export default function Dashboard() {
                     <p className="text-sm text-muted-foreground">Manage permits</p>
                   </div>
                   <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-accent transition-colors" />
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={staggerItem} className="h-full min-h-[120px]">
-              <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/roi-calculator")}>
-                <CardContent className="flex items-center gap-4 p-6">
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                    <TrendingUp className="h-6 w-6 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">ROI Calculator</h3>
-                    <p className="text-sm text-muted-foreground">Calculate permit savings</p>
-                  </div>
-                  <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={staggerItem} className="h-full min-h-[120px]">
-              <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/consolidation-calculator")}>
-                <CardContent className="flex items-center gap-3 sm:gap-4 p-4 sm:p-6 h-full">
-                  <div className="w-12 h-12 rounded-lg bg-accent/10 flex items-center justify-center group-hover:bg-accent/20 transition-colors">
-                    <Calculator className="h-6 w-6 text-accent" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">Tool Consolidation</h3>
-                    <p className="text-sm text-muted-foreground">Compare tool costs</p>
-                  </div>
-                  <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardContent>
-              </Card>
-            </motion.div>
-            <motion.div variants={staggerItem} className="h-full min-h-[120px]">
-              <Card className="h-full min-h-[120px] hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => navigate("/analytics")}>
-                <CardContent className="flex items-center gap-3 sm:gap-4 p-4 sm:p-6 h-full">
-                  <div className="w-12 h-12 rounded-lg bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
-                    <BarChart3 className="h-6 w-6 text-purple-500" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">Analytics</h3>
-                    <p className="text-sm text-muted-foreground">Reports & metrics</p>
-                  </div>
-                  <Plus className="ml-auto h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
                 </CardContent>
               </Card>
             </motion.div>
