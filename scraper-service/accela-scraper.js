@@ -259,6 +259,20 @@ async function searchPermit(page, portalUrl, permitNumber) {
       }
     }
     await page.waitForTimeout(2000);
+
+    // Debug: screenshot + dump what's on the page
+    await page.screenshot({ path: 'debug_accela_search.png', fullPage: true });
+    console.log("  DEBUG: Page URL after search:", page.url());
+    const pageText = await page.innerText('body').catch(() => '');
+    console.log("  DEBUG: Page text (first 500 chars):", pageText.substring(0, 500));
+
+    // Look for ALL links on the page that might be results
+    const allLinks = await page.$$eval('a', links => 
+      links.filter(a => a.textContent.trim().length > 0 && a.href.includes('Cap'))
+        .slice(0, 10)
+        .map(a => ({ text: a.textContent.trim().substring(0, 50), href: a.href.substring(0, 100) }))
+    );
+    console.log("  DEBUG: Cap links found:", JSON.stringify(allLinks, null, 2));
   }
 
   console.log(`  After search URL: ${page.url()}`);
