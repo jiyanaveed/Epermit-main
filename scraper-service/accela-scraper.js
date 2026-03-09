@@ -138,15 +138,97 @@ async function accelaLogin(page, username, password, portalUrl) {
 
 async function searchPermit(page, portalUrl, permitNumber) {
   console.log(`  🔍 Searching for permit: ${permitNumber}`);
+  console.log(`  Current URL before search: ${page.url()}`);
 
   const cleanPortal = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
-  const searchUrl = cleanPortal + "/Cap/CapHome.aspx?module=Building&TabName=Building";
-  console.log(`  Navigating to search: ${searchUrl}`);
-  await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 30000 });
-  await page.waitForTimeout(3000);
 
+  // STRATEGY 1: Try global search bar first (simplest, preserves session)
+  console.log("  STRATEGY 1: Trying global search bar...");
+  const globalSearch = await page.$('#txtGlobalSearch, #txtSearchCondition, input[id*="txtGlobalSearch"], input[id*="txtSearchCondition"]');
+  if (globalSearch && (await globalSearch.isVisible().catch(() => false))) {
+    console.log("  Found global search bar, using it");
+    await globalSearch.fill(permitNumber);
+    await page.waitForTimeout(500);
+
+    const globalSearchBtn = await page.$('#btnGlobalSearch, img[id*="btnGlobalSearch"], a[id*="btnGlobalSearch"], img[id*="btnSearch"], a[id*="btnSearch"]');
+    if (globalSearchBtn && (await globalSearchBtn.isVisible().catch(() => false))) {
+      console.log("  Clicking global search button");
+      await Promise.all([
+        page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+        globalSearchBtn.click(),
+      ]);
+    } else {
+      console.log("  No global search button found, pressing Enter");
+      await globalSearch.press("Enter");
+      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    }
+    await page.waitForTimeout(3000);
+
+    console.log(`  After global search URL: ${page.url()}`);
+    const bodyText = await page.innerText('body').catch(() => '');
+    console.log(`  Page text (first 300 chars): ${bodyText.substring(0, 300)}`);
+
+    if (bodyText.includes(permitNumber) || page.url().includes('Cap')) {
+      console.log("  Global search returned results, proceeding to find result link");
+      const found = await findAndClickResult(page, portalUrl, permitNumber);
+      if (found) return;
+    }
+    console.log("  Global search did not yield results, trying next strategy");
+  } else {
+    console.log("  Global search bar not found on page");
+  }
+
+  // STRATEGY 2: Navigate through portal menus (preserves ASP.NET session)
+  console.log("  STRATEGY 2: Navigating through portal menu...");
+  const menuTabSelectors = [
+    'a:has-text("Permits and Inspections")',
+    'a:has-text("Permits & Inspections")',
+    'a:has-text("Building")',
+    'a[href*="module=Building"]',
+    'a[href*="TabName=Building"]',
+    '#TabDataList a:has-text("Building")',
+    'li.ACA_TabRow a:has-text("Building")',
+    'li.ACA_TabRow a:has-text("Permits")',
+  ];
+
+  let clickedMenu = false;
+  for (const sel of menuTabSelectors) {
+    const tab = await page.$(sel);
+    if (tab && (await tab.isVisible().catch(() => false))) {
+      const tabText = (await tab.textContent().catch(() => "")).trim();
+      console.log(`  Clicking menu tab: "${tabText}" (${sel})`);
+      await Promise.all([
+        page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+        tab.click(),
+      ]);
+      await page.waitForTimeout(3000);
+      clickedMenu = true;
+      console.log(`  After menu click URL: ${page.url()}`);
+      break;
+    }
+  }
+
+  if (!clickedMenu) {
+    console.log("  No menu tab found, trying direct navigation as fallback...");
+    const searchUrl = cleanPortal + "/Cap/CapHome.aspx?module=Building&TabName=Building";
+    console.log(`  Navigating to: ${searchUrl}`);
+    await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 30000 });
+    await page.waitForTimeout(3000);
+  }
+
+  // Check if we lost the session
+  const bodyTextAfterNav = await page.innerText('body').catch(() => '');
+  if (bodyTextAfterNav.substring(0, 200).includes("Sign In") && !bodyTextAfterNav.includes("Sign Out") && !bodyTextAfterNav.includes("Logout")) {
+    console.log("  WARNING: Session appears lost after navigation (page shows Sign In)");
+    console.log("  Page text (first 300 chars):", bodyTextAfterNav.substring(0, 300));
+  }
+
+  // Click "Search Applications" tab if present
   const searchTabSelectors = [
-    '#ctl00_PlaceHolderMain_TabDataList_TabsDataList a:has-text("Search Applications")',
+    'a:has-text("Search Applications")',
+    'a:has-text("Search Records")',
+    'a:has-text("Search Permits")',
+    '#ctl00_PlaceHolderMain_TabDataList_TabsDataList a:has-text("Search")',
     'a.TabSelected_Font:has-text("Search")',
     'a.NotSelected_Font:has-text("Search")',
   ];
@@ -154,7 +236,8 @@ async function searchPermit(page, portalUrl, permitNumber) {
   for (const sel of searchTabSelectors) {
     const tab = await page.$(sel);
     if (tab && (await tab.isVisible().catch(() => false))) {
-      console.log(`  Clicking search tab: ${sel}`);
+      const tabText = (await tab.textContent().catch(() => "")).trim();
+      console.log(`  Clicking search tab: "${tabText}" (${sel})`);
       await tab.click().catch(() => {});
       await page.waitForTimeout(2000);
       await page.waitForLoadState("networkidle").catch(() => {});
@@ -164,6 +247,7 @@ async function searchPermit(page, portalUrl, permitNumber) {
 
   console.log(`  Current URL after search tab: ${page.url()}`);
 
+  // Look for the permit number field
   const permitFieldSelectors = [
     "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber",
     'input[id*="txtGSPermitNumber"]',
@@ -183,99 +267,105 @@ async function searchPermit(page, portalUrl, permitNumber) {
   }
 
   if (!permitField) {
-    console.log("  Permit field not found via ID selectors, trying global search...");
-    const globalSearch = await page.$('#txtSearchCondition, input[id="txtSearchCondition"]');
-    if (globalSearch && (await globalSearch.isVisible().catch(() => false))) {
-      console.log("  Using global search bar instead");
-      await globalSearch.fill(permitNumber);
-      const globalSearchBtn = await page.$('img[id*="btnSearch"], a[id*="btnSearch"], #btnGlobalSearch');
-      if (globalSearchBtn) {
+    console.log("  Permit search field not found, listing visible inputs...");
+    const allVisibleInputs = await page.$$('input[type="text"]');
+    const visibleInputs = [];
+    for (const inp of allVisibleInputs) {
+      if (await inp.isVisible().catch(() => false)) {
+        const id = await inp.getAttribute("id").catch(() => "");
+        const name = await inp.getAttribute("name").catch(() => "");
+        const placeholder = await inp.getAttribute("placeholder").catch(() => "");
+        visibleInputs.push({ id, name, placeholder });
+      }
+    }
+    console.log(`  Visible text inputs: ${JSON.stringify(visibleInputs)}`);
+
+    // Try global search one more time from this page
+    const globalSearch2 = await page.$('#txtGlobalSearch, #txtSearchCondition, input[id*="txtGlobalSearch"], input[id*="txtSearchCondition"]');
+    if (globalSearch2 && (await globalSearch2.isVisible().catch(() => false))) {
+      console.log("  Falling back to global search bar from this page");
+      await globalSearch2.fill(permitNumber);
+      const globalBtn = await page.$('#btnGlobalSearch, img[id*="btnGlobalSearch"], a[id*="btnGlobalSearch"]');
+      if (globalBtn) {
         await Promise.all([
           page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-          globalSearchBtn.click(),
+          globalBtn.click(),
         ]);
-        await page.waitForTimeout(3000);
+      } else {
+        await globalSearch2.press("Enter");
+        await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
       }
-    } else {
-      const allVisibleInputs = await page.$$('input[type="text"]');
-      const visibleInputs = [];
-      for (const inp of allVisibleInputs) {
-        if (await inp.isVisible().catch(() => false)) {
-          const id = await inp.getAttribute("id").catch(() => "");
-          const name = await inp.getAttribute("name").catch(() => "");
-          visibleInputs.push({ id, name });
-        }
-      }
-      console.log(`  Visible text inputs: ${JSON.stringify(visibleInputs)}`);
-      throw new Error("Cannot find permit number search field");
-    }
-  } else {
-    await permitField.fill(permitNumber);
-    console.log(`  Entered permit number: ${permitNumber}`);
-
-    const searchBtnSelectors = [
-      "#ctl00_PlaceHolderMain_btnNewSearch",
-      'a[id*="btnNewSearch"]',
-      'input[id*="btnSearch"]',
-      'a[id*="btnSearch"]',
-      'input[value="Search"]',
-      'button:has-text("Search")',
-    ];
-
-    let searchBtn = null;
-    for (const sel of searchBtnSelectors) {
-      searchBtn = await page.$(sel);
-      if (searchBtn && (await searchBtn.isVisible().catch(() => false))) {
-        console.log(`  Found search button: ${sel}`);
-        break;
-      }
-      searchBtn = null;
+      await page.waitForTimeout(3000);
+      const found = await findAndClickResult(page, portalUrl, permitNumber);
+      if (found) return;
     }
 
-    const beforeSearchHtml = (await page.content()).length;
-
-    if (searchBtn) {
-      await searchBtn.click();
-    } else {
-      console.log("  No search button found, pressing Enter");
-      await permitField.press("Enter");
-    }
-
-    console.log("  Waiting for search results to load (ASP.NET postback)...");
-    for (let wait = 0; wait < 20; wait++) {
-      await page.waitForTimeout(1500);
-      const gridEl = await page.$('div.ACA_Grid_OverFlow, table[id*="GridView"], div[id*="resultList"], div[id*="SearchResult"], table.ACA_GridView_Caption');
-      if (gridEl && (await gridEl.isVisible().catch(() => false))) {
-        console.log(`  Results grid appeared after ${(wait + 1) * 1.5}s`);
-        break;
-      }
-      const afterHtml = (await page.content()).length;
-      if (Math.abs(afterHtml - beforeSearchHtml) > 500 && wait >= 2) {
-        console.log(`  Page content changed significantly (${beforeSearchHtml} → ${afterHtml}), results likely loaded`);
-        break;
-      }
-      if (wait === 19) {
-        console.log("  Results grid did not appear after 30s — checking page content...");
-      }
-    }
-    await page.waitForTimeout(2000);
-
-    // Debug: screenshot + dump what's on the page
-    await page.screenshot({ path: 'debug_accela_search.png', fullPage: true });
-    console.log("  DEBUG: Page URL after search:", page.url());
-    const pageText = await page.innerText('body').catch(() => '');
-    console.log("  DEBUG: Page text (first 500 chars):", pageText.substring(0, 500));
-
-    // Look for ALL links on the page that might be results
-    const allLinks = await page.$$eval('a', links => 
-      links.filter(a => a.textContent.trim().length > 0 && a.href.includes('Cap'))
-        .slice(0, 10)
-        .map(a => ({ text: a.textContent.trim().substring(0, 50), href: a.href.substring(0, 100) }))
-    );
-    console.log("  DEBUG: Cap links found:", JSON.stringify(allLinks, null, 2));
+    throw new Error("Cannot find permit number search field");
   }
 
-  console.log(`  After search URL: ${page.url()}`);
+  await permitField.fill(permitNumber);
+  console.log(`  Entered permit number: ${permitNumber}`);
+
+  const searchBtnSelectors = [
+    "#ctl00_PlaceHolderMain_btnNewSearch",
+    'a[id*="btnNewSearch"]',
+    'input[id*="btnSearch"]',
+    'a[id*="btnSearch"]',
+    'input[value="Search"]',
+    'button:has-text("Search")',
+  ];
+
+  let searchBtn = null;
+  for (const sel of searchBtnSelectors) {
+    searchBtn = await page.$(sel);
+    if (searchBtn && (await searchBtn.isVisible().catch(() => false))) {
+      console.log(`  Found search button: ${sel}`);
+      break;
+    }
+    searchBtn = null;
+  }
+
+  const beforeSearchHtml = (await page.content()).length;
+
+  if (searchBtn) {
+    await searchBtn.click();
+  } else {
+    console.log("  No search button found, pressing Enter");
+    await permitField.press("Enter");
+  }
+
+  console.log("  Waiting for search results to load (ASP.NET postback)...");
+  for (let wait = 0; wait < 20; wait++) {
+    await page.waitForTimeout(1500);
+    const gridEl = await page.$('div.ACA_Grid_OverFlow, table[id*="GridView"], div[id*="resultList"], div[id*="SearchResult"], table.ACA_GridView_Caption');
+    if (gridEl && (await gridEl.isVisible().catch(() => false))) {
+      console.log(`  Results grid appeared after ${(wait + 1) * 1.5}s`);
+      break;
+    }
+    const afterHtml = (await page.content()).length;
+    if (Math.abs(afterHtml - beforeSearchHtml) > 500 && wait >= 2) {
+      console.log(`  Page content changed significantly (${beforeSearchHtml} → ${afterHtml}), results likely loaded`);
+      break;
+    }
+    if (wait === 19) {
+      console.log("  Results grid did not appear after 30s — checking page content...");
+    }
+  }
+  await page.waitForTimeout(2000);
+
+  await page.screenshot({ path: 'debug_accela_search.png', fullPage: true });
+  console.log("  DEBUG: Page URL after search:", page.url());
+  const pageText = await page.innerText('body').catch(() => '');
+  console.log("  DEBUG: Page text (first 500 chars):", pageText.substring(0, 500));
+
+  const found = await findAndClickResult(page, portalUrl, permitNumber);
+  if (!found) {
+    throw new Error(`No clickable result found for permit: ${permitNumber}`);
+  }
+}
+
+async function findAndClickResult(page, portalUrl, permitNumber) {
+  console.log(`  Looking for result link for: ${permitNumber}`);
 
   const noResultsEl = await page.$('[id*="NoDataMessage"], .ACA_NoDataMessage, td:has-text("No record found")');
   if (noResultsEl && (await noResultsEl.isVisible().catch(() => false))) {
@@ -286,91 +376,172 @@ async function searchPermit(page, portalUrl, permitNumber) {
   const permitInPage = pageContent.includes(permitNumber);
   console.log(`  Permit number "${permitNumber}" found in page HTML: ${permitInPage}`);
 
-  let resultLink = null;
+  // APPROACH 1: Look for links in Accela grid result rows
+  const gridLinkSelectors = [
+    `a[id*="PermitNumber"]:has-text("${permitNumber}")`,
+    `a.ACA_FLinkFontDark:has-text("${permitNumber}")`,
+    `a[class*="FLink"]:has-text("${permitNumber}")`,
+    `table[id*="GridView"] a:has-text("${permitNumber}")`,
+    `div.ACA_Grid_OverFlow a:has-text("${permitNumber}")`,
+  ];
 
+  for (const sel of gridLinkSelectors) {
+    try {
+      const link = await page.$(sel);
+      if (link && (await link.isVisible().catch(() => false))) {
+        const text = (await link.textContent().catch(() => "")).trim();
+        console.log(`  Found grid result link: "${text}" via ${sel}`);
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
+          link.click(),
+        ]);
+        await page.waitForTimeout(3000);
+        console.log(`  After click URL: ${page.url()}`);
+        if (page.url().includes("Login.aspx")) {
+          throw new Error("Session expired — landed on login page after clicking result.");
+        }
+        return true;
+      }
+    } catch (e) {
+      if (e.message.includes("Session expired")) throw e;
+    }
+  }
+
+  // APPROACH 2: Look for any clickable row in grid containing the permit number
+  const gridRows = await page.$$('table[id*="GridView"] tr, div.ACA_Grid_OverFlow table tr');
+  console.log(`  Grid rows found: ${gridRows.length}`);
+  for (const row of gridRows) {
+    const rowText = (await row.textContent().catch(() => "")).trim();
+    if (rowText.includes(permitNumber)) {
+      console.log(`  Found row containing permit number: "${rowText.substring(0, 100)}"`);
+      const rowLink = await row.$('a');
+      if (rowLink) {
+        const linkText = (await rowLink.textContent().catch(() => "")).trim();
+        const linkHref = (await rowLink.getAttribute("href").catch(() => "")) || "";
+        const linkOnclick = (await rowLink.getAttribute("onclick").catch(() => "")) || "";
+        console.log(`  Row link: text="${linkText}" href="${linkHref.substring(0, 80)}" onclick="${linkOnclick.substring(0, 80)}"`);
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
+          rowLink.click(),
+        ]);
+        await page.waitForTimeout(3000);
+        console.log(`  After row link click URL: ${page.url()}`);
+        if (page.url().includes("Login.aspx")) {
+          throw new Error("Session expired — landed on login page after clicking result.");
+        }
+        return true;
+      }
+      console.log("  Row has no <a> link, trying to click the row itself...");
+      const onclick = (await row.getAttribute("onclick").catch(() => "")) || "";
+      if (onclick) {
+        console.log(`  Row has onclick: ${onclick.substring(0, 100)}`);
+        await row.click();
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("networkidle").catch(() => {});
+        console.log(`  After row click URL: ${page.url()}`);
+        return true;
+      }
+    }
+  }
+
+  // APPROACH 3: Look for any link with permit number text or CapDetail href
+  let resultLink = null;
   const allLinks = await page.$$("a");
+  console.log(`  Total links on page: ${allLinks.length}`);
   for (const link of allLinks) {
     const text = (await link.textContent().catch(() => "")).trim();
     const href = (await link.getAttribute("href").catch(() => "")) || "";
-    if ((text.includes(permitNumber) || href.includes("CapDetail")) && text.length < 100) {
+    const onclick = (await link.getAttribute("onclick").catch(() => "")) || "";
+
+    if (text.includes(permitNumber) && text.length < 100) {
       const visible = await link.isVisible().catch(() => false);
       if (visible && !href.includes("Login") && !text.includes("Sign In") && !text.includes("Create")) {
-        console.log(`  Found candidate link: "${text}" href="${href.substring(0, 100)}"`);
-        if (text.includes(permitNumber)) {
-          resultLink = link;
-          console.log(`  ✓ Exact permit match`);
-          break;
-        }
-        if (!resultLink && href.includes("CapDetail")) {
-          resultLink = link;
-        }
+        console.log(`  Found permit text link: "${text}" href="${href.substring(0, 80)}" onclick="${onclick.substring(0, 80)}"`);
+        resultLink = link;
+        break;
+      }
+    }
+
+    if (!resultLink && (href.includes("CapDetail") || onclick.includes("CapDetail"))) {
+      const visible = await link.isVisible().catch(() => false);
+      if (visible && !href.includes("Login")) {
+        console.log(`  Found CapDetail link: "${text.substring(0, 50)}" href="${href.substring(0, 80)}"`);
+        resultLink = link;
       }
     }
   }
 
-  if (!resultLink) {
-    console.log("  Trying to extract CapDetail URL from raw HTML...");
-    const html = await page.content();
-
-    const capDetailRegex = /href="([^"]*CapDetail\.aspx[^"]*)"/gi;
-    const capDetailMatches = [];
-    let match;
-    while ((match = capDetailRegex.exec(html)) !== null) {
-      capDetailMatches.push(match[1]);
+  if (resultLink) {
+    const clickText = (await resultLink.textContent().catch(() => "")).trim();
+    console.log(`  Clicking result: "${clickText}"`);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
+      resultLink.click(),
+    ]);
+    await page.waitForTimeout(3000);
+    const detailUrl = page.url();
+    console.log(`  Opened record detail: ${detailUrl}`);
+    if (detailUrl.includes("Login.aspx")) {
+      throw new Error("Session expired — landed on login page after clicking result.");
     }
-    console.log(`  CapDetail URLs found in HTML: ${capDetailMatches.length}`);
-    for (const u of capDetailMatches.slice(0, 5)) {
-      console.log(`    ${u.substring(0, 150)}`);
-    }
+    return true;
+  }
 
-    const permitIdx = html.indexOf(permitNumber);
-    if (permitIdx > -1) {
-      const surrounding = html.substring(Math.max(0, permitIdx - 500), permitIdx + 200);
-      const nearbyCapDetail = surrounding.match(/href="([^"]*CapDetail\.aspx[^"]*)"/i);
-      if (nearbyCapDetail) {
-        const detailPath = nearbyCapDetail[1].replace(/&amp;/g, "&");
-        const baseUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
-        const fullUrl = detailPath.startsWith("http") ? detailPath : baseUrl + "/" + detailPath.replace(/^\//, "");
-        console.log(`  Found CapDetail URL near permit number: ${fullUrl}`);
-        await page.goto(fullUrl, { waitUntil: "networkidle", timeout: 45000 });
-        await page.waitForTimeout(3000);
-        console.log(`  Navigated to: ${page.url()}`);
-        return;
-      }
+  // APPROACH 4: Extract CapDetail URL from raw HTML
+  console.log("  Trying to extract CapDetail URL from raw HTML...");
+  const html = await page.content();
 
-      console.log(`  HTML around permit number:`);
-      console.log(`  ...${surrounding.replace(/\n/g, " ").substring(0, 400)}...`);
-    }
+  const capDetailRegex = /href="([^"]*CapDetail\.aspx[^"]*)"/gi;
+  const capDetailMatches = [];
+  let match;
+  while ((match = capDetailRegex.exec(html)) !== null) {
+    capDetailMatches.push(match[1]);
+  }
+  console.log(`  CapDetail URLs found in HTML: ${capDetailMatches.length}`);
+  for (const u of capDetailMatches.slice(0, 5)) {
+    console.log(`    ${u.substring(0, 150)}`);
+  }
 
-    if (capDetailMatches.length > 0) {
-      const detailPath = capDetailMatches[0].replace(/&amp;/g, "&");
+  // Also check for javascript onclick handlers containing CapDetail
+  const onclickRegex = /onclick="[^"]*CapDetail[^"]*"/gi;
+  const onclickMatches = html.match(onclickRegex) || [];
+  console.log(`  onclick handlers with CapDetail: ${onclickMatches.length}`);
+  for (const o of onclickMatches.slice(0, 3)) {
+    console.log(`    ${o.substring(0, 150)}`);
+  }
+
+  const permitIdx = html.indexOf(permitNumber);
+  if (permitIdx > -1) {
+    const surrounding = html.substring(Math.max(0, permitIdx - 500), permitIdx + 500);
+    console.log(`  HTML around permit number (1000 chars):`);
+    console.log(`  ...${surrounding.replace(/\n/g, " ").substring(0, 600)}...`);
+
+    const nearbyCapDetail = surrounding.match(/href="([^"]*CapDetail\.aspx[^"]*)"/i);
+    if (nearbyCapDetail) {
+      const detailPath = nearbyCapDetail[1].replace(/&amp;/g, "&");
       const baseUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
       const fullUrl = detailPath.startsWith("http") ? detailPath : baseUrl + "/" + detailPath.replace(/^\//, "");
-      console.log(`  Using first CapDetail URL as fallback: ${fullUrl}`);
+      console.log(`  Found CapDetail URL near permit number: ${fullUrl}`);
       await page.goto(fullUrl, { waitUntil: "networkidle", timeout: 45000 });
       await page.waitForTimeout(3000);
       console.log(`  Navigated to: ${page.url()}`);
-      return;
+      return true;
     }
   }
 
-  if (!resultLink) {
-    throw new Error(`No clickable result found for permit: ${permitNumber}`);
+  if (capDetailMatches.length > 0) {
+    const detailPath = capDetailMatches[0].replace(/&amp;/g, "&");
+    const baseUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
+    const fullUrl = detailPath.startsWith("http") ? detailPath : baseUrl + "/" + detailPath.replace(/^\//, "");
+    console.log(`  Using first CapDetail URL as fallback: ${fullUrl}`);
+    await page.goto(fullUrl, { waitUntil: "networkidle", timeout: 45000 });
+    await page.waitForTimeout(3000);
+    console.log(`  Navigated to: ${page.url()}`);
+    return true;
   }
 
-  const clickText = (await resultLink.textContent().catch(() => "")).trim();
-  console.log(`  Clicking result: "${clickText}"`);
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
-    resultLink.click(),
-  ]);
-  await page.waitForTimeout(3000);
-  const detailUrl = page.url();
-  console.log(`  Opened record detail: ${detailUrl}`);
-
-  if (detailUrl.includes("Login.aspx")) {
-    throw new Error("Session expired — landed on login page after clicking result. Try again.")
-  }
+  console.log("  No result link found by any approach");
+  return false;
 }
 
 async function extractRecordHeader(page) {
