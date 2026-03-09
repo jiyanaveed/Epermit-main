@@ -138,92 +138,171 @@ async function accelaLogin(page, username, password, portalUrl) {
 
 async function searchPermit(page, portalUrl, permitNumber) {
   console.log("  Searching for permit:", permitNumber);
+  console.log("  Current URL (post-login):", page.url());
 
-  let globalSearch = await page.$('#txtSearchCondition');
-  if (!globalSearch || !(await globalSearch.isVisible().catch(() => false))) {
-    console.log("  Global search not found on current page, trying Home link...");
-    const homeLink = await page.$('a:has-text("Home"), a[id*="Home"]');
-    if (homeLink) {
-      console.log("  Clicking Home link to find global search");
-      await homeLink.click();
-      await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(2000);
-    }
-    globalSearch = await page.$('#txtSearchCondition');
-  }
-
-  if (globalSearch && await globalSearch.isVisible().catch(() => false)) {
-    console.log("  Using global search bar");
-    await globalSearch.fill(permitNumber);
-
-    const searchIcon = await page.$('img[id*="btnSearch"], a[id*="btnSearch"], #btnGlobalSearch, a.global_search_button, img.search_icon');
-    if (searchIcon) {
-      console.log("  Clicking global search icon/button");
-      await Promise.all([
-        page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-        searchIcon.click(),
-      ]);
-    } else {
-      console.log("  No search icon found, pressing Enter");
-      await globalSearch.press("Enter");
-      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-    }
-    await page.waitForTimeout(3000);
-
+  // STEP 1: Navigate to search form via in-page clicks (preserves ASP.NET session)
+  // Do NOT navigate to a direct URL — that loses the session
+  const permitsTab = await page.$('a:has-text("Permits and Inspections"), a:has-text("Permits & Inspections"), a:has-text("Building")');
+  if (permitsTab && await permitsTab.isVisible().catch(() => false)) {
+    const tabText = (await permitsTab.textContent().catch(() => "")).trim();
+    console.log(`  Clicking tab: "${tabText}"`);
+    await permitsTab.click();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForTimeout(2000);
+    console.log("  After tab click URL:", page.url());
   } else {
-    console.log("  Global search not found, clicking through nav");
-    const permitsTab = await page.$('a:has-text("Permits and Inspections"), a:has-text("Permits & Inspections")');
-    if (permitsTab) {
-      console.log("  Clicking Permits tab");
-      await permitsTab.click();
+    console.log("  WARNING: Permits tab not found on page");
+    const allTabs = await page.$$('a');
+    const tabTexts = [];
+    for (const a of allTabs.slice(0, 30)) {
+      const t = (await a.textContent().catch(() => "")).trim();
+      if (t.length > 2 && t.length < 50) tabTexts.push(t);
+    }
+    console.log("  Available links (first 30):", tabTexts.join(' | '));
+  }
+
+  const searchLink = await page.$('a:has-text("Search Applications"), a:has-text("Search Records"), a:has-text("Search Permits")');
+  if (searchLink && await searchLink.isVisible().catch(() => false)) {
+    const linkText = (await searchLink.textContent().catch(() => "")).trim();
+    console.log(`  Clicking: "${linkText}"`);
+    await searchLink.click();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForTimeout(2000);
+    console.log("  After search link URL:", page.url());
+  } else {
+    console.log("  Search Applications link not found, checking for search tab...");
+    const searchTab = await page.$('#ctl00_PlaceHolderMain_TabDataList_TabsDataList a:has-text("Search"), a.NotSelected_Font:has-text("Search"), a.TabSelected_Font:has-text("Search")');
+    if (searchTab && await searchTab.isVisible().catch(() => false)) {
+      console.log("  Clicking search tab");
+      await searchTab.click();
       await page.waitForLoadState("networkidle").catch(() => {});
       await page.waitForTimeout(2000);
-    }
-
-    const searchLink = await page.$('a:has-text("Search Applications"), a:has-text("Search Records")');
-    if (searchLink) {
-      console.log("  Clicking Search Applications link");
-      await searchLink.click();
-      await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(2000);
-    }
-
-    const permitField = await page.$('#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber, input[id*="txtGSPermitNumber"], input[id*="PermitNumber"]');
-    if (permitField) {
-      console.log("  Found permit number field, filling in permit number");
-      await permitField.fill(permitNumber);
-      const searchBtn = await page.$('#ctl00_PlaceHolderMain_btnNewSearch, a[id*="btnNewSearch"]');
-      if (searchBtn) {
-        console.log("  Clicking search button");
-        await searchBtn.click();
-      } else {
-        console.log("  No search button, pressing Enter");
-        await permitField.press("Enter");
-      }
-      await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(3000);
-    } else {
-      console.log("  ERROR: Cannot find any search field");
-      const allVisibleInputs = await page.$$('input[type="text"]');
-      const visibleInputs = [];
-      for (const inp of allVisibleInputs) {
-        if (await inp.isVisible().catch(() => false)) {
-          const id = await inp.getAttribute("id").catch(() => "");
-          const name = await inp.getAttribute("name").catch(() => "");
-          visibleInputs.push({ id, name });
-        }
-      }
-      console.log("  Visible text inputs:", JSON.stringify(visibleInputs));
-      throw new Error("Cannot find search field");
     }
   }
 
-  const pageText = await page.innerText('body').catch(() => '');
-  console.log("  Page after search (first 200):", pageText.substring(0, 200));
-  console.log("  Logged in check:", !pageText.substring(0, 200).includes('Sign In') || pageText.includes('Sign Out') || pageText.includes('Logout'));
+  // Verify we're still logged in
+  const bodyCheck = await page.innerText('body').catch(() => '');
+  const isLoggedOut = bodyCheck.substring(0, 300).includes('Sign In') && !bodyCheck.includes('Sign Out') && !bodyCheck.includes('Logout');
+  if (isLoggedOut) {
+    console.log("  WARNING: Session lost! Page shows Sign In.");
+    console.log("  Page text (first 300):", bodyCheck.substring(0, 300));
+  }
 
+  // STEP 2: Check "Search All Records" checkbox if present
+  const searchAllCheckbox = await page.$('input[id*="SearchAll"], input[type="checkbox"][id*="chkSearchAllRecords"], input[type="checkbox"][id*="SearchAllRecords"]');
+  if (searchAllCheckbox) {
+    const isChecked = await searchAllCheckbox.isChecked().catch(() => false);
+    if (!isChecked) {
+      await searchAllCheckbox.check();
+      console.log("  Checked 'Search All Records'");
+      await page.waitForTimeout(1000);
+    }
+  }
+
+  // STEP 3: Fill permit number (with dashes, as-is)
+  const permitFieldSelectors = [
+    '#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber',
+    'input[id*="txtGSPermitNumber"]',
+    'input[id*="PermitNumber"]',
+    'input[name*="PermitNumber"]',
+  ];
+
+  let permitField = null;
+  for (const sel of permitFieldSelectors) {
+    permitField = await page.$(sel);
+    if (permitField && await permitField.isVisible().catch(() => false)) {
+      console.log(`  Found permit field: ${sel}`);
+      break;
+    }
+    permitField = null;
+  }
+
+  if (!permitField) {
+    console.log("  Permit number field not found, listing visible inputs...");
+    const allVisibleInputs = await page.$$('input[type="text"]');
+    const visibleInputs = [];
+    for (const inp of allVisibleInputs) {
+      if (await inp.isVisible().catch(() => false)) {
+        const id = await inp.getAttribute("id").catch(() => "");
+        const name = await inp.getAttribute("name").catch(() => "");
+        visibleInputs.push({ id, name });
+      }
+    }
+    console.log("  Visible text inputs:", JSON.stringify(visibleInputs));
+    throw new Error("Cannot find permit number search field");
+  }
+
+  console.log(`  Filling permit number: "${permitNumber}" (as-is with dashes)`);
+  await permitField.fill(permitNumber);
+
+  // STEP 4: Clear date fields to avoid filtering out older permits
+  const startDateField = await page.$('input[id*="StartDate"], input[id*="txtGSStartDate"]');
+  if (startDateField && await startDateField.isVisible().catch(() => false)) {
+    await startDateField.fill('');
+    console.log("  Cleared Start Date filter");
+  }
+
+  const endDateField = await page.$('input[id*="EndDate"], input[id*="txtGSEndDate"]');
+  if (endDateField && await endDateField.isVisible().catch(() => false)) {
+    await endDateField.fill('');
+    console.log("  Cleared End Date filter");
+  }
+
+  // STEP 5: Click Search button
+  const searchBtnSelectors = [
+    '#ctl00_PlaceHolderMain_btnNewSearch',
+    'a[id*="btnNewSearch"]',
+    'input[id*="btnSearch"]',
+    'a[id*="btnSearch"]',
+    'input[value="Search"]',
+    'button:has-text("Search")',
+  ];
+
+  let searchBtn = null;
+  for (const sel of searchBtnSelectors) {
+    searchBtn = await page.$(sel);
+    if (searchBtn && await searchBtn.isVisible().catch(() => false)) {
+      console.log(`  Found search button: ${sel}`);
+      break;
+    }
+    searchBtn = null;
+  }
+
+  if (searchBtn) {
+    console.log("  Clicking search button");
+    await searchBtn.click();
+  } else {
+    console.log("  No search button found, pressing Enter");
+    await permitField.press("Enter");
+  }
+
+  // STEP 6: Wait for results
+  console.log("  Waiting for search results...");
+  for (let wait = 0; wait < 20; wait++) {
+    await page.waitForTimeout(1500);
+    const gridEl = await page.$('div.ACA_Grid_OverFlow, table[id*="GridView"], div[id*="resultList"], div[id*="SearchResult"]');
+    if (gridEl && await gridEl.isVisible().catch(() => false)) {
+      console.log(`  Results grid appeared after ${(wait + 1) * 1.5}s`);
+      break;
+    }
+    if (wait === 19) {
+      console.log("  Results grid did not appear after 30s");
+    }
+  }
+  await page.waitForTimeout(2000);
+
+  // Debug output
+  const pageText = await page.innerText('body').catch(() => '');
+  console.log("  Page after search (first 300):", pageText.substring(0, 300));
   await page.screenshot({ path: 'debug_accela_search.png', fullPage: true });
 
+  // Check for no results
+  const noResultsEl = await page.$('[id*="NoDataMessage"], .ACA_NoDataMessage, td:has-text("No record found")');
+  if (noResultsEl && await noResultsEl.isVisible().catch(() => false)) {
+    throw new Error(`Permit not found in Accela: ${permitNumber}`);
+  }
+
+  // STEP 7: Find and click the result link
   const resultSelectors = [
     `a:has-text("${permitNumber}")`,
     `td a:has-text("${permitNumber}")`,
@@ -235,13 +314,15 @@ async function searchPermit(page, portalUrl, permitNumber) {
 
   for (const sel of resultSelectors) {
     const links = await page.$$(sel);
-    console.log(`  Checking selector "${sel}": ${links.length} links`);
+    if (links.length > 0) {
+      console.log(`  Selector "${sel}": ${links.length} links`);
+    }
     for (const link of links) {
-      const text = await link.innerText().catch(() => '');
+      const text = (await link.innerText().catch(() => '')).trim();
       const visible = await link.isVisible().catch(() => false);
       if (!visible) continue;
       if (text.includes(permitNumber) || links.length === 1) {
-        console.log("  Found result link:", text.trim().substring(0, 80));
+        console.log(`  Clicking result: "${text.substring(0, 80)}"`);
         await Promise.all([
           page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
           link.click(),
