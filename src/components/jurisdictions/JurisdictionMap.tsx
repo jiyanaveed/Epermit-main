@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, MapPin, Building2, TrendingUp, X } from 'lucide-react';
+import { Loader2, MapPin, Building2, TrendingUp, X, ExternalLink } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { US_STATES } from '@/types/jurisdiction';
 
@@ -15,12 +15,16 @@ interface JurisdictionMapData {
   state: string;
   city: string | null;
   residential_units_2024: number | null;
+  commercial_permits_2024: number | null;
+  total_permits_2024: number | null;
   is_high_volume: boolean | null;
   base_permit_fee: number | null;
   plan_review_sla_days: number | null;
+  avg_review_days_actual: number | null;
+  avg_issuance_days_actual: number | null;
+  permit_portal_url: string | null;
 }
 
-// State center coordinates for map
 const STATE_COORDINATES: Record<string, [number, number]> = {
   AL: [-86.9023, 32.3182], AK: [-153.4937, 64.2008], AZ: [-111.0937, 34.0489],
   AR: [-92.3731, 34.9697], CA: [-119.4179, 36.7783], CO: [-105.3111, 39.0598],
@@ -41,7 +45,6 @@ const STATE_COORDINATES: Record<string, [number, number]> = {
   WI: [-89.6165, 43.7844], WY: [-107.2903, 43.0760], DC: [-77.0369, 38.9072],
 };
 
-// East Coast states for default view
 const EAST_COAST_STATES = ['ME', 'NH', 'VT', 'MA', 'RI', 'CT', 'NY', 'NJ', 'PA', 'DE', 'MD', 'DC', 'VA', 'NC', 'SC', 'GA', 'FL'];
 
 interface JurisdictionMapProps {
@@ -59,29 +62,51 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
   const [selectedJurisdiction, setSelectedJurisdiction] = useState<JurisdictionMapData | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
-  // Fetch jurisdictions
   useEffect(() => {
     const fetchJurisdictions = async () => {
       setLoading(true);
       
+      const allColumns = 'id, name, state, city, residential_units_2024, commercial_permits_2024, total_permits_2024, is_high_volume, base_permit_fee, plan_review_sla_days, avg_review_days_actual, avg_issuance_days_actual, permit_portal_url';
+      const basicColumns = 'id, name, state, city, residential_units_2024, is_high_volume, base_permit_fee, plan_review_sla_days';
+
+      let columns = allColumns;
+      let useTotal = true;
       let query = supabase
         .from('jurisdictions')
-        .select('id, name, state, city, residential_units_2024, is_high_volume, base_permit_fee, plan_review_sla_days')
+        .select(columns)
         .eq('is_active', true)
-        .not('residential_units_2024', 'is', null)
-        .order('residential_units_2024', { ascending: false });
+        .order('total_permits_2024', { ascending: false, nullsFirst: false });
 
       if (selectedState && selectedState !== 'all') {
         query = query.eq('state', selectedState);
       } else {
-        // Default to East Coast states
         query = query.in('state', EAST_COAST_STATES);
       }
 
-      const { data, error } = await query.limit(100);
+      let { data, error } = await query.limit(100);
+
+      if (error && error.message?.includes('does not exist')) {
+        columns = basicColumns;
+        useTotal = false;
+        let fallbackQuery = supabase
+          .from('jurisdictions')
+          .select(columns)
+          .eq('is_active', true)
+          .order('residential_units_2024', { ascending: false, nullsFirst: false });
+
+        if (selectedState && selectedState !== 'all') {
+          fallbackQuery = fallbackQuery.eq('state', selectedState);
+        } else {
+          fallbackQuery = fallbackQuery.in('state', EAST_COAST_STATES);
+        }
+
+        const fallback = await fallbackQuery.limit(100);
+        data = fallback.data;
+        error = fallback.error;
+      }
 
       if (!error && data) {
-        setJurisdictions(data);
+        setJurisdictions(data as JurisdictionMapData[]);
       }
       setLoading(false);
     };
@@ -89,7 +114,6 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
     fetchJurisdictions();
   }, [selectedState]);
 
-  // Initialize map
   useEffect(() => {
     if (!mapContainer.current || !mapboxToken) return;
 
@@ -98,7 +122,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/light-v11',
-      center: [-77.0, 38.9], // DC area - East Coast center
+      center: [-77.0, 38.9],
       zoom: 5,
     });
 
@@ -117,32 +141,27 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
     };
   }, [mapboxToken]);
 
-  // Add markers when jurisdictions or map changes
   useEffect(() => {
     if (!map.current || !mapReady || jurisdictions.length === 0) return;
 
-    // Clear existing markers
     markersRef.current.forEach(marker => marker.remove());
     markersRef.current = [];
 
-    // Get max units for scaling
-    const maxUnits = Math.max(...jurisdictions.map(j => j.residential_units_2024 || 0));
+    const maxUnits = Math.max(...jurisdictions.map(j => j.total_permits_2024 ?? j.residential_units_2024 ?? 100));
 
     jurisdictions.forEach((jurisdiction) => {
       const coords = STATE_COORDINATES[jurisdiction.state];
       if (!coords) return;
 
-      // Add some offset based on city name hash to spread out markers in same state
       const hash = jurisdiction.name.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
       const offsetLng = ((hash % 100) / 100 - 0.5) * 2;
       const offsetLat = (((hash * 7) % 100) / 100 - 0.5) * 1.5;
 
-      const units = jurisdiction.residential_units_2024 || 0;
+      const units = jurisdiction.total_permits_2024 ?? jurisdiction.residential_units_2024 ?? 50;
       const sizeMultiplier = Math.max(0.5, Math.min(2, (units / maxUnits) * 3 + 0.5));
       const baseSize = 24;
       const size = Math.round(baseSize * sizeMultiplier);
 
-      // Create custom marker element
       const el = document.createElement('div');
       el.className = 'jurisdiction-marker';
       el.style.width = `${size}px`;
@@ -188,8 +207,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
       markersRef.current.push(marker);
     });
 
-    // Fit bounds to show all markers if we have jurisdictions
-    if (jurisdictions.length > 0 && selectedState) {
+    if (jurisdictions.length > 0 && selectedState && selectedState !== 'all') {
       const coords = STATE_COORDINATES[selectedState];
       if (coords) {
         map.current.flyTo({
@@ -211,10 +229,9 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
 
   return (
     <div className="space-y-4">
-      {/* Controls */}
       <div className="flex flex-col sm:flex-row gap-4">
         <Select value={selectedState} onValueChange={setSelectedState}>
-          <SelectTrigger className="w-full sm:w-64">
+          <SelectTrigger className="w-full sm:w-64" data-testid="select-map-state">
             <SelectValue placeholder="Filter by state (East Coast default)" />
           </SelectTrigger>
           <SelectContent>
@@ -246,11 +263,9 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
         )}
       </div>
 
-      {/* Map Container */}
       <div className="relative h-[500px] rounded-lg overflow-hidden border shadow-sm">
         <div ref={mapContainer} className="absolute inset-0" />
         
-        {/* Selected Jurisdiction Panel */}
         {selectedJurisdiction && (
           <Card className="absolute top-4 left-4 w-80 shadow-lg z-10">
             <CardHeader className="pb-2">
@@ -270,6 +285,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
                   size="icon"
                   className="h-6 w-6"
                   onClick={() => setSelectedJurisdiction(null)}
+                  data-testid="button-close-jurisdiction"
                 >
                   <X className="h-4 w-4" />
                 </Button>
@@ -283,60 +299,92 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
                     High Volume
                   </Badge>
                 )}
-                <Badge className={getVolumeColor(selectedJurisdiction.residential_units_2024)}>
-                  {selectedJurisdiction.residential_units_2024?.toLocaleString() || 'N/A'} units
+                <Badge className={getVolumeColor(selectedJurisdiction.total_permits_2024 ?? selectedJurisdiction.residential_units_2024)}>
+                  {(selectedJurisdiction.total_permits_2024 ?? selectedJurisdiction.residential_units_2024)?.toLocaleString() ?? 'N/A'} total permits
                 </Badge>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-sm">
-                {selectedJurisdiction.base_permit_fee && (
+                <div>
+                  <span className="text-muted-foreground">Residential:</span>
+                  <p className="font-medium">{selectedJurisdiction.residential_units_2024?.toLocaleString() || 'N/A'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Commercial:</span>
+                  <p className="font-medium">{selectedJurisdiction.commercial_permits_2024?.toLocaleString() || 'N/A'}</p>
+                </div>
+                {selectedJurisdiction.base_permit_fee != null && (
                   <div>
                     <span className="text-muted-foreground">Base Fee:</span>
                     <p className="font-medium">${selectedJurisdiction.base_permit_fee.toLocaleString()}</p>
                   </div>
                 )}
-                {selectedJurisdiction.plan_review_sla_days && (
+                {(selectedJurisdiction.avg_review_days_actual || selectedJurisdiction.plan_review_sla_days) != null && (
                   <div>
-                    <span className="text-muted-foreground">Review SLA:</span>
-                    <p className="font-medium">{selectedJurisdiction.plan_review_sla_days} days</p>
+                    <span className="text-muted-foreground">Avg Review:</span>
+                    <p className="font-medium">
+                      {selectedJurisdiction.avg_review_days_actual || selectedJurisdiction.plan_review_sla_days} days
+                      {selectedJurisdiction.avg_review_days_actual && selectedJurisdiction.plan_review_sla_days && selectedJurisdiction.avg_review_days_actual !== selectedJurisdiction.plan_review_sla_days && (
+                        <span className="text-xs text-muted-foreground ml-1">(SLA: {selectedJurisdiction.plan_review_sla_days}d)</span>
+                      )}
+                    </p>
+                  </div>
+                )}
+                {selectedJurisdiction.avg_issuance_days_actual != null && (
+                  <div>
+                    <span className="text-muted-foreground">Avg Issuance:</span>
+                    <p className="font-medium">{selectedJurisdiction.avg_issuance_days_actual} days</p>
                   </div>
                 )}
               </div>
 
-              <Button 
-                size="sm" 
-                className="w-full"
-                onClick={() => window.open(`/jurisdictions/compare?add=${selectedJurisdiction.id}`, '_blank')}
-              >
-                <MapPin className="h-4 w-4 mr-2" />
-                Add to Comparison
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => window.open(`/jurisdictions/compare?add=${selectedJurisdiction.id}`, '_blank')}
+                  data-testid="button-add-comparison"
+                >
+                  <MapPin className="h-4 w-4 mr-1" />
+                  Compare
+                </Button>
+                {selectedJurisdiction.permit_portal_url && (
+                  <Button 
+                    size="sm" 
+                    className="flex-1"
+                    onClick={() => window.open(selectedJurisdiction.permit_portal_url!, '_blank', 'noopener,noreferrer')}
+                    data-testid="button-view-portal"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-1" />
+                    Permit Portal
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {/* Stats Overlay */}
         <div className="absolute bottom-4 right-4 bg-background/95 backdrop-blur rounded-lg px-4 py-2 shadow-lg border">
           <div className="flex items-center gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">Showing:</span>
               <span className="font-medium ml-1">{jurisdictions.length} jurisdictions</span>
             </div>
-            {!selectedState && (
+            {selectedState === 'all' && (
               <Badge variant="outline">East Coast</Badge>
             )}
           </div>
         </div>
       </div>
 
-      {/* Top Jurisdictions List */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Top Permit Volume Jurisdictions</CardTitle>
           <CardDescription>
-            {selectedState 
-              ? `Highest residential permit activity in ${US_STATES.find(s => s.code === selectedState)?.name}`
-              : 'Highest residential permit activity across East Coast states'}
+            {selectedState && selectedState !== 'all'
+              ? `Highest permit activity in ${US_STATES.find(s => s.code === selectedState)?.name}`
+              : 'Highest permit activity across East Coast states'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -346,6 +394,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
                 key={jurisdiction.id}
                 onClick={() => setSelectedJurisdiction(jurisdiction)}
                 className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent/50 transition-colors text-left"
+                data-testid={`button-jurisdiction-${jurisdiction.id}`}
               >
                 <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold text-sm">
                   {index + 1}
@@ -353,7 +402,7 @@ export function JurisdictionMap({ mapboxToken }: JurisdictionMapProps) {
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{jurisdiction.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {jurisdiction.residential_units_2024?.toLocaleString()} units • {jurisdiction.state}
+                    {(jurisdiction.total_permits_2024 ?? jurisdiction.residential_units_2024)?.toLocaleString() ?? '—'} permits • {jurisdiction.state}
                   </p>
                 </div>
                 {jurisdiction.is_high_volume && (

@@ -101,6 +101,12 @@ Preferred communication style: Simple, everyday language.
 - **Frontend:** `PermitWizardFiling.tsx` ("Permit Filing" page) with municipality selector/filter, `StartFilingDialog.tsx` with municipality dropdown + permit type selector + owner info + square footage/stories fields, `AgentRunDetail.tsx`.
 - **Scraper endpoints:** Legacy `/api/permitwizard/*` (DC backward compat) + generic `/api/filing/login|file|submit|session|reauth|logout` (multi-portal routing by `portal_type`).
 
+### Jurisdiction Map & Intelligence
+- **Purpose:** Interactive Mapbox-powered map displaying jurisdiction permit volumes, review timelines, and direct links to permitting portals.
+- **Data:** `jurisdictions` table includes `residential_units_2024`, `commercial_permits_2024`, `total_permits_2024`, `avg_review_days_actual`, `avg_issuance_days_actual`, `permit_portal_url` (migration `20260309000001`).
+- **Component:** `JurisdictionMap.tsx` — fetches all active jurisdictions (no null filter), sizes markers by total permit volume, shows residential + commercial breakdown on click, links to permit portal for timeline verification.
+- **Fallback:** Component gracefully degrades to basic columns if new columns haven't been added to Supabase yet.
+
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).
 

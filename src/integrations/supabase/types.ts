@@ -639,6 +639,11 @@ export type Database = {
           phone: string | null
           plan_review_fee: number | null
           plan_review_sla_days: number | null
+          commercial_permits_2024: number | null
+          total_permits_2024: number | null
+          avg_review_days_actual: number | null
+          avg_issuance_days_actual: number | null
+          permit_portal_url: string | null
           residential_units_2024: number | null
           reviewer_contacts: Json | null
           sf_1unit_units_2024: number | null
@@ -677,6 +682,11 @@ export type Database = {
           phone?: string | null
           plan_review_fee?: number | null
           plan_review_sla_days?: number | null
+          commercial_permits_2024?: number | null
+          total_permits_2024?: number | null
+          avg_review_days_actual?: number | null
+          avg_issuance_days_actual?: number | null
+          permit_portal_url?: string | null
           residential_units_2024?: number | null
           reviewer_contacts?: Json | null
           sf_1unit_units_2024?: number | null
@@ -715,6 +725,11 @@ export type Database = {
           phone?: string | null
           plan_review_fee?: number | null
           plan_review_sla_days?: number | null
+          commercial_permits_2024?: number | null
+          total_permits_2024?: number | null
+          avg_review_days_actual?: number | null
+          avg_issuance_days_actual?: number | null
+          permit_portal_url?: string | null
           residential_units_2024?: number | null
           reviewer_contacts?: Json | null
           sf_1unit_units_2024?: number | null
