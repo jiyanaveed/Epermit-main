@@ -743,8 +743,15 @@ async function scrapeAll(
             return !hasHugeHeader;
           });
         }
-        if (tab.key === "reports") {
-          // DEBUG: about to call extractPDFsFromPage
+        if (tab.key === "files") {
+          const filesResult = await extractFilesTab(page, context, session);
+          tabData.folders = filesResult.folders;
+          const totalFiles = filesResult.folders.reduce((s, f) => s + f.files.length, 0);
+          const totalComments = filesResult.folders.reduce((s, f) => s + f.files.reduce((s2, fi) => s2 + fi.commentCount, 0), 0);
+          console.log(
+            `      ✓ ${filesResult.folders.length} folders, ${totalFiles} files, ${totalComments} comments`,
+          );
+        } else if (tab.key === "reports") {
           const pdfs = await extractPDFsFromPage(page, context);
           tabData.pdfs = pdfs;
           console.log(
@@ -765,6 +772,7 @@ async function scrapeAll(
           links: [],
         };
         if (tab.key === "reports") errTab.pdfs = [];
+        if (tab.key === "files") errTab.folders = [];
         session.data[project.id].tabs[tab.key] = errTab;
       }
       if (page) await page.close().catch(() => {});
@@ -916,6 +924,317 @@ async function scrapeAll(
   session.status = "done";
   session.message = `Scraping complete! ${projects.length} projects extracted and synced.`;
   console.log(`   ✅ Supabase sync complete — session status set to "done"`);
+}
+
+function escapeCSSId(str) {
+  return str.replace(/([^\w-])/g, "\\$1");
+}
+
+async function extractFilesTab(page, context, session) {
+  const result = { folders: [] };
+
+  const folderElements = await page.$$eval(
+    'a[id*="FolderName"], a[id*="folderName"], .folder-name, td a[onclick*="Folder"], div.TreeNode a, span.TreeNode a, a[href*="FolderID"], tr a[id*="lnk"]',
+    (els) =>
+      els.map((el, idx) => ({
+        text: el.textContent.trim(),
+        id: el.id || "",
+        idx: idx,
+      }))
+  );
+
+  if (folderElements.length === 0) {
+    const treeNodes = await page.$$eval(
+      'table a, div.tree a, li a, td a',
+      (els) =>
+        els
+          .filter((a) => {
+            const t = a.textContent.trim();
+            return t.includes("(") && t.includes(")") && t.length < 100;
+          })
+          .map((el, idx) => ({ text: el.textContent.trim(), id: el.id || "", idx: idx }))
+    );
+    if (treeNodes.length > 0) {
+      console.log(`     Found ${treeNodes.length} folder-like nodes via fallback`);
+      folderElements.push(...treeNodes);
+    }
+  }
+
+  console.log(`     📁 Found ${folderElements.length} folders`);
+
+  for (let fi = 0; fi < folderElements.length; fi++) {
+    const folderInfo = folderElements[fi];
+    const rawName = folderInfo.text;
+    const folderId = folderInfo.id;
+
+    const countMatch = rawName.match(/\((\d+)/);
+    const fileCount = countMatch ? parseInt(countMatch[1], 10) : 0;
+    const folderName = rawName.replace(/\s*\(.*$/, "").trim();
+
+    console.log(`     📁 [${fi + 1}/${folderElements.length}] "${folderName}" (${fileCount} files)`);
+    if (session) session.message = `Files → ${folderName}`;
+
+    const folderData = {
+      name: folderName,
+      fileCount: fileCount,
+      files: [],
+    };
+
+    try {
+      let folderLink = null;
+      if (folderId) {
+        folderLink = await page.$(`#${escapeCSSId(folderId)}`);
+      }
+      if (!folderLink) {
+        const allLinks = await page.$$("a");
+        for (const link of allLinks) {
+          const linkText = await link.textContent().catch(() => "");
+          if (linkText.trim() === rawName) {
+            folderLink = link;
+            break;
+          }
+        }
+      }
+      if (folderLink) {
+        await folderLink.click();
+        await page.waitForTimeout(2000);
+        await page.waitForLoadState("networkidle").catch(() => {});
+      }
+
+      const fileRows = await page.evaluate(() => {
+        const files = [];
+        const seen = new Set();
+        const rows = document.querySelectorAll(
+          'table tr, div.file-list tr, table[id*="File"] tr, table[id*="Grid"] tr'
+        );
+        for (const row of rows) {
+          const cells = row.querySelectorAll("td");
+          if (cells.length < 2) continue;
+
+          const linkEl = row.querySelector("a");
+          if (!linkEl) continue;
+
+          const fileName = linkEl.textContent.trim();
+          if (
+            !fileName ||
+            fileName.length < 2 ||
+            fileName.includes("Folder") ||
+            fileName.includes("(")
+          )
+            continue;
+
+          const href = linkEl.getAttribute("href") || "";
+          const onclick = linkEl.getAttribute("onclick") || "";
+          const linkId = linkEl.id || "";
+
+          const fileIdMatch =
+            href.match(/fileID=(\d+)/i) ||
+            onclick.match(/fileID=(\d+)/i) ||
+            href.match(/FileId=(\d+)/i);
+          const fileId = fileIdMatch ? fileIdMatch[1] : "";
+
+          const dedup = fileId || fileName;
+          if (seen.has(dedup)) continue;
+          seen.add(dedup);
+
+          const cellTexts = Array.from(cells).map((c) => c.textContent.trim());
+
+          files.push({
+            name: fileName,
+            fileId: fileId,
+            linkId: linkId,
+            status: cellTexts[1] || "",
+            reviewedBy: cellTexts[2] || "",
+            uploadedDate: cellTexts[3] || "",
+            hasLink: !!href || !!onclick,
+          });
+        }
+        return files;
+      });
+
+      console.log(`       Found ${fileRows.length} files in folder`);
+
+      for (let fileIdx = 0; fileIdx < fileRows.length; fileIdx++) {
+        const file = fileRows[fileIdx];
+        console.log(
+          `       📄 [${fileIdx + 1}/${fileRows.length}] ${file.name}${file.fileId ? ` (ID: ${file.fileId})` : ""}`
+        );
+
+        const fileEntry = {
+          name: file.name,
+          fileId: file.fileId,
+          status: file.status,
+          reviewedBy: file.reviewedBy,
+          uploadedDate: file.uploadedDate,
+          comments: [],
+          commentCount: 0,
+        };
+
+        if (file.fileId && file.hasLink) {
+          try {
+            let fileLink = null;
+            if (file.linkId) {
+              fileLink = await page.$(`#${escapeCSSId(file.linkId)}`);
+            }
+            if (!fileLink && file.fileId) {
+              fileLink = await page.$(`a[href*="fileID=${file.fileId}" i], a[onclick*="fileID=${file.fileId}" i]`);
+            }
+            if (!fileLink) {
+              const allAnchors = await page.$$("a");
+              for (const a of allAnchors) {
+                const t = await a.textContent().catch(() => "");
+                if (t.trim() === file.name) {
+                  fileLink = a;
+                  break;
+                }
+              }
+            }
+            if (!fileLink) {
+              folderData.files.push(fileEntry);
+              continue;
+            }
+
+            const [newPage] = await Promise.all([
+              context.waitForEvent("page", { timeout: 10000 }).catch(() => null),
+              fileLink.click(),
+            ]);
+
+            let viewerPage = newPage;
+            let openedInNewTab = !!newPage;
+
+            if (!viewerPage) {
+              await page.waitForTimeout(3000);
+              const currentUrl = page.url();
+              if (currentUrl.includes("FileViewer") || currentUrl.includes("fileID")) {
+                viewerPage = page;
+                openedInNewTab = false;
+              } else {
+                folderData.files.push(fileEntry);
+                continue;
+              }
+            } else {
+              await viewerPage.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+              await viewerPage.waitForTimeout(2000);
+            }
+
+            const commentsData = await viewerPage.evaluate(() => {
+              const result = { count: 0, comments: [] };
+
+              let commentCount = 0;
+              const bodyText = document.body.textContent || "";
+              const commentMatch = bodyText.match(/Comments\s*\((\d+)\)/);
+              if (commentMatch) {
+                commentCount = parseInt(commentMatch[1], 10);
+              }
+              result.count = commentCount;
+
+              if (commentCount > 0) {
+                const commentEls = document.querySelectorAll(
+                  '.comment, div[class*="comment"], div[class*="Comment"], tr[class*="comment"]'
+                );
+
+                for (const cel of commentEls) {
+                  const textEl = cel.querySelector(
+                    '.comment-text, .commentText, td:nth-child(2), p, span'
+                  );
+                  const authorEl = cel.querySelector(
+                    '.comment-author, .author, td:nth-child(1), .user'
+                  );
+                  const dateEl = cel.querySelector(
+                    '.comment-date, .date, td:nth-child(3), time'
+                  );
+                  const pageEl = cel.querySelector(
+                    '.comment-page, .page, td:nth-child(4)'
+                  );
+
+                  result.comments.push({
+                    text: textEl ? textEl.textContent.trim() : cel.textContent.trim().substring(0, 500),
+                    author: authorEl ? authorEl.textContent.trim() : "",
+                    date: dateEl ? dateEl.textContent.trim() : "",
+                    page: pageEl
+                      ? parseInt(pageEl.textContent.trim(), 10) || null
+                      : null,
+                  });
+                }
+
+                if (result.comments.length === 0 && commentCount > 0) {
+                  const panels = document.querySelectorAll(
+                    'div[id*="comment"], div[id*="Comment"], div.panel, div.side-panel'
+                  );
+                  for (const panel of panels) {
+                    const items = panel.querySelectorAll("div, tr, li");
+                    for (const item of items) {
+                      const t = item.textContent.trim();
+                      if (t.length > 5 && t.length < 1000 && !/Comments\s*\(/.test(t)) {
+                        result.comments.push({
+                          text: t.substring(0, 500),
+                          author: "",
+                          date: "",
+                          page: null,
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+              return result;
+            }).catch((err) => {
+              console.error("         ❌ Comment extraction error:", err.message);
+              return { count: 0, comments: [], error: err.message };
+            });
+
+            fileEntry.commentCount = commentsData.count;
+            fileEntry.comments = commentsData.comments;
+
+            if (commentsData.count > 0) {
+              console.log(
+                `         💬 ${commentsData.count} comments (extracted ${commentsData.comments.length})`
+              );
+            }
+            if (commentsData.error) {
+              console.log(`         ⚠️ Comment extraction error: ${commentsData.error}`);
+            }
+
+            if (openedInNewTab) {
+              await viewerPage.close().catch(() => {});
+            } else {
+              await page.goBack({ waitUntil: "networkidle", timeout: 15000 }).catch(async () => {
+                let folderLink2 = null;
+                if (folderId) {
+                  folderLink2 = await page.$(`#${escapeCSSId(folderId)}`);
+                }
+                if (!folderLink2) {
+                  const links = await page.$$("a");
+                  for (const link of links) {
+                    const t = await link.textContent().catch(() => "");
+                    if (t.trim() === rawName) {
+                      folderLink2 = link;
+                      break;
+                    }
+                  }
+                }
+                if (folderLink2) {
+                  await folderLink2.click();
+                  await page.waitForTimeout(2000);
+                }
+              });
+              await page.waitForTimeout(1000);
+            }
+          } catch (fileErr) {
+            console.log(`         ⚠️ Error opening file: ${fileErr.message}`);
+          }
+        }
+
+        folderData.files.push(fileEntry);
+      }
+    } catch (folderErr) {
+      console.log(`     ⚠️ Error processing folder "${folderName}": ${folderErr.message}`);
+    }
+
+    result.folders.push(folderData);
+  }
+
+  return result;
 }
 
 async function extractPDFsFromPage(page, context) {
