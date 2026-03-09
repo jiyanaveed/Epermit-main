@@ -8,18 +8,28 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import {
   CheckCircle2,
+  ChevronDown,
   Circle,
   Loader2,
   RefreshCw,
   ExternalLink,
   XCircle,
   Workflow,
+  FolderOpen,
+  MessageSquare,
+  Layers,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -915,7 +925,7 @@ export function AgentWorkflowStatus() {
     chainPipelineRef.current = runChainedPipeline;
   }, [runChainedPipeline]);
 
-  const runManualCheck = async () => {
+  const runManualCheck = async (scrapeMode: "standard" | "all" | "files" | "comments" = "standard") => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
     const permitNumberToUse =
       projectBySelectedId?.permit_number ?? latestPermitNumber;
@@ -1134,7 +1144,7 @@ export function AgentWorkflowStatus() {
         body: JSON.stringify({
           sessionId,
           permitNumber: String(permitNumberToUse).trim(),
-          tabs: ["info", "reports"],
+          scrapeMode,
           userId: user!.id,
           projectId: projectIdToUse,
         }),
@@ -1284,21 +1294,66 @@ export function AgentWorkflowStatus() {
               : "Idle",
       action: (
         <div className="flex flex-col gap-2 mt-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={runManualCheck}
-            disabled={portalStatus === "checking" || chainRunning}
-            data-testid="button-run-manual-check"
-            className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
-          >
-            {portalStatus === "checking" || chainRunning ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2 transition-transform duration-300 group-hover/btn:rotate-180" />
-            )}
-            {chainRunning ? "Chain Running..." : "Run Manual Check"}
-          </Button>
+          <div className="flex items-center gap-0">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => runManualCheck("standard")}
+              disabled={portalStatus === "checking" || chainRunning}
+              data-testid="button-run-manual-check"
+              className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] rounded-r-none border-r-0"
+            >
+              {portalStatus === "checking" || chainRunning ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-2 transition-transform duration-300 group-hover/btn:rotate-180" />
+              )}
+              {chainRunning ? "Chain Running..." : "Quick Scrape"}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={portalStatus === "checking" || chainRunning}
+                  data-testid="button-scrape-mode-dropdown"
+                  className="px-1.5 rounded-l-none transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => runManualCheck("standard")}
+                  data-testid="menu-scrape-standard"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Quick Scrape
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => runManualCheck("all")}
+                  data-testid="menu-scrape-all"
+                >
+                  <Layers className="h-4 w-4 mr-2" />
+                  Full Scrape (with files)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => runManualCheck("files")}
+                  data-testid="menu-scrape-files"
+                >
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  Files Only
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => runManualCheck("comments")}
+                  data-testid="menu-scrape-comments"
+                >
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  Comments Only
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           <Button
             size="sm"
             variant="outline"

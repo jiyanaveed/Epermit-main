@@ -470,6 +470,7 @@ app.post("/api/scrape", async (req, res) => {
     permitNumber,
     projectId,
     userId,
+    scrapeMode,
   } = req.body;
   const session = sessions[sessionId];
   if (!session) return res.status(404).json({ error: "Session not found" });
@@ -528,16 +529,35 @@ app.post("/api/scrape", async (req, res) => {
         : session.projects;
   }
 
-  const tabsFilter =
-    Array.isArray(tabsParam) && tabsParam.length > 0 ? tabsParam : null;
-  const tabsToUse = tabsFilter || TAB_DEFS.map((t) => t.key);
+  const SCRAPE_MODE_TABS = {
+    all: ["status", "files", "tasks", "info", "reports"],
+    standard: ["status", "tasks", "info", "reports"],
+    files: ["files"],
+    comments: ["files"],
+  };
+
+  if (scrapeMode && !SCRAPE_MODE_TABS[scrapeMode]) {
+    return res.status(400).json({ error: `Invalid scrapeMode: "${scrapeMode}". Valid modes: all, standard, files, comments` });
+  }
+
+  let tabsToUse;
+  if (scrapeMode && SCRAPE_MODE_TABS[scrapeMode]) {
+    tabsToUse = SCRAPE_MODE_TABS[scrapeMode];
+  } else if (Array.isArray(tabsParam) && tabsParam.length > 0) {
+    tabsToUse = tabsParam;
+  } else {
+    tabsToUse = TAB_DEFS.map((t) => t.key);
+  }
+
+  const commentsOnly = scrapeMode === "comments";
+
   const tabCount = TAB_DEFS.filter((t) => tabsToUse.includes(t.key)).length;
   session.status = "scraping";
   session.total = targets.length * tabCount;
   session.progress = 0;
   session.data = {};
-  res.json({ message: "Scraping started", total: session.total });
-  scrapeAll(session, targets, sessionId, tabsToUse, projectId, userId).catch(
+  res.json({ message: "Scraping started", total: session.total, scrapeMode: scrapeMode || "all" });
+  scrapeAll(session, targets, sessionId, tabsToUse, projectId, userId, commentsOnly).catch(
     (err) => {
       session.status = "error";
       session.message = `Error: ${err.message}`;
@@ -561,6 +581,7 @@ async function scrapeAll(
   tabsToUse,
   supabaseProjectId,
   userId,
+  commentsOnly = false,
 ) {
   const tabsFilter =
     tabsToUse && tabsToUse.length > 0 ? new Set(tabsToUse) : null;
@@ -744,7 +765,7 @@ async function scrapeAll(
           });
         }
         if (tab.key === "files") {
-          const filesResult = await extractFilesTab(page, context, session);
+          const filesResult = await extractFilesTab(page, context, session, commentsOnly);
           tabData.folders = filesResult.folders;
           const totalFiles = filesResult.folders.reduce((s, f) => s + f.files.length, 0);
           const totalComments = filesResult.folders.reduce((s, f) => s + f.files.reduce((s2, fi) => s2 + fi.commentCount, 0), 0);
@@ -930,7 +951,7 @@ function escapeCSSId(str) {
   return str.replace(/([^\w-])/g, "\\$1");
 }
 
-async function extractFilesTab(page, context, session) {
+async function extractFilesTab(page, context, session, commentsOnly = false) {
   const result = { folders: [] };
 
   const folderElements = await page.$$eval(
@@ -1071,6 +1092,15 @@ async function extractFilesTab(page, context, session) {
         };
 
         if (file.fileId && file.hasLink) {
+          if (commentsOnly) {
+            const skipStatuses = ["uploaded", "pending", "new", ""];
+            const fileStatusLower = (file.status || "").toLowerCase().trim();
+            if (skipStatuses.includes(fileStatusLower)) {
+              console.log(`       ⏭️  Skipping (comments-only mode, status: "${file.status || "empty"}")`);
+              folderData.files.push(fileEntry);
+              continue;
+            }
+          }
           try {
             let fileLink = null;
             if (file.linkId) {
