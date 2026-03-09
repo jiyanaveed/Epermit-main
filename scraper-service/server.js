@@ -183,12 +183,19 @@ async function performLogin(page, username, password, dashboardUrl) {
       "#okta-signin-username",
       'input[name="username"]',
       'input[type="email"]',
-      'input[type="text"]',
+      'input[type="text"]:not([type="checkbox"]):not([type="radio"]):not([role="checkbox"])',
     ];
     let uF = null;
     for (const s of uSel) {
       uF = await page.$(s);
-      if (uF && (await uF.isVisible().catch(() => false))) break;
+      if (uF && (await uF.isVisible().catch(() => false))) {
+        const inputType = await uF.getAttribute("type").catch(() => "");
+        if (inputType === "checkbox" || inputType === "radio") {
+          uF = null;
+          continue;
+        }
+        break;
+      }
       uF = null;
     }
     if (!uF) throw new Error("Cannot find username field");
