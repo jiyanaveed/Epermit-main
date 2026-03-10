@@ -25,6 +25,7 @@ Preferred communication style: Simple, everyday language.
 ### Scraper Service
 - **Technology:** Node.js/Express with Playwright for browser automation, supporting multi-portal types (ProjectDox, Accela).
 - **Functionality:** Extracts project data, PDFs, files, and comments, syncing to Supabase. Handles dynamic portal routing and credential matching by jurisdiction. File downloads use `viewFile(fileId)` popup approach with multi-strategy fallback (download button, embed src, captured responses). File-size guardrails: MIN 1KB, MAX 100MB per file, 500MB per-scrape cumulative cap, 1GB downloads dir cleanup.
+- **AI Compliance Analysis:** `/api/analyze-drawing` endpoint uses OpenAI GPT-4o Vision to analyze architectural drawings for building code compliance. Supports jurisdiction-specific amendments (DC, NYC, California, Florida, Chicago). Protected by Supabase auth token validation.
 - **Data Sync:** Merges newly scraped data with existing `portal_data` to avoid data loss during partial scrapes. Ensures Supabase sync completion before marking a session as "done."
 
 ### Shadow Mode

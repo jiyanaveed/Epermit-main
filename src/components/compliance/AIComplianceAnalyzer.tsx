@@ -866,8 +866,15 @@ export function AIComplianceAnalyzer() {
       };
 
       const runAnalysis = async (codeType: "ibc" | "local"): Promise<AnalysisResult> => {
-        const { data, error } = await supabase.functions.invoke("analyze-drawing", {
-          body: {
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (authSession?.access_token) {
+          headers["Authorization"] = `Bearer ${authSession.access_token}`;
+        }
+        const response = await fetch("/api/analyze-drawing", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
             imageBase64: base64,
             imageType,
             jurisdiction: jurisdiction === "general" ? null : jurisdiction,
@@ -875,25 +882,18 @@ export function AIComplianceAnalyzer() {
             codeYear,
             codeType,
             disciplines: files.map((f) => f.discipline),
-          },
+          }),
         });
 
-        if (error) {
-          let message = error.message || "Analysis failed";
-          if (message.includes("non-2xx")) {
-            message =
-              "Analysis service unavailable. Deploy the analyze-drawing Edge Function (supabase functions deploy analyze-drawing) or check the function logs.";
-            try {
-              const err = error as { context?: { json?: () => Promise<{ error?: string }> } };
-              if (typeof err?.context?.json === "function") {
-                const body = await err.context.json();
-                if (body?.error && typeof body.error === "string") message = body.error;
-              }
-            } catch {
-              // use default message
-            }
-          }
-          throw new Error(message);
+        let data;
+        try {
+          data = await response.json();
+        } catch {
+          throw new Error(`Analysis service returned an invalid response (HTTP ${response.status})`);
+        }
+
+        if (!response.ok) {
+          throw new Error(data?.error || `Analysis failed (HTTP ${response.status})`);
         }
 
         if (data && typeof data === "object" && "error" in data && data.error) {
