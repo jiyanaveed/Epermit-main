@@ -673,7 +673,7 @@ export function AppSidebar() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {selectedProject.selectedProjectId && sidebarCredentials.length > 0 && (
+                  {sidebarCredentials.length > 0 && (
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground flex items-center gap-1">
                         <KeyRound className="h-3 w-3" />
