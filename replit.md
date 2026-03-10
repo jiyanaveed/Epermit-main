@@ -63,6 +63,12 @@ Preferred communication style: Simple, everyday language.
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).
 
+### Data Fetching Optimization (March 2026)
+- **`useProjects` hook** excludes `portal_data` JSONB from default fetch to avoid loading megabytes on every page. Uses explicit column list.
+- **`useProjectPortalData` hook** (`src/hooks/useProjectPortalData.ts`) fetches `portal_data` on-demand for specific project IDs only.
+- **All data hooks** use explicit `.select()` column lists instead of `.select('*')`: `useAnalytics`, `useProjectDocuments`, `useProjectActivity`, `useProjectTeam`, `useInspections`, `useDocumentComments`.
+- **Database indexes** added via migration `20260310000001`: `agent_runs(filing_id)`, `shadow_predictions(created_at)`, `parsed_comments(discipline)`.
+
 ## External Dependencies
 
 - **Supabase:** Primary backend for database, authentication, edge functions, and storage.

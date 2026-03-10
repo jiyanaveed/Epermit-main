@@ -37,7 +37,7 @@ export function useProjectTeam(projectId: string | null) {
       // Fetch team members
       const { data: membersData, error: membersError } = await supabase
         .from('project_team_members')
-        .select('*')
+        .select('id, project_id, user_id, role, created_at, updated_at')
         .eq('project_id', projectId)
         .order('created_at', { ascending: true });
 
@@ -73,7 +73,7 @@ export function useProjectTeam(projectId: string | null) {
       // Fetch pending invitations
       const { data: invitationsData, error: invitationsError } = await supabase
         .from('project_invitations')
-        .select('*')
+        .select('id, project_id, email, role, invited_by, token, status, expires_at, created_at, accepted_at')
         .eq('project_id', projectId)
         .eq('status', 'pending')
         .order('created_at', { ascending: false });

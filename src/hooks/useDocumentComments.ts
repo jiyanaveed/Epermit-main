@@ -35,7 +35,7 @@ export function useDocumentComments(projectId: string | null, documentId?: strin
     try {
       let query = supabase
         .from('document_comments')
-        .select('*')
+        .select('id, project_id, document_id, user_id, parent_comment_id, content, mentions, position_x, position_y, resolved, resolved_by, resolved_at, created_at, updated_at')
         .eq('project_id', projectId)
         .is('parent_comment_id', null)
         .order('created_at', { ascending: false });
@@ -51,7 +51,7 @@ export function useDocumentComments(projectId: string | null, documentId?: strin
       const commentIds = data?.map(c => c.id) || [];
       const { data: replies } = await supabase
         .from('document_comments')
-        .select('*')
+        .select('id, project_id, document_id, user_id, parent_comment_id, content, mentions, position_x, position_y, resolved, resolved_by, resolved_at, created_at, updated_at')
         .in('parent_comment_id', commentIds)
         .order('created_at', { ascending: true });
 

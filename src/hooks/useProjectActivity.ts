@@ -20,7 +20,7 @@ export function useProjectActivity(projectId: string | null) {
     try {
       const { data, error } = await supabase
         .from('project_activity')
-        .select('*')
+        .select('id, project_id, user_id, activity_type, title, description, metadata, created_at')
         .eq('project_id', projectId)
         .order('created_at', { ascending: false })
         .limit(50);

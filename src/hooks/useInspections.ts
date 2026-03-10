@@ -52,12 +52,12 @@ export function useInspections(projectId: string | null) {
       const [inspectionsRes, punchListRes] = await Promise.all([
         supabase
           .from('inspections')
-          .select('*')
+          .select('id, project_id, inspection_type, status, scheduled_date, completed_date, inspector_name, inspector_notes, result_notes, created_at, updated_at')
           .eq('project_id', projectId)
           .order('scheduled_date', { ascending: true }),
         supabase
           .from('punch_list_items')
-          .select('*')
+          .select('id, project_id, inspection_id, user_id, title, description, location, priority, status, assigned_to, due_date, resolved_at, resolved_by, created_at, updated_at')
           .eq('project_id', projectId)
           .order('created_at', { ascending: false }),
       ]);

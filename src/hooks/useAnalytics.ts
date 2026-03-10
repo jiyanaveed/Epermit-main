@@ -54,7 +54,7 @@ export function useAnalytics(dateRange?: DateRange) {
       // Fetch from the analytics view
       const { data, error } = await supabase
         .from('project_analytics')
-        .select('*');
+        .select('id, name, user_id, status, jurisdiction, project_type, permit_fee, expeditor_cost, total_cost, rejection_count, rejection_reasons, created_at, submitted_at, approved_at, draft_to_submit_days, submit_to_approval_days, total_cycle_days, inspection_count, failed_inspection_count, punch_list_count, open_punch_items, document_count');
 
       if (error) throw error;
 

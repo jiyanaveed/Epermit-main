@@ -54,7 +54,7 @@ export function useProjects() {
     try {
       const { data, error: fetchError } = await supabase
         .from('projects')
-        .select('*')
+        .select('id, name, permit_number, jurisdiction, status, user_id, portal_status, last_checked_at, created_at, updated_at, is_shadow_mode, address, project_url, city, state, zip_code, project_type, description, estimated_value, square_footage, deadline, notes, permit_fee, expeditor_cost, total_cost, credential_id, submitted_at, approved_at, rejection_count, rejection_reasons')
         .order('updated_at', { ascending: false });
 
       if (fetchError) throw fetchError;

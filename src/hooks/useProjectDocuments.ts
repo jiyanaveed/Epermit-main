@@ -31,7 +31,7 @@ export function useProjectDocuments(projectId: string | null) {
     try {
       const { data, error: fetchError } = await supabase
         .from('project_documents')
-        .select('*')
+        .select('id, project_id, user_id, file_name, file_path, file_size, file_type, document_type, description, version, parent_document_id, created_at, updated_at')
         .eq('project_id', projectId)
         .order('created_at', { ascending: false });
 
