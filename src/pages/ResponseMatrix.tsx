@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
+import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { ReviewTimer, type ReviewTimerHandle } from "@/components/shadow/ReviewTimer";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -228,12 +229,13 @@ export interface ParsedCommentRow {
 export default function ResponseMatrix() {
   const { user, loading: authLoading } = useAuth();
   const { projects } = useProjects();
+  const { selectedProjectId: sidebarProjectId } = useSelectedProject();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const projectIdParam = searchParams.get("project") ?? searchParams.get("project_id");
+  const projectIdParam = searchParams.get("projectId") ?? searchParams.get("project") ?? searchParams.get("project_id");
   const filterPending = searchParams.get("filter") === "pending";
 
-  const [projectId, setProjectId] = useState<string | null>(projectIdParam);
+  const [projectId, setProjectId] = useState<string | null>(projectIdParam ?? sidebarProjectId);
   const [saving, setSaving] = useState(false);
   const timerRef = useRef<ReviewTimerHandle>(null);
   const [draftingId, setDraftingId] = useState<string | null>(null);
@@ -262,6 +264,12 @@ export default function ResponseMatrix() {
     }>;
     summary: { avg_score: number; flagged_count: number; top_issues: string[] };
   } | null>(null);
+
+  useEffect(() => {
+    if (!projectIdParam && sidebarProjectId && sidebarProjectId !== projectId) {
+      setProjectId(sidebarProjectId);
+    }
+  }, [sidebarProjectId, projectIdParam]);
 
   const fetchComments = useCallback(async (): Promise<ParsedCommentRow[]> => {
     if (!projectId) return [];
