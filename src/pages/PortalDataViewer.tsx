@@ -77,6 +77,7 @@ interface FileEntry {
   uploadedDate: string;
   commentCount: number;
   comments?: FileComment[];
+  viewUrl?: string;
 }
 
 interface FolderEntry {
@@ -1455,7 +1456,20 @@ export default function PortalDataViewer() {
                                               <TableCell className="text-sm">
                                                 <div className="flex items-center gap-2">
                                                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                                  <span className="truncate max-w-[300px]">{file.name}</span>
+                                                  {file.viewUrl ? (
+                                                    <a
+                                                      href={file.viewUrl}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="truncate max-w-[300px] text-[#6B9AC4] hover:text-[#FF6B2B] hover:underline transition-colors"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                      data-testid={`link-file-${fi}-${fIdx}`}
+                                                    >
+                                                      {file.name}
+                                                    </a>
+                                                  ) : (
+                                                    <span className="truncate max-w-[300px]">{file.name}</span>
+                                                  )}
                                                 </div>
                                               </TableCell>
                                               <TableCell className="text-sm whitespace-nowrap">{file.status || "—"}</TableCell>

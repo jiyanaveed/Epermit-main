@@ -87,6 +87,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/view-file", express.static(path.join(__dirname, "downloads")));
 
 const PORT = 3001;
 const DEFAULT_DASHBOARD_URL = "https://washington-dc-us.avolvecloud.com";
@@ -826,12 +827,12 @@ async function scrapeAll(
 
           if (cleanKvs.length > 0 && !skipProjectInfo) {
             console.log(
-              `     📋 Extracted ${cleanKvs.length} Project Info fields: ${cleanKvs.map((k) => k.key).join(", ")}`,
+              `      📋 Extracted ${cleanKvs.length} Project Info fields: ${cleanKvs.map((k) => k.key).join(", ")}`,
             );
             tabData.projectInfo = cleanKvs;
           } else if (skipProjectInfo) {
             console.log(
-              `     📋 Skipping projectInfo (DC ProjectDox-style extraction); frontend will use tables + portalData`,
+              `      📋 Skipping projectInfo (DC ProjectDox-style extraction); frontend will use tables + portalData`,
             );
           }
 
@@ -903,7 +904,7 @@ async function scrapeAll(
     const newHash = hashPortalData(currentData);
 
     try {
-      console.log(`   🔄 Syncing ${projectNum} to Supabase...`);
+      console.log(`    🔄 Syncing ${projectNum} to Supabase...`);
 
       const { data: existingRows } = await supabase
         .from("projects")
@@ -917,7 +918,7 @@ async function scrapeAll(
       if (existingRow && existingRow.portal_data_hash === newHash) {
         actualProjectId = existingRow.id;
         console.log(
-          `   ⏭️  Data unchanged for ${projectNum} (hash match), skipping update`,
+          `    ⏭️  Data unchanged for ${projectNum} (hash match), skipping update`,
         );
         await supabase
           .from("projects")
@@ -942,7 +943,7 @@ async function scrapeAll(
           const keptKeys = Object.keys(existingTabs).filter((k) => !newTabs[k]);
           if (keptKeys.length > 0) {
             console.log(
-              `   🔀 Merged tabs: kept existing [${keptKeys.join(", ")}], updated [${Object.keys(newTabs).join(", ")}]`,
+              `    🔀 Merged tabs: kept existing [${keptKeys.join(", ")}], updated [${Object.keys(newTabs).join(", ")}]`,
             );
           }
         }
@@ -966,14 +967,14 @@ async function scrapeAll(
           .select();
 
         if (error) {
-          console.error("   ❌ Supabase error:", error.message, error.details);
+          console.error("    ❌ Supabase error:", error.message, error.details);
           continue;
         }
 
         if (data && Array.isArray(data) && data.length > 0) {
           actualProjectId = data[0].id;
           console.log(
-            "   ✅ Updated existing project (new data):",
+            "    ✅ Updated existing project (new data):",
             actualProjectId,
           );
         } else {
@@ -984,7 +985,7 @@ async function scrapeAll(
             .select();
           if (err2) {
             console.error(
-              "   ❌ Supabase error (permit_number fallback):",
+              "    ❌ Supabase error (permit_number fallback):",
               err2.message,
               err2.details,
             );
@@ -993,12 +994,14 @@ async function scrapeAll(
           if (data2 && Array.isArray(data2) && data2.length > 0) {
             actualProjectId = data2[0].id;
             console.log(
-              "   ✅ Updated existing project (permit_number match):",
+              "    ✅ Updated existing project (permit_number match):",
               actualProjectId,
             );
           } else {
             if (!userId) {
-              console.error("   ❌ Cannot create project: userId not provided");
+              console.error(
+                "    ❌ Cannot create project: userId not provided",
+              );
               continue;
             }
             const { data: created, error: createError } = await supabase
@@ -1019,7 +1022,7 @@ async function scrapeAll(
               .select();
             if (createError) {
               console.error(
-                "   ❌ Supabase create error:",
+                "    ❌ Supabase create error:",
                 createError.message,
                 createError.details,
               );
@@ -1028,7 +1031,7 @@ async function scrapeAll(
             if (created && created.length > 0) {
               actualProjectId = created[0].id;
               console.log(
-                "   📝 Created new project:",
+                "    📝 Created new project:",
                 actualProjectId,
                 "for permit",
                 projectNum,
@@ -1047,19 +1050,19 @@ async function scrapeAll(
           );
         if (credErr) {
           console.warn(
-            "   ⚠️ Could not update portal_credentials project_id:",
+            "    ⚠️ Could not update portal_credentials project_id:",
             credErr.message,
           );
         }
       }
     } catch (dbErr) {
-      console.error("   ❌ DB Error:", dbErr.message);
+      console.error("    ❌ DB Error:", dbErr.message);
     }
   }
 
   session.status = "done";
   session.message = `Scraping complete! ${projects.length} projects extracted and synced.`;
-  console.log(`   ✅ Supabase sync complete — session status set to "done"`);
+  console.log(`    ✅ Supabase sync complete — session status set to "done"`);
 }
 
 function escapeCSSId(str) {
@@ -1067,101 +1070,177 @@ function escapeCSSId(str) {
 }
 
 async function extractFilesTab(page, context, session, commentsOnly = false) {
-  console.log(`\n🕵️ INFRAGISTICS PROBE START...`);
+  const currentUrl = page.url();
+  if (currentUrl.includes('b2clogin') || currentUrl.includes('Login') || currentUrl.includes('SessionEnded')) {
+    console.log("     ⚠️ Session expired during Files tab scraping, skipping files");
+    return { folders: [], error: "Session expired" };
+  }
+
+  const webUiBase = (() => {
+    try {
+      const u = new URL(currentUrl);
+      const parts = u.hostname.split(".");
+      if (parts[0] && !parts[0].includes("projectdoxwebui")) {
+        parts[0] = parts[0] + "-projectdoxwebui";
+      }
+      return `${u.protocol}//${parts.join(".")}`;
+    } catch (e) {
+      return "https://washington-dc-us-projectdoxwebui.avolvecloud.com";
+    }
+  })();
+
+  console.log(`\n🕵️ Extracting Files tab (download + grid)...`);
   const result = { folders: [] };
 
-  // 1. Find folders using the specific Ignite UI selectors found in your HTML
   const folderElements = await page.$$eval(
     "#folderTree li.ui-igtree-node",
     (nodes) =>
       nodes
-        .map((node) => {
-          const anchor = node.querySelector("a");
-          return {
-            text: anchor ? anchor.textContent.trim() : "",
-            path: node.getAttribute("data-path"),
-            value: node.getAttribute("data-value"),
-          };
-        })
+        .map((node) => ({
+          text: node.querySelector("a")?.textContent.trim() || "",
+          path: node.getAttribute("data-path"),
+        }))
         .filter((f) => f.text.includes("(")),
   );
 
-  console.log(`      📁 Found ${folderElements.length} folders in Ignite Tree`);
+  if (folderElements.length === 0) {
+    console.log("     📁 No folders found via #folderTree, trying fallback selectors...");
+    const fallbackFolders = await page.$$eval(
+      'a[id*="FolderName"], a[id*="folderName"], td a[onclick*="Folder"], div.TreeNode a, span.TreeNode a',
+      (els) =>
+        els.map((el) => ({
+          text: el.textContent.trim(),
+          path: el.id || "",
+        })).filter((f) => f.text.includes("("))
+    );
+    if (fallbackFolders.length > 0) {
+      console.log(`     📁 Found ${fallbackFolders.length} folders via fallback`);
+      folderElements.push(...fallbackFolders);
+    }
+  }
+
+  console.log(`     📁 Found ${folderElements.length} folders`);
 
   for (let fi = 0; fi < folderElements.length; fi++) {
     const fInfo = folderElements[fi];
+    const countMatch = fInfo.text.match(/\((\d+)/);
+    const fileCount = countMatch ? parseInt(countMatch[1], 10) : 0;
     const folderName = fInfo.text.replace(/\s*\(.*$/, "").trim();
-
-    console.log(
-      `      📁 [${fi + 1}/${folderElements.length}] Selecting "${folderName}" (Path: ${fInfo.path})...`,
-    );
+    console.log(`     📁 [${fi + 1}/${folderElements.length}] "${folderName}" (${fileCount} files)`);
+    if (session) session.message = `Files → ${folderName}`;
 
     try {
-      // 2. TRIGGER THE WIDGET: Click the specific anchor inside the tree node
-      const selector = `#folderTree li[data-path="${fInfo.path}"] a`;
-      await page.click(selector);
+      if (fInfo.path) {
+        const selector = fInfo.path.startsWith("#")
+          ? `${fInfo.path} a`
+          : `#folderTree li[data-path="${fInfo.path}"] a`;
+        await page.click(selector).catch(async () => {
+          const allLinks = await page.$$("a");
+          for (const link of allLinks) {
+            const t = await link.textContent().catch(() => "");
+            if (t.trim() === fInfo.text) { await link.click(); break; }
+          }
+        });
+      }
 
-      // 3. WAIT FOR GRID HYDRATION: Wait for the specific igGrid data rows
-      console.log(`         ⏳ Waiting for file grid to hydrate...`);
-      // We wait for either a file link to appear OR the 'no data' message
-      await page
-        .waitForSelector(".ui-iggrid-table tbody tr, .ui-iggrid-nodata", {
-          timeout: 8000,
-        })
-        .catch(() => {});
-      await page.waitForTimeout(2000); // Small buffer for rendering
+      console.log(`       ⏳ Waiting for file grid...`);
+      await page.waitForSelector(".ui-iggrid-table tbody tr", { timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(2000);
 
-      // 4. EXTRACT: Target the Ignite UI grid structure
       const filesFound = await page.evaluate(() => {
         const rows = [];
-        // Ignite UI puts data in a table with class 'ui-iggrid-table'
+        const seen = new Set();
         const gridRows = document.querySelectorAll(".ui-iggrid-table tbody tr");
-
         gridRows.forEach((row) => {
-          // Look for the filename link (usually has 'fileID' in it)
-          const fileLink = row.querySelector(
-            'a[onclick*="File"], a[href*="File"]',
-          );
-          if (fileLink) {
-            const cells = row.querySelectorAll("td");
-            const name = fileLink.textContent.trim();
-            // ProjectDox specific columns: 1=Status, 3=Date
-            rows.push({
-              name: name,
-              status: cells[1] ? cells[1].textContent.trim() : "Unknown",
-              date: cells[3] ? cells[3].textContent.trim() : "Unknown",
-              id:
-                (
-                  fileLink.getAttribute("onclick") ||
-                  fileLink.getAttribute("href")
-                ).match(/fileID=(\d+)/i)?.[1] || "",
-            });
-          }
+          const cells = row.querySelectorAll("td");
+          const fileLink = row.querySelector('a[onclick*="File"], a[href*="File"], a[onclick*="file"], .file-link');
+          if (!fileLink) return;
+          const name = fileLink.textContent.trim();
+          if (!name || name.length < 2 || seen.has(name)) return;
+          seen.add(name);
+
+          const rawOnclick = fileLink.getAttribute("onclick") || "";
+          const href = fileLink.getAttribute("href") || "";
+          const idMatch = rawOnclick.match(/fileID=(\d+)/i) || href.match(/fileID=(\d+)/i);
+          const fileId = idMatch ? idMatch[1] : "";
+
+          const cellTexts = Array.from(cells).map((c) => c.textContent.trim());
+
+          rows.push({
+            name,
+            id: fileId,
+            status: cellTexts[1] || "",
+            reviewedBy: cellTexts[2] || "",
+            uploadedDate: cellTexts[3] || "",
+          });
         });
         return rows;
       });
 
-      console.log(`         ✅ Found ${filesFound.length} files`);
+      console.log(`       ✅ Found ${filesFound.length} files in grid`);
+
+      const folderSafe = folderName.replace(/[/\\?%*:|"<>\s]/g, "_").substring(0, 30);
+      const folderFiles = [];
+      for (let i = 0; i < filesFound.length; i++) {
+        const file = filesFound[i];
+        const rawSafe = file.name.replace(/[/\\?%*:|"<>]/g, "-");
+        const safeName = file.id ? `${file.id}_${rawSafe}` : `${folderSafe}_${i}_${rawSafe}`;
+
+        if (commentsOnly) {
+          const skipStatuses = ["uploaded", "pending", "new", ""];
+          if (skipStatuses.includes((file.status || "").toLowerCase().trim())) {
+            folderFiles.push({
+              name: file.name,
+              fileId: file.id,
+              status: file.status,
+              reviewedBy: file.reviewedBy,
+              uploadedDate: file.uploadedDate,
+              commentCount: 0,
+              comments: [],
+              viewUrl: "",
+            });
+            continue;
+          }
+        }
+
+        let viewUrl = "";
+        if (file.id) {
+          console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading: ${safeName}`);
+          const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase);
+          if (dlResult.success) {
+            viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+          }
+        }
+
+        folderFiles.push({
+          name: file.name,
+          fileId: file.id,
+          status: file.status,
+          reviewedBy: file.reviewedBy,
+          uploadedDate: file.uploadedDate,
+          commentCount: 0,
+          comments: [],
+          viewUrl: viewUrl,
+        });
+      }
 
       result.folders.push({
         name: folderName,
-        fileCount: filesFound.length,
-        files: filesFound.map((f) => ({
-          name: f.name,
-          fileId: f.id,
-          status: f.status,
-          uploadedDate: f.date,
-          comments: [],
-          commentCount: 0,
-        })),
+        fileCount: filesFound.length || fileCount,
+        files: folderFiles,
       });
     } catch (err) {
-      console.log(`      ⚠️ Folder Error: ${err.message}`);
+      console.log(`     ⚠️ Folder error: ${err.message}`);
+      result.folders.push({
+        name: folderName,
+        fileCount: fileCount,
+        files: [],
+      });
     }
   }
-
   return result;
 }
+
 async function extractPDFsFromPage(page, context) {
   const pdfData = [];
 
@@ -1190,11 +1269,11 @@ async function extractPDFsFromPage(page, context) {
   });
 
   console.log(
-    `     📄 Found ${reportNames.length} report names: ${reportNames.map((n) => '"' + n + '"').join(", ")}`,
+    `      📄 Found ${reportNames.length} report names: ${reportNames.map((n) => '"' + n + '"').join(", ")}`,
   );
 
   if (reportNames.length === 0) {
-    console.log("     ⚠️ No report names found in table");
+    console.log("      ⚠️ No report names found in table");
     return pdfData;
   }
 
@@ -1202,7 +1281,7 @@ async function extractPDFsFromPage(page, context) {
   for (let i = 0; i < reportNames.length; i++) {
     const reportName = reportNames[i];
     console.log(
-      `     📄 [${i + 1}/${reportNames.length}] Clicking: "${reportName}"`,
+      `      📄 [${i + 1}/${reportNames.length}] Clicking: "${reportName}"`,
     );
 
     try {
@@ -1215,7 +1294,7 @@ async function extractPDFsFromPage(page, context) {
 
       if (!linkHandle) {
         console.log(
-          `        ⚠️ Could not find clickable link for "${reportName}"`,
+          `         ⚠️ Could not find clickable link for "${reportName}"`,
         );
         pdfData.push({
           fileName: reportName,
@@ -1233,12 +1312,12 @@ async function extractPDFsFromPage(page, context) {
 
       // Click the link
       await linkHandle.click();
-      console.log(`        Clicked, waiting for popup...`);
+      console.log(`         Clicked, waiting for popup...`);
 
       const popup = await popupPromise;
 
       if (popup) {
-        console.log(`        Popup detected: ${popup.url()}`);
+        console.log(`         Popup detected: ${popup.url()}`);
 
         // Wait for the report to fully render
         await popup.waitForLoadState("domcontentloaded").catch(() => {});
@@ -1247,7 +1326,7 @@ async function extractPDFsFromPage(page, context) {
         await popup.waitForTimeout(5000);
 
         const finalUrl = popup.url();
-        console.log(`        Popup final URL: ${finalUrl}`);
+        console.log(`         Popup final URL: ${finalUrl}`);
 
         // Save debug screenshot for first report
         if (i === 0) {
@@ -1257,7 +1336,7 @@ async function extractPDFsFromPage(page, context) {
               fullPage: true,
             })
             .catch(() => {});
-          console.log(`        📸 debug_report_popup.png saved`);
+          console.log(`         📸 debug_report_popup.png saved`);
         }
 
         // Extract text + full HTML from report popup (SSRS uses nested tables; capture HTML for direct render)
@@ -1320,10 +1399,10 @@ async function extractPDFsFromPage(page, context) {
           });
           screenshotBase64 = screenshotBuffer.toString("base64");
           console.log(
-            `        📸 Screenshot: ${Math.round(screenshotBase64.length / 1024)}KB base64`,
+            `         📸 Screenshot: ${Math.round(screenshotBase64.length / 1024)}KB base64`,
           );
         } catch (ssErr) {
-          console.log(`        ⚠️ Screenshot failed: ${ssErr.message}`);
+          console.log(`         ⚠️ Screenshot failed: ${ssErr.message}`);
         }
         if (content?.text && content.text.length > 50) {
           const cleaned = content.text
@@ -1334,14 +1413,14 @@ async function extractPDFsFromPage(page, context) {
             .replace(/\n{3,}/g, "\n\n")
             .trim();
           console.log(
-            `        ✓ Extracted ${cleaned.length} chars, html: ${(content.html || "").length} (source: ${content.source})`,
+            `         ✓ Extracted ${cleaned.length} chars, html: ${(content.html || "").length} (source: ${content.source})`,
           );
-          console.log(`        [DEBUG] text length: ${cleaned?.length || 0}`);
+          console.log(`         [DEBUG] text length: ${cleaned?.length || 0}`);
           console.log(
-            `        [DEBUG] html length: ${content?.html?.length || 0}`,
+            `         [DEBUG] html length: ${content?.html?.length || 0}`,
           );
           console.log(
-            `        [DEBUG] html first 200 chars: ${(content?.html || "").substring(0, 200)}`,
+            `         [DEBUG] html first 200 chars: ${(content?.html || "").substring(0, 200)}`,
           );
           pdfData.push({
             fileName: reportName,
@@ -1353,7 +1432,7 @@ async function extractPDFsFromPage(page, context) {
           });
         } else {
           console.log(
-            `        ⚠️ No meaningful content (${content?.text?.length || 0} chars, source: ${content?.source})`,
+            `         ⚠️ No meaningful content (${content?.text?.length || 0} chars, source: ${content?.source})`,
           );
           pdfData.push({
             fileName: reportName,
@@ -1367,7 +1446,7 @@ async function extractPDFsFromPage(page, context) {
       } else {
         // No popup — check if content appeared in an iframe on the same page
         console.log(
-          `        ⚠️ No popup opened, checking page for iframe/overlay...`,
+          `         ⚠️ No popup opened, checking page for iframe/overlay...`,
         );
         await page.waitForTimeout(3000);
 
@@ -1390,7 +1469,7 @@ async function extractPDFsFromPage(page, context) {
 
         if (inlineContent) {
           console.log(
-            `        ✓ Found inline content: ${inlineContent.length} chars`,
+            `         ✓ Found inline content: ${inlineContent.length} chars`,
           );
           pdfData.push({
             fileName: reportName,
@@ -1409,7 +1488,7 @@ async function extractPDFsFromPage(page, context) {
         }
       }
     } catch (err) {
-      console.error(`        ✗ Error: ${err.message}`);
+      console.error(`         ✗ Error: ${err.message}`);
       pdfData.push({
         fileName: reportName,
         text: "",
@@ -1422,6 +1501,43 @@ async function extractPDFsFromPage(page, context) {
   return pdfData;
 }
 
+async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase) {
+  const downloadDir = path.join(__dirname, "downloads");
+  if (!fs.existsSync(downloadDir))
+    fs.mkdirSync(downloadDir, { recursive: true });
+
+  const downloadUrl = `${webUiBase || "https://washington-dc-us-projectdoxwebui.avolvecloud.com"}/WebForms/FileHandler.ashx?action=download&fileID=${fileId}`;
+  console.log(`      📥 Downloading via FileHandler: ${fileName}`);
+
+  try {
+    const base64Data = await page.evaluate(async (url) => {
+      const r = await fetch(url, { credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const buf = await r.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    }, downloadUrl);
+
+    const buffer = Buffer.from(base64Data, "base64");
+    if (buffer.length < 1000) {
+      console.log(`      ⚠️ File too small (${buffer.length} bytes), skipping: ${fileName}`);
+      return { success: false };
+    }
+
+    const downloadPath = path.join(downloadDir, fileName);
+    fs.writeFileSync(downloadPath, buffer);
+    const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+    console.log(`      ✅ Downloaded: ${fileName} (${sizeMB} MB)`);
+    return { success: true, path: downloadPath, sizeMB };
+  } catch (err) {
+    console.error(`      ❌ Download failed for ${fileName}: ${err.message}`);
+    return { success: false };
+  }
+}
 async function extractPageData(page) {
   const data = await page.evaluate(() => {
     const d = { keyValues: [], tables: [], links: [], rawText: "" };
@@ -1926,7 +2042,7 @@ app.post("/api/permitwizard/file", async (req, res) => {
     });
 });
 
-// ─── PermitWizard Submission Finalization (Agent 08) ─────────────────────────
+// ─ ��─ PermitWizard Submission Finalization (Agent 08) ─────────────────────────
 app.post("/api/permitwizard/submit", async (req, res) => {
   const { sessionToken, filingId, filingData } = req.body;
 
@@ -2890,10 +3006,8 @@ app.get("/api/export/:sessionId", async (req, res) => {
       { header: "Date", key: "date", width: 15 },
     ];
 
-    // TEMPORARY LIST TO HOLD ROWS FOR SORTING
     const empRows = [];
 
-    // Helper to add to list
     const addEmpRow = (empName, projNum, taskName, status, dept, date) => {
       if (!empName || empName.includes("Unassigned")) return;
       empRows.push({
@@ -2906,7 +3020,6 @@ app.get("/api/export/:sessionId", async (req, res) => {
       });
     };
 
-    // Iterate through all projects to find employee data
     for (const [pid, pd] of Object.entries(s.data)) {
       const taskTab = pd.tabs["tasks"];
       if (taskTab && taskTab.tables) {
@@ -2963,12 +3076,8 @@ app.get("/api/export/:sessionId", async (req, res) => {
       }
     }
 
-    // 🟢 FIX: Sort the array in JavaScript before adding to Excel
     empRows.sort((a, b) => a.emp.localeCompare(b.emp));
-
-    // Add sorted rows to sheet
     empRows.forEach((row) => empSheet.addRow(row));
-
     styleSheet(empSheet);
 
     // 2. Summary Sheet (Original)
@@ -3065,9 +3174,10 @@ process.on("SIGINT", () => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🏛️  ProjectDox Data Extractor                       ║
+║  🏛️  ProjectDox Data Extractor                        ║
 ║  Server running at: http://localhost:${PORT}          ║
 ║  Export now includes "Work by Employee" Tab          ║
+║  Automatic PDF Downloading Enabled (Option A)        ║
 ╚══════════════════════════════════════════════════════╝
   `);
   import("open")
