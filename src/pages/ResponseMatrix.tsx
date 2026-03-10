@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -22,7 +21,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/useAuth";
-import { useProjects } from "@/hooks/useProjects";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { ReviewTimer, type ReviewTimerHandle } from "@/components/shadow/ReviewTimer";
 import { supabase } from "@/lib/supabase";
@@ -228,14 +226,13 @@ export interface ParsedCommentRow {
 
 export default function ResponseMatrix() {
   const { user, loading: authLoading } = useAuth();
-  const { projects } = useProjects();
   const { selectedProjectId: sidebarProjectId } = useSelectedProject();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const projectIdParam = searchParams.get("projectId") ?? searchParams.get("project") ?? searchParams.get("project_id");
   const filterPending = searchParams.get("filter") === "pending";
 
-  const [projectId, setProjectId] = useState<string | null>(projectIdParam ?? sidebarProjectId);
+  const projectId = projectIdParam ?? sidebarProjectId;
   const [saving, setSaving] = useState(false);
   const timerRef = useRef<ReviewTimerHandle>(null);
   const [draftingId, setDraftingId] = useState<string | null>(null);
@@ -264,12 +261,6 @@ export default function ResponseMatrix() {
     }>;
     summary: { avg_score: number; flagged_count: number; top_issues: string[] };
   } | null>(null);
-
-  useEffect(() => {
-    if (!projectIdParam && sidebarProjectId && sidebarProjectId !== projectId) {
-      setProjectId(sidebarProjectId);
-    }
-  }, [sidebarProjectId, projectIdParam]);
 
   const fetchComments = useCallback(async (): Promise<ParsedCommentRow[]> => {
     if (!projectId) return [];
@@ -312,10 +303,6 @@ export default function ResponseMatrix() {
   const modifiedCommentIds = useMemo(() => {
     return getModifiedCommentIds(withoutMetadata, lastSubmittedDraft);
   }, [withoutMetadata, lastSubmittedDraft]);
-
-  useEffect(() => {
-    if (projectIdParam && !projectId) setProjectId(projectIdParam);
-  }, [projectIdParam, projectId]);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth");
@@ -530,28 +517,12 @@ export default function ResponseMatrix() {
               <div className="h-0.5 w-16 mt-1 bg-gradient-to-r from-emerald-500 to-transparent rounded-full" />
             </div>
           </div>
-          {/* Project row: label + dropdown + badge */}
           <div className="flex flex-wrap items-center gap-3 gap-y-2">
-            <div className="flex items-center gap-2 shrink-0 min-w-0">
-              <Label className="text-sm text-muted-foreground whitespace-nowrap">Project</Label>
-              <Select value={projectId ?? ""} onValueChange={setProjectId}>
-                <SelectTrigger className="w-[200px] sm:w-[220px]">
-                  <SelectValue placeholder="Select project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {projectId && (
-                <span className="inline-flex items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-xs font-medium h-6 min-w-[24px] px-2 border border-emerald-500/30 shrink-0">
-                  {withoutMetadata.length}
-                </span>
-              )}
-            </div>
+            {projectId && (
+              <span className="inline-flex items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-xs font-medium h-6 min-w-[24px] px-2 border border-emerald-500/30 shrink-0">
+                {withoutMetadata.length} comment{withoutMetadata.length !== 1 ? "s" : ""}
+              </span>
+            )}
             {/* Action bar: justify-between, scrollable secondary, Save pinned right */}
             <div className="flex justify-between items-center gap-4 flex-1 min-w-0">
               <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-thin flex-1 min-w-0">
@@ -781,7 +752,7 @@ export default function ResponseMatrix() {
             </div>
             <p className="text-lg font-medium text-foreground">No project selected</p>
             <p className="text-sm text-muted-foreground mt-1 text-center max-w-sm">
-              Select a project from the dropdown above to load and manage parsed comments.
+              Select a project from the sidebar to load and manage parsed comments.
             </p>
             <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/dashboard")}>
               Go to Dashboard
