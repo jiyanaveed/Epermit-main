@@ -1683,51 +1683,58 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
 
   const downloadPath = path.join(downloadDir, fileName);
 
-  const capturedUrls = [];
-  const responseHandler = async (response) => {
+  const existingPages = context.pages();
+  for (const p of existingPages) {
+    if (p !== page) {
+      await p.close().catch(() => {});
+    }
+  }
+
+  const capturedResponses = [];
+  const contextResponseHandler = async (response) => {
     const url = response.url();
     const ct = response.headers()["content-type"] || "";
-    if (ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
-        ct.includes("image/") || ct.includes("application/zip") ||
-        url.match(/\.(pdf|dwg|doc|docx|xlsx|jpg|png|zip)(\?|$)/i)) {
-      capturedUrls.push({ url, contentType: ct, status: response.status() });
+    const status = response.status();
+    if (status === 200 && (
+      ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
+      ct.includes("image/") || ct.includes("application/zip") ||
+      url.match(/\.(pdf|dwg|doc|docx|xlsx|jpg|png|zip)(\?|$)/i)
+    )) {
+      try {
+        const body = await response.body().catch(() => null);
+        if (body && body.length >= MIN_FILE_SIZE) {
+          capturedResponses.push({ url, contentType: ct, body });
+        }
+      } catch (e) {}
     }
   };
 
-  page.on("response", responseHandler);
+  const allPages = context.pages();
+  for (const p of allPages) p.on("response", contextResponseHandler);
   let popup = null;
 
   try {
-    [popup] = await Promise.all([
-      page.waitForEvent("popup", { timeout: 15000 }).catch(() => null),
-      page.evaluate((fid) => {
-        if (typeof viewFile === "function") {
-          viewFile(fid);
-        } else if (typeof window.viewFile === "function") {
-          window.viewFile(fid);
-        } else {
-          const link = document.querySelector(`a[href*="viewFile(${fid})"]`);
-          if (link) link.click();
-        }
-      }, parseInt(fileId)),
-    ]);
+    const popupPromise = context.waitForEvent("page", { timeout: 10000 }).catch(() => null);
+    await page.evaluate((fid) => {
+      if (typeof viewFile === "function") {
+        viewFile(fid);
+      } else if (typeof window.viewFile === "function") {
+        window.viewFile(fid);
+      } else {
+        const link = document.querySelector(`a[href*="viewFile(${fid})"]`);
+        if (link) link.click();
+      }
+    }, parseInt(fileId));
+
+    await page.waitForTimeout(3000);
+    popup = await popupPromise;
 
     if (popup) {
+      popup.on("response", contextResponseHandler);
       console.log(`      🔗 Viewer popup opened: ${popup.url()}`);
 
       await popup.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
       await popup.waitForTimeout(3000);
-
-      const popupCapturedUrls = [];
-      const popupResponseHandler = async (response) => {
-        const url = response.url();
-        const ct = response.headers()["content-type"] || "";
-        if (ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
-            ct.includes("image/") || url.match(/\.(pdf|dwg|doc|docx|xlsx)(\?|$)/i)) {
-          popupCapturedUrls.push({ url, contentType: ct, status: response.status() });
-        }
-      };
-      popup.on("response", popupResponseHandler);
 
       const [download] = await Promise.all([
         popup.waitForEvent("download", { timeout: 10000 }).catch(() => null),
@@ -1776,8 +1783,6 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
         await popup.close().catch(() => {});
         return { success: true, path: downloadPath, sizeMB };
       }
-
-      popup.removeListener("response", popupResponseHandler);
 
       const fileSourceUrl = await popup.evaluate(() => {
         const embed = document.querySelector("embed[src], object[data], iframe[src]");
@@ -1846,57 +1851,6 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
         }
       }
 
-      const allCaptured = [...capturedUrls, ...popupCapturedUrls];
-      if (allCaptured.length > 0) {
-        console.log(`      🔗 Captured ${allCaptured.length} file-like responses during viewer load`);
-        for (const cap of allCaptured) {
-          if (cap.status !== 200) continue;
-          try {
-            const fetchResult = await popup.evaluate(async (url) => {
-              const r = await fetch(url, { credentials: "include" });
-              if (!r.ok) return { error: `HTTP ${r.status}` };
-              const buf = await r.arrayBuffer();
-              const bytes = new Uint8Array(buf);
-              const chunks = [];
-              const chunkSize = 8192;
-              for (let i = 0; i < bytes.length; i += chunkSize) {
-                const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-                let binary = "";
-                for (let j = 0; j < slice.length; j++) {
-                  binary += String.fromCharCode(slice[j]);
-                }
-                chunks.push(btoa(binary));
-              }
-              return { chunks, size: bytes.length };
-            }, cap.url);
-
-            if (!fetchResult.error) {
-              const buffers = fetchResult.chunks.map(c => Buffer.from(c, "base64"));
-              const buffer = Buffer.concat(buffers);
-              if (buffer.length < MIN_FILE_SIZE) {
-                console.log(`      ⚠️ Captured file too small (${buffer.length} bytes < ${MIN_FILE_SIZE} bytes min). Rejected: ${fileName}`);
-              } else if (buffer.length > MAX_FILE_SIZE) {
-                console.log(`      ⚠️ Captured file too large (${(buffer.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
-              } else {
-                const cumulative = (session?._scrapeCumulativeBytes || 0) + buffer.length;
-                if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
-                  console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Rejected: ${fileName}`);
-                  continue;
-                }
-                fs.writeFileSync(downloadPath, buffer);
-                if (session) session._scrapeCumulativeBytes = cumulative;
-                const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-                console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB)`);
-                await popup.close().catch(() => {});
-                return { success: true, path: downloadPath, sizeMB };
-              }
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-      }
-
       const popupHtml = await popup.evaluate(() => {
         return {
           title: document.title,
@@ -1917,59 +1871,33 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
       await popup.close().catch(() => {});
     }
 
-    if (!popup && capturedUrls.length > 0) {
-      console.log(`      🔗 No popup, but captured ${capturedUrls.length} file-like responses from main page`);
-      for (const cap of capturedUrls) {
-        if (cap.status !== 200) continue;
-        try {
-          const fetchResult = await page.evaluate(async (url) => {
-            const r = await fetch(url, { credentials: "include" });
-            if (!r.ok) return { error: `HTTP ${r.status}` };
-            const buf = await r.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            const chunks = [];
-            const chunkSize = 8192;
-            for (let i = 0; i < bytes.length; i += chunkSize) {
-              const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-              let binary = "";
-              for (let j = 0; j < slice.length; j++) {
-                binary += String.fromCharCode(slice[j]);
-              }
-              chunks.push(btoa(binary));
-            }
-            return { chunks, size: bytes.length };
-          }, cap.url);
-
-          if (!fetchResult.error) {
-            const buffers = fetchResult.chunks.map(c => Buffer.from(c, "base64"));
-            const buffer = Buffer.concat(buffers);
-            if (buffer.length >= MIN_FILE_SIZE && buffer.length <= MAX_FILE_SIZE) {
-              const cumulative = (session?._scrapeCumulativeBytes || 0) + buffer.length;
-              if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
-                console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Skipping: ${fileName}`);
-              } else {
-                fs.writeFileSync(downloadPath, buffer);
-                if (session) session._scrapeCumulativeBytes = cumulative;
-                const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-                console.log(`      ✅ Downloaded via main-page captured response: ${fileName} (${sizeMB} MB)`);
-                return { success: true, path: downloadPath, sizeMB };
-              }
-            }
-          }
-        } catch (e) {
-          continue;
+    if (capturedResponses.length > 0) {
+      console.log(`      🔗 Captured ${capturedResponses.length} file-like response(s) from viewFile call`);
+      const best = capturedResponses.sort((a, b) => b.body.length - a.body.length)[0];
+      if (best.body.length <= MAX_FILE_SIZE) {
+        const cumulative = (session?._scrapeCumulativeBytes || 0) + best.body.length;
+        if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
+          console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Skipping: ${fileName}`);
+        } else {
+          fs.writeFileSync(downloadPath, best.body);
+          if (session) session._scrapeCumulativeBytes = cumulative;
+          const sizeMB = (best.body.length / 1024 / 1024).toFixed(2);
+          console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB)`);
+          return { success: true, path: downloadPath, sizeMB };
         }
+      } else {
+        console.log(`      ⚠️ Captured file too large (${(best.body.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
       }
-    }
-
-    if (!popup && capturedUrls.length === 0) {
+    } else if (!popup) {
       console.log(`      ⚠️ No viewer popup and no captured responses for viewFile(${fileId})`);
     }
   } catch (err) {
     console.log(`      ❌ Download error for ${fileName}: ${err.message}`);
   } finally {
-    page.removeListener("response", responseHandler);
-    if (popup) await popup.close().catch(() => {});
+    for (const p of context.pages()) {
+      p.removeListener("response", contextResponseHandler);
+    }
+    if (popup && popup !== page) await popup.close().catch(() => {});
   }
 
   return { success: false };
