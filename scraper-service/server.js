@@ -196,7 +196,7 @@ app.get("/api/progress/:sessionId", (req, res) => {
       res.write(
         `data: ${JSON.stringify({ status: s.status, message: s.message, progress: s.progress, total: s.total })}\n\n`,
       );
-      if (s.status === "done" || s.status === "error") {
+      if (s.status === "done" || s.status === "error" || s.status === "cancelled") {
         clearInterval(interval);
         res.end();
       }
@@ -796,6 +796,10 @@ app.post("/api/scrape", async (req, res) => {
       hashPortalData,
     )
       .then(() => {
+        if (session._cancelRequested) {
+          console.log("   🛑 Accela scrape was cancelled — not marking as done");
+          return;
+        }
         session.status = "done";
         session.progress = 1;
         session.message = `Accela scrape complete for ${permitNumber}`;
@@ -911,6 +915,10 @@ async function scrapeAll(
   const dashPage = session.page;
 
   for (let pi = 0; pi < projects.length; pi++) {
+    if (session._cancelRequested) {
+      console.log("   🛑 Scrape cancelled by user — aborting project loop");
+      return;
+    }
     const project = projects[pi];
     console.log(
       `\n📂 [${pi + 1}/${projects.length}] ${project.projectNum} (ID: ${project.projectId})`,
@@ -925,6 +933,10 @@ async function scrapeAll(
     };
 
     for (const tab of tabsToScrape) {
+      if (session._cancelRequested) {
+        console.log("   🛑 Scrape cancelled by user — aborting tab loop");
+        return;
+      }
       session.message = `${project.projectNum} → ${tab.label}`;
       console.log(`   📑 ${tab.label}...`);
 
@@ -1299,6 +1311,10 @@ async function scrapeAll(
     }
   }
 
+  if (session._cancelRequested) {
+    console.log("   🛑 Scrape was cancelled — not marking as done");
+    return;
+  }
   session.status = "done";
   session.message = `Scraping complete! ${projects.length} projects extracted and synced.`;
   console.log(`    ✅ Supabase sync complete — session status set to "done"`);
@@ -3515,6 +3531,17 @@ app.get("/api/data/:sessionId", (req, res) => {
     total: s.total,
     data: s.data,
   });
+});
+
+app.post("/api/scrape/cancel/:sessionId", (req, res) => {
+  const s = sessions[req.params.sessionId];
+  if (!s) return res.status(404).json({ error: "Session not found" });
+  s._cancelRequested = true;
+  s.status = "cancelled";
+  s.message = "Scrape cancelled by user";
+  console.log(`   🛑 Cancel requested for session ${req.params.sessionId}`);
+  cleanupSession(req.params.sessionId);
+  res.json({ message: "Scrape cancelled", sessionId: req.params.sessionId });
 });
 
 app.post("/api/logout/:sessionId", (req, res) => {

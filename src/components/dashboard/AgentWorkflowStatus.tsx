@@ -162,6 +162,7 @@ export function AgentWorkflowStatus() {
     null,
   );
   const eventSourceRef = useRef<EventSource | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
   const onScrapingCompleteRef = useRef<(() => void) | null>(null);
   const doneDismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -925,6 +926,35 @@ export function AgentWorkflowStatus() {
     chainPipelineRef.current = runChainedPipeline;
   }, [runChainedPipeline]);
 
+  const cancelScrape = useCallback(async () => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) return;
+    try {
+      const res = await fetch(`${SCRAPER_URL}/api/scrape/cancel/${sid}`, { method: "POST" });
+      if (!res.ok) {
+        toast.error("Failed to cancel scrape");
+        return;
+      }
+    } catch (err) {
+      toast.error("Could not reach scraper to cancel");
+      return;
+    }
+    activeSessionIdRef.current = null;
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (elapsedIntervalRef.current) {
+      clearInterval(elapsedIntervalRef.current);
+      elapsedIntervalRef.current = null;
+    }
+    setPortalStatus("idle");
+    setPortalStatusText("Cancelled");
+    setScrapingOverlay(null);
+    setChainPhase("idle");
+    toast.info("Scrape cancelled");
+  }, []);
+
   const runManualCheck = async (scrapeMode: "standard" | "all" | "files" | "comments" = "standard") => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
     const permitNumberToUse =
@@ -1052,6 +1082,7 @@ export function AgentWorkflowStatus() {
 
       const loginData = (await loginRes.json()) as { sessionId: string };
       const { sessionId } = loginData;
+      activeSessionIdRef.current = sessionId;
 
       const completedSteps = new Set<string>();
       setScrapingOverlay({
@@ -1193,6 +1224,7 @@ export function AgentWorkflowStatus() {
                 }
               : null,
           );
+          activeSessionIdRef.current = null;
           onScrapingCompleteRef.current = async () => {
             setPortalStatusText("Done");
             setPortalStatus("done");
@@ -1205,6 +1237,22 @@ export function AgentWorkflowStatus() {
             await runChainedPipeline(projectIdToUse);
             console.log("[CHAIN DEBUG] runChainedPipeline finished.");
           };
+          return true;
+        }
+        if (data.status === "cancelled") {
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+          }
+          if (elapsedIntervalRef.current) {
+            clearInterval(elapsedIntervalRef.current);
+            elapsedIntervalRef.current = null;
+          }
+          activeSessionIdRef.current = null;
+          setPortalStatus("idle");
+          setPortalStatusText("Cancelled");
+          setScrapingOverlay(null);
+          setChainPhase("idle");
           return true;
         }
         if (data.status === "error") {
@@ -1229,6 +1277,7 @@ export function AgentWorkflowStatus() {
       setPortalStatusText("Timeout");
       setScrapingOverlay(null);
       setChainPhase("idle");
+      activeSessionIdRef.current = null;
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -1244,6 +1293,7 @@ export function AgentWorkflowStatus() {
       setPortalStatusText("Error");
       setScrapingOverlay(null);
       setChainPhase("idle");
+      activeSessionIdRef.current = null;
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -1294,66 +1344,75 @@ export function AgentWorkflowStatus() {
               : "Idle",
       action: (
         <div className="flex flex-col gap-2 mt-2">
-          <div className="flex items-center gap-0">
+          {portalStatus === "checking" ? (
             <Button
               size="sm"
-              variant="outline"
-              onClick={() => runManualCheck("standard")}
-              disabled={portalStatus === "checking" || chainRunning}
-              data-testid="button-run-manual-check"
-              className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] rounded-r-none border-r-0"
+              variant="destructive"
+              onClick={cancelScrape}
+              data-testid="button-cancel-scrape"
+              className="transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
             >
-              {portalStatus === "checking" || chainRunning ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <RefreshCw className="h-4 w-4 mr-2 transition-transform duration-300 group-hover/btn:rotate-180" />
-              )}
-              {chainRunning ? "Chain Running..." : "Quick Scrape"}
+              <XCircle className="h-4 w-4 mr-2" />
+              Cancel Scrape
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={portalStatus === "checking" || chainRunning}
-                  data-testid="button-scrape-mode-dropdown"
-                  className="px-1.5 rounded-l-none transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => runManualCheck("standard")}
-                  data-testid="menu-scrape-standard"
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Quick Scrape
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => runManualCheck("all")}
-                  data-testid="menu-scrape-all"
-                >
-                  <Layers className="h-4 w-4 mr-2" />
-                  Full Scrape (with files)
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => runManualCheck("files")}
-                  data-testid="menu-scrape-files"
-                >
-                  <FolderOpen className="h-4 w-4 mr-2" />
-                  Files Only
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => runManualCheck("comments")}
-                  data-testid="menu-scrape-comments"
-                >
-                  <MessageSquare className="h-4 w-4 mr-2" />
-                  Comments Only
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          ) : (
+            <div className="flex items-center gap-0">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => runManualCheck("standard")}
+                disabled={chainRunning}
+                data-testid="button-run-manual-check"
+                className="group/btn transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] rounded-r-none border-r-0"
+              >
+                <RefreshCw className="h-4 w-4 mr-2 transition-transform duration-300 group-hover/btn:rotate-180" />
+                {chainRunning ? "Chain Running..." : "Quick Scrape"}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={chainRunning}
+                    data-testid="button-scrape-mode-dropdown"
+                    className="px-1.5 rounded-l-none transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => runManualCheck("standard")}
+                    data-testid="menu-scrape-standard"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Quick Scrape
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => runManualCheck("all")}
+                    data-testid="menu-scrape-all"
+                  >
+                    <Layers className="h-4 w-4 mr-2" />
+                    Full Scrape (with files)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => runManualCheck("files")}
+                    data-testid="menu-scrape-files"
+                  >
+                    <FolderOpen className="h-4 w-4 mr-2" />
+                    Files Only
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => runManualCheck("comments")}
+                    data-testid="menu-scrape-comments"
+                  >
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                    Comments Only
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
           <Button
             size="sm"
             variant="outline"

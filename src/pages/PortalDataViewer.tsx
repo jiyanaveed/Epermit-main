@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { supabase } from "@/lib/supabase";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare, ArrowLeft } from "lucide-react";
 
 class TabErrorBoundary extends React.Component<
   { tabName: string; children: React.ReactNode },
@@ -1049,6 +1049,16 @@ export default function PortalDataViewer() {
   return (
     <section className="py-6 px-4 sm:px-6 max-w-5xl">
       <div className="mb-6">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate("/dashboard")}
+          data-testid="button-back-to-dashboard"
+          className="mb-3 -ml-1"
+        >
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Back to Dashboard
+        </Button>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold">{portalData.projectNum}</h1>
