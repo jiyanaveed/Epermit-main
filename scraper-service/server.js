@@ -211,7 +211,14 @@ async function performLogin(page, username, password, dashboardUrl) {
     let pF = null;
     for (const s of pSel) {
       pF = await page.$(s);
-      if (pF && (await pF.isVisible().catch(() => false))) break;
+      if (pF && (await pF.isVisible().catch(() => false))) {
+        const pType = await pF.getAttribute("type").catch(() => "");
+        if (pType === "checkbox" || pType === "radio") {
+          pF = null;
+          continue;
+        }
+        break;
+      }
       pF = null;
     }
     if (!pF) {
@@ -225,7 +232,14 @@ async function performLogin(page, username, password, dashboardUrl) {
       await page.waitForTimeout(2000);
       for (const s of pSel) {
         pF = await page.$(s);
-        if (pF && (await pF.isVisible().catch(() => false))) break;
+        if (pF && (await pF.isVisible().catch(() => false))) {
+          const pType2 = await pF.getAttribute("type").catch(() => "");
+          if (pType2 === "checkbox" || pType2 === "radio") {
+            pF = null;
+            continue;
+          }
+          break;
+        }
         pF = null;
       }
       if (!pF) throw new Error("Cannot find password field");
@@ -959,6 +973,12 @@ function escapeCSSId(str) {
 }
 
 async function extractFilesTab(page, context, session, commentsOnly = false) {
+  const currentUrl = page.url();
+  if (currentUrl.includes('b2clogin') || currentUrl.includes('Login') || currentUrl.includes('SessionEnded')) {
+    console.log("     ⚠️ Session expired during Files tab scraping, skipping files");
+    return { folders: [], error: "Session expired" };
+  }
+
   const result = { folders: [] };
 
   const folderElements = await page.$$eval(
