@@ -323,6 +323,7 @@ app.post("/api/login", async (req, res) => {
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 2,
+      acceptDownloads: true,
     });
     const page = await context.newPage();
 
@@ -1147,37 +1148,143 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
       await page.waitForSelector(".ui-iggrid-table tbody tr", { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(2000);
 
+      const debugGridHTML = await page.evaluate(() => {
+        const firstRow = document.querySelector(".ui-iggrid-table tbody tr");
+        if (!firstRow) return { html: "NO ROWS", headers: [] };
+        const headerCells = document.querySelectorAll(".ui-iggrid-table thead th, .ui-iggrid-headercolumn");
+        const headers = Array.from(headerCells).map(h => h.textContent.trim());
+        const cells = firstRow.querySelectorAll("td");
+        const cellDebug = Array.from(cells).map((c, i) => {
+          const links = c.querySelectorAll("a");
+          const linkInfo = Array.from(links).map(a => ({
+            text: a.textContent.trim().substring(0, 50),
+            onclick: (a.getAttribute("onclick") || "").substring(0, 100),
+            href: (a.getAttribute("href") || "").substring(0, 100),
+            id: a.getAttribute("id") || "",
+            "data-fileid": a.getAttribute("data-fileid") || a.getAttribute("data-id") || "",
+          }));
+          return { col: i, text: c.textContent.trim().substring(0, 60), links: linkInfo };
+        });
+        const rowAttrs = { id: firstRow.getAttribute("id") || "", "data-id": firstRow.getAttribute("data-id") || "" };
+        return { headers, cells: cellDebug, rowAttrs };
+      });
+      console.log("       🔍 Grid debug:", JSON.stringify(debugGridHTML, null, 2));
+
       const filesFound = await page.evaluate(() => {
         const rows = [];
         const seen = new Set();
+
+        let gridDataSource = null;
+        try {
+          const grids = document.querySelectorAll("[id*='grid_files'], [id*='gridFiles'], [id*='FileGrid'], .ui-iggrid");
+          for (const g of grids) {
+            const $ = window.jQuery || window.$;
+            if ($ && $(g).data("igGrid")) {
+              const ds = $(g).igGrid("option", "dataSource");
+              if (Array.isArray(ds) && ds.length > 0) {
+                gridDataSource = ds;
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+
         const gridRows = document.querySelectorAll(".ui-iggrid-table tbody tr");
-        gridRows.forEach((row) => {
+        gridRows.forEach((row, rowIdx) => {
           const cells = row.querySelectorAll("td");
-          const fileLink = row.querySelector('a[onclick*="File"], a[href*="File"], a[onclick*="file"], .file-link');
+          const allLinks = row.querySelectorAll("a");
+          let fileLink = row.querySelector('a[onclick*="File"], a[href*="File"], a[onclick*="file"], .file-link');
+
+          if (!fileLink && allLinks.length > 0) {
+            for (const a of allLinks) {
+              const t = a.textContent.trim();
+              if (t.length > 2 && /\.\w{2,4}$/.test(t)) {
+                fileLink = a;
+                break;
+              }
+            }
+          }
+          if (!fileLink && allLinks.length > 0) {
+            fileLink = allLinks[0];
+          }
           if (!fileLink) return;
+
           const name = fileLink.textContent.trim();
           if (!name || name.length < 2 || seen.has(name)) return;
           seen.add(name);
 
           const rawOnclick = fileLink.getAttribute("onclick") || "";
           const href = fileLink.getAttribute("href") || "";
-          const idMatch = rawOnclick.match(/fileID=(\d+)/i) || href.match(/fileID=(\d+)/i);
-          const fileId = idMatch ? idMatch[1] : "";
+          let fileId = "";
+
+          const idMatch = rawOnclick.match(/fileID[=:](\d+)/i) || href.match(/fileID[=:](\d+)/i);
+          if (idMatch) fileId = idMatch[1];
+
+          if (!fileId) {
+            const rowDataId = row.getAttribute("data-id") || "";
+            if (rowDataId && /^\d+$/.test(rowDataId)) fileId = rowDataId;
+          }
+          if (!fileId) {
+            const fileLinkId = fileLink.getAttribute("data-fileid") || fileLink.getAttribute("data-id") || "";
+            if (fileLinkId && /^\d+$/.test(fileLinkId)) fileId = fileLinkId;
+          }
+          if (!fileId) {
+            const anyIdMatch = rawOnclick.match(/(\d{4,})/) || href.match(/(\d{4,})/);
+            if (anyIdMatch) fileId = anyIdMatch[1];
+          }
+          if (!fileId && gridDataSource && gridDataSource[rowIdx]) {
+            const dsRow = gridDataSource[rowIdx];
+            const idField = dsRow.FileID || dsRow.fileID || dsRow.fileId || dsRow.Id || dsRow.id || dsRow.ID || dsRow.DocumentID || dsRow.documentId;
+            if (idField) fileId = String(idField);
+          }
+          if (!fileId) {
+            const pk = row.querySelector("td[aria-describedby*='FileID'], td[aria-describedby*='fileId'], td[aria-describedby*='ID']");
+            if (pk) {
+              const pkVal = pk.textContent.trim();
+              if (/^\d+$/.test(pkVal)) fileId = pkVal;
+            }
+          }
+          if (!fileId) {
+            for (const cell of cells) {
+              const ariaDesc = cell.getAttribute("aria-describedby") || "";
+              if (/fileid|file_id|documentid/i.test(ariaDesc)) {
+                const val = cell.textContent.trim();
+                if (/^\d+$/.test(val)) { fileId = val; break; }
+              }
+            }
+          }
 
           const cellTexts = Array.from(cells).map((c) => c.textContent.trim());
+          let nameCol = cellTexts.findIndex(t => t === name);
+          if (nameCol < 0) {
+            nameCol = cellTexts.findIndex(t => t.includes(name));
+          }
+          if (nameCol < 0) {
+            const linkParent = fileLink.closest("td");
+            if (linkParent) {
+              nameCol = Array.from(cells).indexOf(linkParent);
+            }
+          }
+          const afterName = nameCol >= 0 ? nameCol + 1 : 1;
 
           rows.push({
             name,
             id: fileId,
-            status: cellTexts[1] || "",
-            reviewedBy: cellTexts[2] || "",
-            uploadedDate: cellTexts[3] || "",
+            status: cellTexts[afterName] || "",
+            reviewedBy: cellTexts[afterName + 1] || "",
+            uploadedDate: cellTexts[afterName + 2] || "",
           });
         });
         return rows;
       });
 
       console.log(`       ✅ Found ${filesFound.length} files in grid`);
+      if (filesFound.length > 0) {
+        const sample = filesFound.slice(0, 3).map(f => ({ name: f.name, id: f.id, status: f.status }));
+        console.log(`       📋 Sample files:`, JSON.stringify(sample));
+        const withIds = filesFound.filter(f => f.id).length;
+        console.log(`       🔑 Files with IDs: ${withIds}/${filesFound.length}`);
+      }
 
       const folderSafe = folderName.replace(/[/\\?%*:|"<>\s]/g, "_").substring(0, 30);
       const folderFiles = [];
@@ -1205,10 +1312,58 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
 
         let viewUrl = "";
         if (file.id) {
-          console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading: ${safeName}`);
+          console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via FileHandler: ${safeName}`);
           const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase);
           if (dlResult.success) {
             viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+          }
+        }
+        if (!viewUrl) {
+          try {
+            console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via click: ${file.name}`);
+            const downloadDir = path.join(__dirname, "downloads");
+            if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
+
+            const fileGridLink = await page.$(`a:text-is("${file.name.replace(/"/g, '\\"')}")`);
+            if (fileGridLink) {
+              const [download] = await Promise.all([
+                page.waitForEvent("download", { timeout: 15000 }).catch(() => null),
+                fileGridLink.click(),
+              ]);
+              if (download) {
+                const dlPath = path.join(downloadDir, safeName);
+                await download.saveAs(dlPath);
+                const stat = fs.statSync(dlPath);
+                if (stat.size > 500) {
+                  viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+                  console.log(`       ✅ Downloaded via click: ${safeName} (${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
+                } else {
+                  console.log(`       ⚠️ File too small via click (${stat.size} bytes), skipping`);
+                  fs.unlinkSync(dlPath);
+                }
+              } else {
+                const popup = await page.waitForEvent("popup", { timeout: 5000 }).catch(() => null);
+                if (popup) {
+                  const popupUrl = popup.url();
+                  console.log(`       🔗 File opened in popup: ${popupUrl}`);
+                  const idFromUrl = popupUrl.match(/fileID[=:](\d+)/i);
+                  if (idFromUrl) {
+                    file.id = idFromUrl[1];
+                    const dlResult2 = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase);
+                    if (dlResult2.success) {
+                      viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+                    }
+                  }
+                  await popup.close().catch(() => {});
+                } else {
+                  console.log(`       ⚠️ No download or popup triggered for ${file.name}`);
+                }
+              }
+            } else {
+              console.log(`       ⚠️ Could not find link for ${file.name}`);
+            }
+          } catch (dlErr) {
+            console.log(`       ⚠️ Click-download failed for ${file.name}: ${dlErr.message}`);
           }
         }
 
