@@ -8,7 +8,10 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
-const { accelaLogin: accelaScraperLogin, scrapeAccelaRecord } = require("./accela-scraper");
+const {
+  accelaLogin: accelaScraperLogin,
+  scrapeAccelaRecord,
+} = require("./accela-scraper");
 const {
   permitWizardLogin,
   getSession: getPWSession,
@@ -51,7 +54,8 @@ const { energovSubmit } = require("./energov-submit");
 function detectPortalType(url) {
   if (!url) return "projectdox";
   const lower = url.toLowerCase();
-  if (lower.includes("avolvecloud.com") || lower.includes("projectdox")) return "projectdox";
+  if (lower.includes("avolvecloud.com") || lower.includes("projectdox"))
+    return "projectdox";
   if (lower.includes("accela.com")) return "accela";
   return "unknown";
 }
@@ -61,13 +65,22 @@ function stableStringify(obj) {
   if (Array.isArray(obj)) return "[" + obj.map(stableStringify).join(",") + "]";
   if (typeof obj === "object") {
     const keys = Object.keys(obj).sort();
-    return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(obj[k])).join(",") + "}";
+    return (
+      "{" +
+      keys
+        .map((k) => JSON.stringify(k) + ":" + stableStringify(obj[k]))
+        .join(",") +
+      "}"
+    );
   }
   return JSON.stringify(obj);
 }
 
 function hashPortalData(data) {
-  return crypto.createHash("sha256").update(stableStringify(data)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(stableStringify(data))
+    .digest("hex");
 }
 
 const app = express();
@@ -281,16 +294,26 @@ async function performLogin(page, username, password, dashboardUrl) {
 // ─── Login endpoint ──────────────────────────────────────────────────────────
 app.post("/api/login", async (req, res) => {
   const { username, password, portalUrl } = req.body;
-  const dashboardUrl = (portalUrl && portalUrl.trim()) ? portalUrl.trim().replace(/\/+$/, "").replace(/\/User\/Index$/i, "") : DEFAULT_DASHBOARD_URL;
+  const dashboardUrl =
+    portalUrl && portalUrl.trim()
+      ? portalUrl
+          .trim()
+          .replace(/\/+$/, "")
+          .replace(/\/User\/Index$/i, "")
+      : DEFAULT_DASHBOARD_URL;
   const portalType = detectPortalType(dashboardUrl);
   console.log(`Portal URL: ${dashboardUrl}`);
   console.log(`Portal Type: ${portalType}`);
 
   if (portalType === "unknown") {
-    return res.status(400).json({ error: "Unsupported portal type. Supported: ProjectDox (avolvecloud.com) and Accela (accela.com)" });
+    return res.status(400).json({
+      error:
+        "Unsupported portal type. Supported: ProjectDox (avolvecloud.com) and Accela (accela.com)",
+    });
   }
 
-  const webUiBase = portalType === "projectdox" ? deriveWebUiBase(dashboardUrl) : null;
+  const webUiBase =
+    portalType === "projectdox" ? deriveWebUiBase(dashboardUrl) : null;
   if (webUiBase) console.log(`WebUI Base: ${webUiBase}`);
   let browser;
   try {
@@ -311,7 +334,8 @@ app.post("/api/login", async (req, res) => {
         fullPage: true,
       });
 
-      const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+      const sessionId =
+        Date.now().toString(36) + Math.random().toString(36).slice(2);
       sessions[sessionId] = {
         status: "logged_in",
         portalType: "accela",
@@ -332,7 +356,14 @@ app.post("/api/login", async (req, res) => {
         () => cleanupSession(sessionId),
         15 * 60 * 1000,
       );
-      return res.json({ sessionId, projectCount: 0, projects: [], portalType: "accela", message: "Logged in to Accela. Use /api/scrape with permitNumber to search." });
+      return res.json({
+        sessionId,
+        projectCount: 0,
+        projects: [],
+        portalType: "accela",
+        message:
+          "Logged in to Accela. Use /api/scrape with permitNumber to search.",
+      });
     }
 
     await performLogin(page, username, password, dashboardUrl);
@@ -505,19 +536,34 @@ app.post("/api/scrape", async (req, res) => {
 
   if (session.portalType === "accela") {
     if (!permitNumber || String(permitNumber).trim() === "") {
-      return res.status(400).json({ error: "Accela scraping requires a permitNumber" });
+      return res
+        .status(400)
+        .json({ error: "Accela scraping requires a permitNumber" });
     }
     session.status = "scraping";
     session.total = 1;
     session.progress = 0;
     session.message = `Scraping Accela permit: ${permitNumber}`;
-    res.json({ message: "Accela scraping started", total: 1, portalType: "accela" });
-    scrapeAccelaRecord(session, String(permitNumber).trim(), projectId, userId, supabase, hashPortalData)
+    res.json({
+      message: "Accela scraping started",
+      total: 1,
+      portalType: "accela",
+    });
+    scrapeAccelaRecord(
+      session,
+      String(permitNumber).trim(),
+      projectId,
+      userId,
+      supabase,
+      hashPortalData,
+    )
       .then(() => {
         session.status = "done";
         session.progress = 1;
         session.message = `Accela scrape complete for ${permitNumber}`;
-        console.log(`   ✅ Accela sync complete — session status set to "done"`);
+        console.log(
+          `   ✅ Accela sync complete — session status set to "done"`,
+        );
       })
       .catch((err) => {
         session.status = "error";
@@ -534,11 +580,9 @@ app.post("/api/scrape", async (req, res) => {
       (p) => String(p.projectNum || "").trim() === String(permitNumber).trim(),
     );
     if (targets.length === 0) {
-      return res
-        .status(404)
-        .json({
-          error: "No project found matching permit number: " + permitNumber,
-        });
+      return res.status(404).json({
+        error: "No project found matching permit number: " + permitNumber,
+      });
     }
   } else {
     const ids = Array.isArray(projectIds) ? projectIds : [];
@@ -558,7 +602,9 @@ app.post("/api/scrape", async (req, res) => {
   };
 
   if (scrapeMode && !SCRAPE_MODE_TABS[scrapeMode]) {
-    return res.status(400).json({ error: `Invalid scrapeMode: "${scrapeMode}". Valid modes: all, standard, files, comments` });
+    return res.status(400).json({
+      error: `Invalid scrapeMode: "${scrapeMode}". Valid modes: all, standard, files, comments`,
+    });
   }
 
   let tabsToUse;
@@ -577,14 +623,24 @@ app.post("/api/scrape", async (req, res) => {
   session.total = targets.length * tabCount;
   session.progress = 0;
   session.data = {};
-  res.json({ message: "Scraping started", total: session.total, scrapeMode: scrapeMode || "all" });
-  scrapeAll(session, targets, sessionId, tabsToUse, projectId, userId, commentsOnly).catch(
-    (err) => {
-      session.status = "error";
-      session.message = `Error: ${err.message}`;
-      console.error("❌", err);
-    },
-  );
+  res.json({
+    message: "Scraping started",
+    total: session.total,
+    scrapeMode: scrapeMode || "all",
+  });
+  scrapeAll(
+    session,
+    targets,
+    sessionId,
+    tabsToUse,
+    projectId,
+    userId,
+    commentsOnly,
+  ).catch((err) => {
+    session.status = "error";
+    session.message = `Error: ${err.message}`;
+    console.error("❌", err);
+  });
 });
 
 const TAB_DEFS = [
@@ -786,10 +842,21 @@ async function scrapeAll(
           });
         }
         if (tab.key === "files") {
-          const filesResult = await extractFilesTab(page, context, session, commentsOnly);
+          const filesResult = await extractFilesTab(
+            page,
+            context,
+            session,
+            commentsOnly,
+          );
           tabData.folders = filesResult.folders;
-          const totalFiles = filesResult.folders.reduce((s, f) => s + f.files.length, 0);
-          const totalComments = filesResult.folders.reduce((s, f) => s + f.files.reduce((s2, fi) => s2 + fi.commentCount, 0), 0);
+          const totalFiles = filesResult.folders.reduce(
+            (s, f) => s + f.files.length,
+            0,
+          );
+          const totalComments = filesResult.folders.reduce(
+            (s, f) => s + f.files.reduce((s2, fi) => s2 + fi.commentCount, 0),
+            0,
+          );
           console.log(
             `      ✓ ${filesResult.folders.length} folders, ${totalFiles} files, ${totalComments} comments`,
           );
@@ -844,7 +911,8 @@ async function scrapeAll(
         .eq("permit_number", projectNum)
         .eq("user_id", userId);
 
-      const existingRow = existingRows && existingRows.length > 0 ? existingRows[0] : null;
+      const existingRow =
+        existingRows && existingRows.length > 0 ? existingRows[0] : null;
 
       if (existingRow && existingRow.portal_data_hash === newHash) {
         actualProjectId = existingRow.id;
@@ -857,19 +925,33 @@ async function scrapeAll(
           .eq("id", actualProjectId);
       } else {
         let mergedData = currentData;
-        if (existingRow && existingRow.portal_data && existingRow.portal_data.tabs && currentData.tabs) {
+        if (
+          existingRow &&
+          existingRow.portal_data &&
+          existingRow.portal_data.tabs &&
+          currentData.tabs
+        ) {
           const existingTabs = existingRow.portal_data.tabs;
           const newTabs = currentData.tabs;
           const merged = { ...existingTabs, ...newTabs };
-          mergedData = { ...existingRow.portal_data, ...currentData, tabs: merged };
+          mergedData = {
+            ...existingRow.portal_data,
+            ...currentData,
+            tabs: merged,
+          };
           const keptKeys = Object.keys(existingTabs).filter((k) => !newTabs[k]);
           if (keptKeys.length > 0) {
-            console.log(`   🔀 Merged tabs: kept existing [${keptKeys.join(", ")}], updated [${Object.keys(newTabs).join(", ")}]`);
+            console.log(
+              `   🔀 Merged tabs: kept existing [${keptKeys.join(", ")}], updated [${Object.keys(newTabs).join(", ")}]`,
+            );
           }
         }
         const mergedHash = hashPortalData(mergedData);
         const updatePayload = {
-          portal_status: currentData.dashboardStatus || mergedData.dashboardStatus || "Scraped",
+          portal_status:
+            currentData.dashboardStatus ||
+            mergedData.dashboardStatus ||
+            "Scraped",
           last_checked_at: new Date().toISOString(),
           portal_data: mergedData,
           portal_data_hash: mergedHash,
@@ -985,340 +1067,101 @@ function escapeCSSId(str) {
 }
 
 async function extractFilesTab(page, context, session, commentsOnly = false) {
-  const currentUrl = page.url();
-  if (currentUrl.includes('b2clogin') || currentUrl.includes('Login') || currentUrl.includes('SessionEnded')) {
-    console.log("     ⚠️ Session expired during Files tab scraping, skipping files");
-    return { folders: [], error: "Session expired" };
-  }
-  // DEBUG SNIPPET
-  const frameCount = page.frames().length;
-  console.log(`DEBUG: Total frames detected: ${frameCount}`);
-
-  page.frames().forEach((frame, i) => {
-      console.log(`Frame ${i} Name: ${frame.name()} | URL: ${frame.url().substring(0, 50)}...`);
-  });
-
-  const bodyText = await page.innerText('body');
-  console.log(`DEBUG: Main page text length: ${bodyText.length}`);
-  if (bodyText.length < 500) {
-      console.log("DEBUG: Main page looks empty. Data is almost certainly inside an iframe.");
-  }
-  // END DEBUG SNIPPET
+  console.log(`\n🕵️ INFRAGISTICS PROBE START...`);
   const result = { folders: [] };
 
+  // 1. Find folders using the specific Ignite UI selectors found in your HTML
   const folderElements = await page.$$eval(
-    'a[id*="FolderName"], a[id*="folderName"], .folder-name, td a[onclick*="Folder"], div.TreeNode a, span.TreeNode a, a[href*="FolderID"], tr a[id*="lnk"]',
-    (els) =>
-      els.map((el, idx) => ({
-        text: el.textContent.trim(),
-        id: el.id || "",
-        idx: idx,
-      }))
+    "#folderTree li.ui-igtree-node",
+    (nodes) =>
+      nodes
+        .map((node) => {
+          const anchor = node.querySelector("a");
+          return {
+            text: anchor ? anchor.textContent.trim() : "",
+            path: node.getAttribute("data-path"),
+            value: node.getAttribute("data-value"),
+          };
+        })
+        .filter((f) => f.text.includes("(")),
   );
 
-  if (folderElements.length === 0) {
-    const treeNodes = await page.$$eval(
-      'table a, div.tree a, li a, td a',
-      (els) =>
-        els
-          .filter((a) => {
-            const t = a.textContent.trim();
-            return t.includes("(") && t.includes(")") && t.length < 100;
-          })
-          .map((el, idx) => ({ text: el.textContent.trim(), id: el.id || "", idx: idx }))
-    );
-    if (treeNodes.length > 0) {
-      console.log(`     Found ${treeNodes.length} folder-like nodes via fallback`);
-      folderElements.push(...treeNodes);
-    }
-  }
-
-  console.log(`     📁 Found ${folderElements.length} folders`);
+  console.log(`      📁 Found ${folderElements.length} folders in Ignite Tree`);
 
   for (let fi = 0; fi < folderElements.length; fi++) {
-    const folderInfo = folderElements[fi];
-    const rawName = folderInfo.text;
-    const folderId = folderInfo.id;
+    const fInfo = folderElements[fi];
+    const folderName = fInfo.text.replace(/\s*\(.*$/, "").trim();
 
-    const countMatch = rawName.match(/\((\d+)/);
-    const fileCount = countMatch ? parseInt(countMatch[1], 10) : 0;
-    const folderName = rawName.replace(/\s*\(.*$/, "").trim();
-
-    console.log(`     📁 [${fi + 1}/${folderElements.length}] "${folderName}" (${fileCount} files)`);
-    if (session) session.message = `Files → ${folderName}`;
-
-    const folderData = {
-      name: folderName,
-      fileCount: fileCount,
-      files: [],
-    };
+    console.log(
+      `      📁 [${fi + 1}/${folderElements.length}] Selecting "${folderName}" (Path: ${fInfo.path})...`,
+    );
 
     try {
-      let folderLink = null;
-      if (folderId) {
-        folderLink = await page.$(`#${escapeCSSId(folderId)}`);
-      }
-      if (!folderLink) {
-        const allLinks = await page.$$("a");
-        for (const link of allLinks) {
-          const linkText = await link.textContent().catch(() => "");
-          if (linkText.trim() === rawName) {
-            folderLink = link;
-            break;
+      // 2. TRIGGER THE WIDGET: Click the specific anchor inside the tree node
+      const selector = `#folderTree li[data-path="${fInfo.path}"] a`;
+      await page.click(selector);
+
+      // 3. WAIT FOR GRID HYDRATION: Wait for the specific igGrid data rows
+      console.log(`         ⏳ Waiting for file grid to hydrate...`);
+      // We wait for either a file link to appear OR the 'no data' message
+      await page
+        .waitForSelector(".ui-iggrid-table tbody tr, .ui-iggrid-nodata", {
+          timeout: 8000,
+        })
+        .catch(() => {});
+      await page.waitForTimeout(2000); // Small buffer for rendering
+
+      // 4. EXTRACT: Target the Ignite UI grid structure
+      const filesFound = await page.evaluate(() => {
+        const rows = [];
+        // Ignite UI puts data in a table with class 'ui-iggrid-table'
+        const gridRows = document.querySelectorAll(".ui-iggrid-table tbody tr");
+
+        gridRows.forEach((row) => {
+          // Look for the filename link (usually has 'fileID' in it)
+          const fileLink = row.querySelector(
+            'a[onclick*="File"], a[href*="File"]',
+          );
+          if (fileLink) {
+            const cells = row.querySelectorAll("td");
+            const name = fileLink.textContent.trim();
+            // ProjectDox specific columns: 1=Status, 3=Date
+            rows.push({
+              name: name,
+              status: cells[1] ? cells[1].textContent.trim() : "Unknown",
+              date: cells[3] ? cells[3].textContent.trim() : "Unknown",
+              id:
+                (
+                  fileLink.getAttribute("onclick") ||
+                  fileLink.getAttribute("href")
+                ).match(/fileID=(\d+)/i)?.[1] || "",
+            });
           }
-        }
-      }
-      if (folderLink) {
-        await folderLink.click();
-        await page.waitForTimeout(2000);
-        await page.waitForLoadState("networkidle").catch(() => {});
-      }
-
-      const fileRows = await page.evaluate(() => {
-        const files = [];
-        const seen = new Set();
-        const rows = document.querySelectorAll(
-          'table tr, div.file-list tr, table[id*="File"] tr, table[id*="Grid"] tr'
-        );
-        for (const row of rows) {
-          const cells = row.querySelectorAll("td");
-          if (cells.length < 2) continue;
-
-          const linkEl = row.querySelector("a");
-          if (!linkEl) continue;
-
-          const fileName = linkEl.textContent.trim();
-          if (
-            !fileName ||
-            fileName.length < 2 ||
-            fileName.includes("Folder") ||
-            fileName.includes("(")
-          )
-            continue;
-
-          const href = linkEl.getAttribute("href") || "";
-          const onclick = linkEl.getAttribute("onclick") || "";
-          const linkId = linkEl.id || "";
-
-          const fileIdMatch =
-            href.match(/fileID=(\d+)/i) ||
-            onclick.match(/fileID=(\d+)/i) ||
-            href.match(/FileId=(\d+)/i);
-          const fileId = fileIdMatch ? fileIdMatch[1] : "";
-
-          const dedup = fileId || fileName;
-          if (seen.has(dedup)) continue;
-          seen.add(dedup);
-
-          const cellTexts = Array.from(cells).map((c) => c.textContent.trim());
-
-          files.push({
-            name: fileName,
-            fileId: fileId,
-            linkId: linkId,
-            status: cellTexts[1] || "",
-            reviewedBy: cellTexts[2] || "",
-            uploadedDate: cellTexts[3] || "",
-            hasLink: !!href || !!onclick,
-          });
-        }
-        return files;
+        });
+        return rows;
       });
 
-      console.log(`       Found ${fileRows.length} files in folder`);
+      console.log(`         ✅ Found ${filesFound.length} files`);
 
-      for (let fileIdx = 0; fileIdx < fileRows.length; fileIdx++) {
-        const file = fileRows[fileIdx];
-        console.log(
-          `       📄 [${fileIdx + 1}/${fileRows.length}] ${file.name}${file.fileId ? ` (ID: ${file.fileId})` : ""}`
-        );
-
-        const fileEntry = {
-          name: file.name,
-          fileId: file.fileId,
-          status: file.status,
-          reviewedBy: file.reviewedBy,
-          uploadedDate: file.uploadedDate,
+      result.folders.push({
+        name: folderName,
+        fileCount: filesFound.length,
+        files: filesFound.map((f) => ({
+          name: f.name,
+          fileId: f.id,
+          status: f.status,
+          uploadedDate: f.date,
           comments: [],
           commentCount: 0,
-        };
-
-        if (file.fileId && file.hasLink) {
-          if (commentsOnly) {
-            const skipStatuses = ["uploaded", "pending", "new", ""];
-            const fileStatusLower = (file.status || "").toLowerCase().trim();
-            if (skipStatuses.includes(fileStatusLower)) {
-              console.log(`       ⏭️  Skipping (comments-only mode, status: "${file.status || "empty"}")`);
-              folderData.files.push(fileEntry);
-              continue;
-            }
-          }
-          try {
-            let fileLink = null;
-            if (file.linkId) {
-              fileLink = await page.$(`#${escapeCSSId(file.linkId)}`);
-            }
-            if (!fileLink && file.fileId) {
-              fileLink = await page.$(`a[href*="fileID=${file.fileId}" i], a[onclick*="fileID=${file.fileId}" i]`);
-            }
-            if (!fileLink) {
-              const allAnchors = await page.$$("a");
-              for (const a of allAnchors) {
-                const t = await a.textContent().catch(() => "");
-                if (t.trim() === file.name) {
-                  fileLink = a;
-                  break;
-                }
-              }
-            }
-            if (!fileLink) {
-              folderData.files.push(fileEntry);
-              continue;
-            }
-
-            const [newPage] = await Promise.all([
-              context.waitForEvent("page", { timeout: 10000 }).catch(() => null),
-              fileLink.click(),
-            ]);
-
-            let viewerPage = newPage;
-            let openedInNewTab = !!newPage;
-
-            if (!viewerPage) {
-              await page.waitForTimeout(3000);
-              const currentUrl = page.url();
-              if (currentUrl.includes("FileViewer") || currentUrl.includes("fileID")) {
-                viewerPage = page;
-                openedInNewTab = false;
-              } else {
-                folderData.files.push(fileEntry);
-                continue;
-              }
-            } else {
-              await viewerPage.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-              await viewerPage.waitForTimeout(2000);
-            }
-
-            const commentsData = await viewerPage.evaluate(() => {
-              const result = { count: 0, comments: [] };
-
-              let commentCount = 0;
-              const bodyText = document.body.textContent || "";
-              const commentMatch = bodyText.match(/Comments\s*\((\d+)\)/);
-              if (commentMatch) {
-                commentCount = parseInt(commentMatch[1], 10);
-              }
-              result.count = commentCount;
-
-              if (commentCount > 0) {
-                const commentEls = document.querySelectorAll(
-                  '.comment, div[class*="comment"], div[class*="Comment"], tr[class*="comment"]'
-                );
-
-                for (const cel of commentEls) {
-                  const textEl = cel.querySelector(
-                    '.comment-text, .commentText, td:nth-child(2), p, span'
-                  );
-                  const authorEl = cel.querySelector(
-                    '.comment-author, .author, td:nth-child(1), .user'
-                  );
-                  const dateEl = cel.querySelector(
-                    '.comment-date, .date, td:nth-child(3), time'
-                  );
-                  const pageEl = cel.querySelector(
-                    '.comment-page, .page, td:nth-child(4)'
-                  );
-
-                  result.comments.push({
-                    text: textEl ? textEl.textContent.trim() : cel.textContent.trim().substring(0, 500),
-                    author: authorEl ? authorEl.textContent.trim() : "",
-                    date: dateEl ? dateEl.textContent.trim() : "",
-                    page: pageEl
-                      ? parseInt(pageEl.textContent.trim(), 10) || null
-                      : null,
-                  });
-                }
-
-                if (result.comments.length === 0 && commentCount > 0) {
-                  const panels = document.querySelectorAll(
-                    'div[id*="comment"], div[id*="Comment"], div.panel, div.side-panel'
-                  );
-                  for (const panel of panels) {
-                    const items = panel.querySelectorAll("div, tr, li");
-                    for (const item of items) {
-                      const t = item.textContent.trim();
-                      if (t.length > 5 && t.length < 1000 && !/Comments\s*\(/.test(t)) {
-                        result.comments.push({
-                          text: t.substring(0, 500),
-                          author: "",
-                          date: "",
-                          page: null,
-                        });
-                      }
-                    }
-                  }
-                }
-              }
-              return result;
-            }).catch((err) => {
-              console.error("         ❌ Comment extraction error:", err.message);
-              return { count: 0, comments: [], error: err.message };
-            });
-
-            fileEntry.commentCount = commentsData.count;
-            fileEntry.comments = commentsData.comments;
-
-            if (commentsData.count > 0) {
-              console.log(
-                `         💬 ${commentsData.count} comments (extracted ${commentsData.comments.length})`
-              );
-            }
-            if (commentsData.error) {
-              console.log(`         ⚠️ Comment extraction error: ${commentsData.error}`);
-            }
-
-            if (openedInNewTab) {
-              await viewerPage.close().catch(() => {});
-            } else {
-              await page.goBack({ waitUntil: "networkidle", timeout: 15000 }).catch(async () => {
-                let folderLink2 = null;
-                if (folderId) {
-                  folderLink2 = await page.$(`#${escapeCSSId(folderId)}`);
-                }
-                if (!folderLink2) {
-                  const links = await page.$$("a");
-                  for (const link of links) {
-                    const t = await link.textContent().catch(() => "");
-                    if (t.trim() === rawName) {
-                      folderLink2 = link;
-                      break;
-                    }
-                  }
-                }
-                if (folderLink2) {
-                  await folderLink2.click();
-                  await page.waitForTimeout(2000);
-                }
-              });
-              await page.waitForTimeout(1000);
-            }
-          } catch (fileErr) {
-            console.log(`         ⚠️ Error opening file: ${fileErr.message}`);
-          }
-        }
-
-        folderData.files.push(fileEntry);
-      }
-    } catch (folderErr) {
-      console.log(`     ⚠️ Error processing folder "${folderName}": ${folderErr.message}`);
+        })),
+      });
+    } catch (err) {
+      console.log(`      ⚠️ Folder Error: ${err.message}`);
     }
-
-    result.folders.push(folderData);
   }
 
   return result;
 }
-
 async function extractPDFsFromPage(page, context) {
   const pdfData = [];
 
@@ -1794,7 +1637,11 @@ app.post("/api/permitwizard/login", async (req, res) => {
     console.log("🔐 [PermitWizard] Launching browser for SSO login...");
     browser = await chromium.launch({ headless: true });
 
-    const result = await permitWizardLogin(browser, loginUsername, loginPassword);
+    const result = await permitWizardLogin(
+      browser,
+      loginUsername,
+      loginPassword,
+    );
 
     if (!result.success) {
       await browser.close().catch(() => {});
@@ -1865,11 +1712,13 @@ app.post("/api/permitwizard/reauth", async (req, res) => {
 
     if (!result || !result.success) {
       await browser.close().catch(() => {});
-      return res.status(401).json(result || {
-        success: false,
-        error: "reauth_failed",
-        message: "Re-authentication failed",
-      });
+      return res.status(401).json(
+        result || {
+          success: false,
+          error: "reauth_failed",
+          message: "Re-authentication failed",
+        },
+      );
     }
 
     res.json(result);
@@ -1926,7 +1775,8 @@ app.post("/api/permitwizard/file", async (req, res) => {
     return res.status(404).json({
       success: false,
       error: "session_not_found",
-      message: "PermitWizard session not found or expired. Perform a fresh login.",
+      message:
+        "PermitWizard session not found or expired. Perform a fresh login.",
     });
   }
 
@@ -1946,14 +1796,20 @@ app.post("/api/permitwizard/file", async (req, res) => {
         resolvedFilingData = {
           ...resolvedFilingData,
           filing_id: filing.id,
-          property_address: resolvedFilingData.property_address || filing.property_address,
+          property_address:
+            resolvedFilingData.property_address || filing.property_address,
           permit_type: resolvedFilingData.permit_type || filing.permit_type,
-          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          permit_subtype:
+            resolvedFilingData.permit_subtype || filing.permit_subtype,
           review_track: resolvedFilingData.review_track || filing.review_track,
-          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
-          construction_value: resolvedFilingData.construction_value || filing.construction_value,
-          property_type: resolvedFilingData.property_type || filing.property_type,
-          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+          scope_of_work:
+            resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value:
+            resolvedFilingData.construction_value || filing.construction_value,
+          property_type:
+            resolvedFilingData.property_type || filing.property_type,
+          estimated_fee:
+            resolvedFilingData.estimated_fee || filing.estimated_fee,
         };
 
         if (!resolvedFilingData.professionals) {
@@ -1978,7 +1834,9 @@ app.post("/api/permitwizard/file", async (req, res) => {
         }
       }
     } catch (err) {
-      console.log(`  [PermitWizard File] Could not load filing data: ${err.message}`);
+      console.log(
+        `  [PermitWizard File] Could not load filing data: ${err.message}`,
+      );
     }
   }
 
@@ -1986,7 +1844,8 @@ app.post("/api/permitwizard/file", async (req, res) => {
     return res.status(400).json({
       success: false,
       error: "missing_address",
-      message: "property_address is required in filingData or in the permit_filings record",
+      message:
+        "property_address is required in filingData or in the permit_filings record",
     });
   }
 
@@ -2005,10 +1864,14 @@ app.post("/api/permitwizard/file", async (req, res) => {
       started_at: new Date().toISOString(),
     });
   } catch (err) {
-    console.log(`  [PermitWizard File] Could not create agent_run: ${err.message}`);
+    console.log(
+      `  [PermitWizard File] Could not create agent_run: ${err.message}`,
+    );
   }
 
-  console.log(`\n🏛️ [PermitWizard File] Starting form filing for: ${resolvedFilingData.property_address}`);
+  console.log(
+    `\n🏛️ [PermitWizard File] Starting form filing for: ${resolvedFilingData.property_address}`,
+  );
 
   res.json({
     success: true,
@@ -2019,7 +1882,9 @@ app.post("/api/permitwizard/file", async (req, res) => {
 
   permitWizardFile(sessionToken, resolvedFilingData, supabase)
     .then(async (result) => {
-      console.log(`  [PermitWizard File] Filing complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+      console.log(
+        `  [PermitWizard File] Filing complete: ${result.success ? "SUCCESS" : "FAILED"}`,
+      );
 
       try {
         await supabase
@@ -2039,7 +1904,9 @@ app.post("/api/permitwizard/file", async (req, res) => {
           .eq("agent_name", "form_filing")
           .eq("status", "running");
       } catch (err) {
-        console.log(`  [PermitWizard File] Could not update agent_run: ${err.message}`);
+        console.log(
+          `  [PermitWizard File] Could not update agent_run: ${err.message}`,
+        );
       }
     })
     .catch(async (err) => {
@@ -2084,7 +1951,8 @@ app.post("/api/permitwizard/submit", async (req, res) => {
     return res.status(404).json({
       success: false,
       error: "session_not_found",
-      message: "PermitWizard session not found or expired. Perform a fresh login.",
+      message:
+        "PermitWizard session not found or expired. Perform a fresh login.",
     });
   }
 
@@ -2104,18 +1972,26 @@ app.post("/api/permitwizard/submit", async (req, res) => {
         resolvedFilingData = {
           ...resolvedFilingData,
           filing_id: filing.id,
-          property_address: resolvedFilingData.property_address || filing.property_address,
+          property_address:
+            resolvedFilingData.property_address || filing.property_address,
           permit_type: resolvedFilingData.permit_type || filing.permit_type,
-          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          permit_subtype:
+            resolvedFilingData.permit_subtype || filing.permit_subtype,
           review_track: resolvedFilingData.review_track || filing.review_track,
-          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
-          construction_value: resolvedFilingData.construction_value || filing.construction_value,
-          property_type: resolvedFilingData.property_type || filing.property_type,
-          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+          scope_of_work:
+            resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value:
+            resolvedFilingData.construction_value || filing.construction_value,
+          property_type:
+            resolvedFilingData.property_type || filing.property_type,
+          estimated_fee:
+            resolvedFilingData.estimated_fee || filing.estimated_fee,
         };
       }
     } catch (err) {
-      console.log(`  [PermitWizard Submit] Could not load filing data: ${err.message}`);
+      console.log(
+        `  [PermitWizard Submit] Could not load filing data: ${err.message}`,
+      );
     }
   }
 
@@ -2133,10 +2009,14 @@ app.post("/api/permitwizard/submit", async (req, res) => {
       started_at: new Date().toISOString(),
     });
   } catch (err) {
-    console.log(`  [PermitWizard Submit] Could not create agent_run: ${err.message}`);
+    console.log(
+      `  [PermitWizard Submit] Could not create agent_run: ${err.message}`,
+    );
   }
 
-  console.log(`\n🏛️ [PermitWizard Submit] Starting submission finalization for filing: ${resolvedFilingId}`);
+  console.log(
+    `\n🏛️ [PermitWizard Submit] Starting submission finalization for filing: ${resolvedFilingId}`,
+  );
 
   res.json({
     success: true,
@@ -2146,7 +2026,9 @@ app.post("/api/permitwizard/submit", async (req, res) => {
 
   permitWizardSubmit(sessionToken, resolvedFilingData, supabase)
     .then(async (result) => {
-      console.log(`  [PermitWizard Submit] Finalization complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+      console.log(
+        `  [PermitWizard Submit] Finalization complete: ${result.success ? "SUCCESS" : "FAILED"}`,
+      );
 
       try {
         await supabase
@@ -2168,7 +2050,9 @@ app.post("/api/permitwizard/submit", async (req, res) => {
           .eq("agent_name", "submission_finalization")
           .eq("status", "running");
       } catch (err) {
-        console.log(`  [PermitWizard Submit] Could not update agent_run: ${err.message}`);
+        console.log(
+          `  [PermitWizard Submit] Could not update agent_run: ${err.message}`,
+        );
       }
 
       if (!result.success && result.error !== "validation_failed") {
@@ -2209,10 +2093,22 @@ app.post("/api/permitwizard/submit", async (req, res) => {
 });
 
 // ─── Multi-Municipality Filing Endpoints ─────────────────────────────────────
-const VALID_PORTAL_TYPES = ["accela", "momentum_liferay", "aspnet_webforms", "energov"];
+const VALID_PORTAL_TYPES = [
+  "accela",
+  "momentum_liferay",
+  "aspnet_webforms",
+  "energov",
+];
 
 app.post("/api/filing/login", async (req, res) => {
-  const { portal_type, portal_config, credentialId, username, password, userId } = req.body;
+  const {
+    portal_type,
+    portal_config,
+    credentialId,
+    username,
+    password,
+    userId,
+  } = req.body;
 
   if (!portal_type || !VALID_PORTAL_TYPES.includes(portal_type)) {
     return res.status(400).json({
@@ -2371,7 +2267,8 @@ app.get("/api/filing/session/:token", async (req, res) => {
 });
 
 app.post("/api/filing/file", async (req, res) => {
-  const { portal_type, portal_config, sessionToken, filingId, filingData } = req.body;
+  const { portal_type, portal_config, sessionToken, filingId, filingData } =
+    req.body;
 
   if (!portal_type || !VALID_PORTAL_TYPES.includes(portal_type)) {
     return res.status(400).json({
@@ -2400,7 +2297,8 @@ app.post("/api/filing/file", async (req, res) => {
   let sessionLookup;
   switch (portal_type) {
     case "accela":
-      sessionLookup = getAccelaSession(sessionToken) || getPWSession(sessionToken);
+      sessionLookup =
+        getAccelaSession(sessionToken) || getPWSession(sessionToken);
       break;
     case "momentum_liferay":
       sessionLookup = getMomentumSession(sessionToken);
@@ -2437,14 +2335,20 @@ app.post("/api/filing/file", async (req, res) => {
         resolvedFilingData = {
           ...resolvedFilingData,
           filing_id: filing.id,
-          property_address: resolvedFilingData.property_address || filing.property_address,
+          property_address:
+            resolvedFilingData.property_address || filing.property_address,
           permit_type: resolvedFilingData.permit_type || filing.permit_type,
-          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          permit_subtype:
+            resolvedFilingData.permit_subtype || filing.permit_subtype,
           review_track: resolvedFilingData.review_track || filing.review_track,
-          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
-          construction_value: resolvedFilingData.construction_value || filing.construction_value,
-          property_type: resolvedFilingData.property_type || filing.property_type,
-          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+          scope_of_work:
+            resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value:
+            resolvedFilingData.construction_value || filing.construction_value,
+          property_type:
+            resolvedFilingData.property_type || filing.property_type,
+          estimated_fee:
+            resolvedFilingData.estimated_fee || filing.estimated_fee,
         };
 
         if (!resolvedFilingData.professionals) {
@@ -2477,7 +2381,8 @@ app.post("/api/filing/file", async (req, res) => {
     return res.status(400).json({
       success: false,
       error: "missing_address",
-      message: "property_address is required in filingData or in the permit_filings record",
+      message:
+        "property_address is required in filingData or in the permit_filings record",
     });
   }
 
@@ -2500,7 +2405,9 @@ app.post("/api/filing/file", async (req, res) => {
     console.log(`  [Filing File] Could not create agent_run: ${err.message}`);
   }
 
-  console.log(`\n[Filing File] Starting ${portal_type} form filing for: ${resolvedFilingData.property_address}`);
+  console.log(
+    `\n[Filing File] Starting ${portal_type} form filing for: ${resolvedFilingData.property_address}`,
+  );
 
   res.json({
     success: true,
@@ -2514,22 +2421,39 @@ app.post("/api/filing/file", async (req, res) => {
 
   switch (portal_type) {
     case "accela":
-      filePromise = permitWizardFile(sessionToken, resolvedFilingData, supabase, config);
+      filePromise = permitWizardFile(
+        sessionToken,
+        resolvedFilingData,
+        supabase,
+        config,
+      );
       break;
     case "momentum_liferay":
-      filePromise = momentumFile(null, sessionToken, resolvedFilingData, supabase);
+      filePromise = momentumFile(
+        null,
+        sessionToken,
+        resolvedFilingData,
+        supabase,
+      );
       break;
     case "aspnet_webforms":
       filePromise = montgomeryFile(sessionToken, resolvedFilingData, supabase);
       break;
     case "energov":
-      filePromise = energovFile(sessionToken, resolvedFilingData, config, supabase);
+      filePromise = energovFile(
+        sessionToken,
+        resolvedFilingData,
+        config,
+        supabase,
+      );
       break;
   }
 
   filePromise
     .then(async (result) => {
-      console.log(`  [Filing File] (${portal_type}) Filing complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+      console.log(
+        `  [Filing File] (${portal_type}) Filing complete: ${result.success ? "SUCCESS" : "FAILED"}`,
+      );
       try {
         await supabase
           .from("agent_runs")
@@ -2549,11 +2473,15 @@ app.post("/api/filing/file", async (req, res) => {
           .eq("agent_name", "form_filing")
           .eq("status", "running");
       } catch (err) {
-        console.log(`  [Filing File] Could not update agent_run: ${err.message}`);
+        console.log(
+          `  [Filing File] Could not update agent_run: ${err.message}`,
+        );
       }
     })
     .catch(async (err) => {
-      console.error(`  [Filing File] (${portal_type}) Fatal error: ${err.message}`);
+      console.error(
+        `  [Filing File] (${portal_type}) Fatal error: ${err.message}`,
+      );
       try {
         await supabase
           .from("agent_runs")
@@ -2570,7 +2498,8 @@ app.post("/api/filing/file", async (req, res) => {
 });
 
 app.post("/api/filing/submit", async (req, res) => {
-  const { portal_type, portal_config, sessionToken, filingId, filingData } = req.body;
+  const { portal_type, portal_config, sessionToken, filingId, filingData } =
+    req.body;
 
   if (!portal_type || !VALID_PORTAL_TYPES.includes(portal_type)) {
     return res.status(400).json({
@@ -2599,7 +2528,8 @@ app.post("/api/filing/submit", async (req, res) => {
   let sessionLookup;
   switch (portal_type) {
     case "accela":
-      sessionLookup = getAccelaSession(sessionToken) || getPWSession(sessionToken);
+      sessionLookup =
+        getAccelaSession(sessionToken) || getPWSession(sessionToken);
       break;
     case "momentum_liferay":
       sessionLookup = getMomentumSession(sessionToken);
@@ -2636,18 +2566,26 @@ app.post("/api/filing/submit", async (req, res) => {
         resolvedFilingData = {
           ...resolvedFilingData,
           filing_id: filing.id,
-          property_address: resolvedFilingData.property_address || filing.property_address,
+          property_address:
+            resolvedFilingData.property_address || filing.property_address,
           permit_type: resolvedFilingData.permit_type || filing.permit_type,
-          permit_subtype: resolvedFilingData.permit_subtype || filing.permit_subtype,
+          permit_subtype:
+            resolvedFilingData.permit_subtype || filing.permit_subtype,
           review_track: resolvedFilingData.review_track || filing.review_track,
-          scope_of_work: resolvedFilingData.scope_of_work || filing.scope_of_work,
-          construction_value: resolvedFilingData.construction_value || filing.construction_value,
-          property_type: resolvedFilingData.property_type || filing.property_type,
-          estimated_fee: resolvedFilingData.estimated_fee || filing.estimated_fee,
+          scope_of_work:
+            resolvedFilingData.scope_of_work || filing.scope_of_work,
+          construction_value:
+            resolvedFilingData.construction_value || filing.construction_value,
+          property_type:
+            resolvedFilingData.property_type || filing.property_type,
+          estimated_fee:
+            resolvedFilingData.estimated_fee || filing.estimated_fee,
         };
       }
     } catch (err) {
-      console.log(`  [Filing Submit] Could not load filing data: ${err.message}`);
+      console.log(
+        `  [Filing Submit] Could not load filing data: ${err.message}`,
+      );
     }
   }
 
@@ -2669,7 +2607,9 @@ app.post("/api/filing/submit", async (req, res) => {
     console.log(`  [Filing Submit] Could not create agent_run: ${err.message}`);
   }
 
-  console.log(`\n[Filing Submit] Starting ${portal_type} submission for filing: ${resolvedFilingId}`);
+  console.log(
+    `\n[Filing Submit] Starting ${portal_type} submission for filing: ${resolvedFilingId}`,
+  );
 
   res.json({
     success: true,
@@ -2683,22 +2623,42 @@ app.post("/api/filing/submit", async (req, res) => {
 
   switch (portal_type) {
     case "accela":
-      submitPromise = permitWizardSubmit(sessionToken, resolvedFilingData, supabase);
+      submitPromise = permitWizardSubmit(
+        sessionToken,
+        resolvedFilingData,
+        supabase,
+      );
       break;
     case "momentum_liferay":
-      submitPromise = momentumSubmit(null, sessionToken, resolvedFilingData, supabase);
+      submitPromise = momentumSubmit(
+        null,
+        sessionToken,
+        resolvedFilingData,
+        supabase,
+      );
       break;
     case "aspnet_webforms":
-      submitPromise = montgomerySubmit(sessionToken, resolvedFilingData, supabase);
+      submitPromise = montgomerySubmit(
+        sessionToken,
+        resolvedFilingData,
+        supabase,
+      );
       break;
     case "energov":
-      submitPromise = energovSubmit(sessionToken, resolvedFilingData, config, supabase);
+      submitPromise = energovSubmit(
+        sessionToken,
+        resolvedFilingData,
+        config,
+        supabase,
+      );
       break;
   }
 
   submitPromise
     .then(async (result) => {
-      console.log(`  [Filing Submit] (${portal_type}) Finalization complete: ${result.success ? "SUCCESS" : "FAILED"}`);
+      console.log(
+        `  [Filing Submit] (${portal_type}) Finalization complete: ${result.success ? "SUCCESS" : "FAILED"}`,
+      );
       try {
         await supabase
           .from("agent_runs")
@@ -2720,7 +2680,9 @@ app.post("/api/filing/submit", async (req, res) => {
           .eq("agent_name", "submission_finalization")
           .eq("status", "running");
       } catch (err) {
-        console.log(`  [Filing Submit] Could not update agent_run: ${err.message}`);
+        console.log(
+          `  [Filing Submit] Could not update agent_run: ${err.message}`,
+        );
       }
 
       if (!result.success && result.error !== "validation_failed") {
@@ -2736,7 +2698,9 @@ app.post("/api/filing/submit", async (req, res) => {
       }
     })
     .catch(async (err) => {
-      console.error(`  [Filing Submit] (${portal_type}) Fatal error: ${err.message}`);
+      console.error(
+        `  [Filing Submit] (${portal_type}) Fatal error: ${err.message}`,
+      );
       try {
         await supabase
           .from("agent_runs")
@@ -2782,7 +2746,10 @@ app.post("/api/filing/logout", async (req, res) => {
         await energovLogout(sessionToken);
         break;
     }
-    return res.json({ success: true, message: `${portal_type} session destroyed` });
+    return res.json({
+      success: true,
+      message: `${portal_type} session destroyed`,
+    });
   }
 
   if (getAccelaSession(sessionToken)) {
@@ -2791,18 +2758,27 @@ app.post("/api/filing/logout", async (req, res) => {
   }
   if (getMomentumSession(sessionToken)) {
     await momentumLogout(sessionToken);
-    return res.json({ success: true, message: "momentum_liferay session destroyed" });
+    return res.json({
+      success: true,
+      message: "momentum_liferay session destroyed",
+    });
   }
   if (getMontgomerySession(sessionToken)) {
     await montgomeryLogout(sessionToken);
-    return res.json({ success: true, message: "aspnet_webforms session destroyed" });
+    return res.json({
+      success: true,
+      message: "aspnet_webforms session destroyed",
+    });
   }
   if (getEnergovSession(sessionToken)) {
     await energovLogout(sessionToken);
     return res.json({ success: true, message: "energov session destroyed" });
   }
 
-  res.json({ success: true, message: "Session not found (may have already expired)" });
+  res.json({
+    success: true,
+    message: "Session not found (may have already expired)",
+  });
 });
 
 // ─── Generic Filing Re-Authentication ────────────────────────────────────────
@@ -2810,15 +2786,19 @@ app.post("/api/filing/reauth", async (req, res) => {
   const { portal_type, sessionToken } = req.body;
 
   if (!sessionToken) {
-    return res.status(400).json({ success: false, error: "sessionToken is required" });
+    return res
+      .status(400)
+      .json({ success: false, error: "sessionToken is required" });
   }
 
   try {
     let resolvedType = portal_type;
     if (!resolvedType) {
       if (getAccelaSession(sessionToken)) resolvedType = "accela";
-      else if (getMomentumSession(sessionToken)) resolvedType = "momentum_liferay";
-      else if (getMontgomerySession(sessionToken)) resolvedType = "aspnet_webforms";
+      else if (getMomentumSession(sessionToken))
+        resolvedType = "momentum_liferay";
+      else if (getMontgomerySession(sessionToken))
+        resolvedType = "aspnet_webforms";
       else if (getEnergovSession(sessionToken)) resolvedType = "energov";
     }
 
