@@ -22,7 +22,34 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { supabase } from "@/lib/supabase";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare } from "lucide-react";
+
+class TabErrorBoundary extends React.Component<
+  { tabName: string; children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { tabName: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error(`[PortalDataViewer] ${this.props.tabName} tab render error:`, error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 text-destructive flex items-center gap-2">
+          <AlertCircle className="h-4 w-4" />
+          <span>Failed to render {this.props.tabName} tab. The data format may be unexpected.</span>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface KeyValue {
   key: string;
@@ -33,6 +60,37 @@ interface TableData {
   headers: string[];
   rows: Record<string, string>[];
   tableIndex?: number;
+}
+
+interface FileComment {
+  text: string;
+  author: string;
+  date: string;
+  page: number | null;
+}
+
+interface FileEntry {
+  name: string;
+  fileId?: string;
+  status: string;
+  reviewedBy: string;
+  uploadedDate: string;
+  commentCount: number;
+  comments?: FileComment[];
+}
+
+interface FolderEntry {
+  name: string;
+  fileCount: number;
+  files: FileEntry[];
+}
+
+interface FilesTabData {
+  keyValues?: KeyValue[];
+  tables?: TableData[];
+  links?: { text: string; href: string }[];
+  error?: string;
+  folders?: FolderEntry[];
 }
 
 interface TabData {
@@ -49,6 +107,7 @@ interface TabData {
     error?: string;
     url?: string;
   }[];
+  folders?: FolderEntry[];
 }
 
 interface PortalData {
@@ -60,6 +119,10 @@ interface PortalData {
   tabs: {
     info?: TabData;
     reports?: TabData;
+    files?: FilesTabData;
+    status?: TabData;
+    tasks?: TabData;
+    [key: string]: TabData | FilesTabData | undefined;
   };
 }
 
@@ -73,6 +136,8 @@ export default function PortalDataViewer() {
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [noPermitConfigured, setNoPermitConfigured] = useState(false);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedFileComments, setExpandedFileComments] = useState<Set<string>>(new Set());
   const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(100);
 
@@ -202,6 +267,7 @@ export default function PortalDataViewer() {
 
   const infoTab = portalData.tabs?.info;
   const reportsTab = portalData.tabs?.reports;
+  const filesTab = portalData.tabs?.files;
   const reportsTable = reportsTab?.tables?.[0];
   const reportsRows = reportsTable?.rows ?? [];
   const pdfs = reportsTab?.pdfs ?? [];
@@ -1015,11 +1081,21 @@ export default function PortalDataViewer() {
           >
             Reports
           </TabsTrigger>
+          {filesTab && (
+            <TabsTrigger
+              value="files"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none"
+              data-testid="tab-files"
+            >
+              Files
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="info" className="mt-4">
           <Card>
             <CardContent className="p-0">
+              <TabErrorBoundary tabName="Info">
               {infoTab?.error ? (
                 <div className="p-4 text-destructive flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
@@ -1113,6 +1189,7 @@ export default function PortalDataViewer() {
               ) : (
                 <p className="p-4 text-muted-foreground">No info data available.</p>
               )}
+              </TabErrorBoundary>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1123,6 +1200,7 @@ export default function PortalDataViewer() {
           </p>
           <Card>
             <CardContent className="p-0">
+              <TabErrorBoundary tabName="Reports">
               {reportsTab?.error ? (
                 <div className="p-4 text-destructive flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
@@ -1273,9 +1351,165 @@ export default function PortalDataViewer() {
               ) : (
                 <p className="p-4 text-muted-foreground">No reports data available.</p>
               )}
+              </TabErrorBoundary>
             </CardContent>
           </Card>
         </TabsContent>
+
+        {filesTab && (
+          <TabsContent value="files" className="mt-4" data-testid="tabcontent-files">
+            <Card>
+              <CardContent className="p-0">
+                <TabErrorBoundary tabName="Files">
+                {filesTab.error ? (
+                  <div className="p-4 text-destructive flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {filesTab.error}
+                  </div>
+                ) : (filesTab.folders ?? []).length === 0 ? (
+                  <p className="p-4 text-muted-foreground">No files data available.</p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {(filesTab.folders ?? []).map((folder, fi) => {
+                          const folderKey = `${folder.name}-${fi}`;
+                          const isOpen = expandedFolders.has(folderKey);
+                          const totalComments = folder.files?.reduce((sum, f) => sum + (f.commentCount || 0), 0) ?? 0;
+                          return (
+                            <Collapsible
+                              key={folderKey}
+                              open={isOpen}
+                              onOpenChange={(open) => {
+                                setExpandedFolders((prev) => {
+                                  const next = new Set(prev);
+                                  if (open) next.add(folderKey);
+                                  else next.delete(folderKey);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <CollapsibleTrigger asChild>
+                                <button
+                                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                                  data-testid={`button-folder-${fi}`}
+                                >
+                                  {isOpen ? (
+                                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  )}
+                                  <FolderOpen className="h-4 w-4 shrink-0 text-[#FF6B2B]" />
+                                  <span className="font-medium text-sm flex-1">{folder.name}</span>
+                                  <Badge variant="secondary" className="text-xs">
+                                    {folder.fileCount ?? folder.files?.length ?? 0} files
+                                  </Badge>
+                                  {totalComments > 0 && (
+                                    <Badge className="text-xs bg-[#FF6B2B] text-white">
+                                      <MessageSquare className="h-3 w-3 mr-1" />
+                                      {totalComments}
+                                    </Badge>
+                                  )}
+                                </button>
+                              </CollapsibleTrigger>
+                              <CollapsibleContent>
+                                <div className="overflow-x-auto">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-[#091428] hover:bg-[#091428]">
+                                        <TableHead className="text-foreground font-medium">File Name</TableHead>
+                                        <TableHead className="text-foreground font-medium">Status</TableHead>
+                                        <TableHead className="text-foreground font-medium">Reviewed By</TableHead>
+                                        <TableHead className="text-foreground font-medium">Uploaded</TableHead>
+                                        <TableHead className="text-foreground font-medium text-right">Comments</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {(folder.files ?? []).map((file, fIdx) => {
+                                        const fileKey = `${folderKey}--${file.name}-${fIdx}`;
+                                        const hasComments = Array.isArray(file.comments) && file.comments.length > 0;
+                                        const isFileExpanded = expandedFileComments.has(fileKey);
+                                        return (
+                                          <React.Fragment key={fileKey}>
+                                            <TableRow
+                                              className={`${fIdx % 2 === 1 ? "bg-[#091428]" : "bg-[#0D1E38]"} ${hasComments ? "cursor-pointer hover:bg-muted/40" : ""}`}
+                                              onClick={() => {
+                                                if (!hasComments) return;
+                                                setExpandedFileComments((prev) => {
+                                                  const next = new Set(prev);
+                                                  if (next.has(fileKey)) next.delete(fileKey);
+                                                  else next.add(fileKey);
+                                                  return next;
+                                                });
+                                              }}
+                                              data-testid={`row-file-${fi}-${fIdx}`}
+                                            >
+                                              <TableCell className="text-sm">
+                                                <div className="flex items-center gap-2">
+                                                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                                  <span className="truncate max-w-[300px]">{file.name}</span>
+                                                </div>
+                                              </TableCell>
+                                              <TableCell className="text-sm whitespace-nowrap">{file.status || "—"}</TableCell>
+                                              <TableCell className="text-sm whitespace-nowrap">{file.reviewedBy || "—"}</TableCell>
+                                              <TableCell className="text-sm whitespace-nowrap">{file.uploadedDate || "—"}</TableCell>
+                                              <TableCell className="text-sm text-right">
+                                                {(file.commentCount || 0) > 0 ? (
+                                                  <Badge className="bg-[#FF6B2B] text-white text-xs">
+                                                    {file.commentCount}
+                                                  </Badge>
+                                                ) : (
+                                                  <span className="text-muted-foreground">0</span>
+                                                )}
+                                              </TableCell>
+                                            </TableRow>
+                                            {hasComments && isFileExpanded && (
+                                              <TableRow>
+                                                <TableCell colSpan={5} className="p-0 bg-[#091428]">
+                                                  <div className="px-6 py-3 space-y-2">
+                                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                                                      Comments ({file.comments!.length})
+                                                    </p>
+                                                    {file.comments!.map((comment, ci) => (
+                                                      <div
+                                                        key={ci}
+                                                        className="border border-border rounded-md p-3 bg-[#0D1E38]"
+                                                        data-testid={`comment-${fi}-${fIdx}-${ci}`}
+                                                      >
+                                                        <div className="flex items-center gap-3 mb-1 text-xs text-muted-foreground">
+                                                          <span className="font-medium text-foreground">{comment.author || "Unknown"}</span>
+                                                          {comment.date && <span>{comment.date}</span>}
+                                                          {comment.page != null && <span>Page {comment.page}</span>}
+                                                        </div>
+                                                        <p className="text-sm whitespace-pre-wrap">{comment.text}</p>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                </TableCell>
+                                              </TableRow>
+                                            )}
+                                          </React.Fragment>
+                                        );
+                                      })}
+                                      {(!folder.files || folder.files.length === 0) && (
+                                        <TableRow>
+                                          <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
+                                            No files in this folder.
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </CollapsibleContent>
+                            </Collapsible>
+                          );
+                        })}
+                  </div>
+                )}
+                </TabErrorBoundary>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
 
       {lightboxImage && (
