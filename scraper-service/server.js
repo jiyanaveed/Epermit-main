@@ -1965,22 +1965,33 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
     }
   }
 
+  const PDF_MAGIC = Buffer.from("%PDF");
+
+  function isFileContentType(ct) {
+    return ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
+      ct.includes("image/") || ct.includes("application/zip") ||
+      ct.includes("application/msword") || ct.includes("application/vnd.openxmlformats");
+  }
+
+  function isFileUrl(url) {
+    return /\.(pdf|dwg|doc|docx|xlsx|jpg|png|zip)(\?|$)/i.test(url) ||
+      /filehandler|filedownload|getfile|viewfile/i.test(url);
+  }
+
+  function hasValidPdfHeader(buffer) {
+    return buffer && buffer.length >= 4 && buffer.slice(0, 4).equals(PDF_MAGIC);
+  }
+
   const capturedResponses = [];
   const contextResponseHandler = async (response) => {
     const url = response.url();
     const ct = response.headers()["content-type"] || "";
-    const cl = parseInt(response.headers()["content-length"] || "0", 10);
     const status = response.status();
-    const isRealFile = status === 200 && (
-      ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
-      ct.includes("image/") || ct.includes("application/zip") ||
-      cl > 50000 ||
-      url.match(/\.(pdf|dwg|doc|docx|xlsx|jpg|png|zip)(\?|$)/i)
-    );
-    if (isRealFile) {
+    if (status === 200 && (isFileContentType(ct) || isFileUrl(url))) {
       try {
         const body = await response.body().catch(() => null);
         if (body && body.length >= MIN_FILE_SIZE) {
+          if (ct.includes("text/html") || ct.includes("text/javascript") || ct.includes("text/css")) return;
           capturedResponses.push({ url, contentType: ct, body });
         }
       } catch (e) {}
@@ -2001,10 +2012,12 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
       const handler = async (response) => {
         if (resolved) return;
         const ct = response.headers()["content-type"] || "";
-        const cl = parseInt(response.headers()["content-length"] || "0", 10);
-        if (response.status() === 200 && (ct.includes("application/pdf") || ct.includes("application/octet-stream") || cl > 50000)) {
-          resolved = true;
-          resolve(true);
+        const url = response.url();
+        if (response.status() === 200 && (isFileContentType(ct) || isFileUrl(url))) {
+          if (!ct.includes("text/html") && !ct.includes("text/javascript") && !ct.includes("text/css")) {
+            resolved = true;
+            resolve(true);
+          }
         }
       };
       page.on("response", handler);
@@ -2075,6 +2088,16 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           await popup.close().catch(() => {});
           return { success: false, reason: "too_small" };
         }
+        const headerBuf = Buffer.alloc(4);
+        const fd = fs.openSync(downloadPath, "r");
+        fs.readSync(fd, headerBuf, 0, 4, 0);
+        fs.closeSync(fd);
+        if (fileName.toLowerCase().endsWith(".pdf") && !hasValidPdfHeader(headerBuf)) {
+          console.log(`      ⚠️ Invalid PDF header (got ${JSON.stringify(headerBuf.toString("ascii"))}). Corrupted file rejected: ${fileName}`);
+          fs.unlinkSync(downloadPath);
+          await popup.close().catch(() => {});
+          return { success: false, reason: "corrupt_pdf" };
+        }
         if (stat.size > MAX_FILE_SIZE) {
           console.log(`      ⚠️ File too large (${(stat.size / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
           fs.unlinkSync(downloadPath);
@@ -2142,6 +2165,8 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           const buffer = Buffer.concat(buffers);
           if (buffer.length < MIN_FILE_SIZE) {
             console.log(`      ⚠️ File too small (${buffer.length} bytes < ${MIN_FILE_SIZE} bytes min). Rejected: ${fileName}`);
+          } else if (fileName.toLowerCase().endsWith(".pdf") && !hasValidPdfHeader(buffer)) {
+            console.log(`      ⚠️ Invalid PDF header from viewer source (got ${JSON.stringify(buffer.slice(0, 4).toString("ascii"))}). Rejected: ${fileName}`);
           } else if (buffer.length > MAX_FILE_SIZE) {
             console.log(`      ⚠️ File too large (${(buffer.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
           } else {
@@ -2184,8 +2209,17 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
 
     if (capturedResponses.length > 0) {
       console.log(`      🔗 Captured ${capturedResponses.length} file-like response(s) from viewFile call`);
-      const best = capturedResponses.sort((a, b) => b.body.length - a.body.length)[0];
-      if (best.body.length <= MAX_FILE_SIZE) {
+      const isPdf = fileName.toLowerCase().endsWith(".pdf");
+      const validResponses = isPdf
+        ? capturedResponses.filter((r) => hasValidPdfHeader(r.body))
+        : capturedResponses;
+      if (isPdf && validResponses.length === 0 && capturedResponses.length > 0) {
+        console.log(`      ⚠️ All ${capturedResponses.length} captured responses failed PDF header validation. Headers: ${capturedResponses.map(r => JSON.stringify(r.body.slice(0, 4).toString("ascii"))).join(", ")}`);
+      }
+      const best = validResponses.length > 0
+        ? validResponses.sort((a, b) => b.body.length - a.body.length)[0]
+        : null;
+      if (best && best.body.length <= MAX_FILE_SIZE) {
         const cumulative = (session?._scrapeCumulativeBytes || 0) + best.body.length;
         if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
           console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Skipping: ${fileName}`);
@@ -2196,7 +2230,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB)`);
           return await tryUploadAndClean(downloadPath, sizeMB);
         }
-      } else {
+      } else if (best) {
         console.log(`      ⚠️ Captured file too large (${(best.body.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
       }
     } else if (!popup) {

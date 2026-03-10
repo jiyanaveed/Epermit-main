@@ -69,6 +69,7 @@ Preferred communication style: Simple, everyday language.
 - **Credential selection**: Scraper uses only `project.credential_id` — no auto-match fallback by jurisdiction or permit number.
 - **Cleanup**: `cleanupScrapeState` helper deduplicates EventSource/interval/ref teardown. Unmount effect ensures no leaked timers or connections.
 - **File storage**: Downloaded files are uploaded to Supabase Storage bucket `project-drawings` at path `${projectId}/${fileId}_${fileName}`. Public URLs stored as `viewUrl` in `portal_data`. Local file deleted after successful upload; kept as backup if upload fails. Bucket auto-created on first use.
+- **PDF corruption prevention**: All 3 download paths (download-button, viewer-source-URL, captured-responses) validate `%PDF` magic header before saving. `hasValidPdfHeader()` checks first 4 bytes. Captured responses are pre-filtered to valid PDFs only before selecting the largest. Non-PDF file types bypass header validation. Prevents saving HTML viewer wrappers or CSS bundles as PDFs.
 
 ### Data Fetching Optimization (March 2026)
 - **`useProjects` hook** excludes `portal_data` JSONB from default fetch to avoid loading megabytes on every page. Uses explicit column list.
