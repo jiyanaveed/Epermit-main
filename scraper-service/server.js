@@ -840,7 +840,7 @@ async function scrapeAll(
 
       const { data: existingRows } = await supabase
         .from("projects")
-        .select("id, portal_data_hash")
+        .select("id, portal_data_hash, portal_data")
         .eq("permit_number", projectNum)
         .eq("user_id", userId);
 
@@ -856,11 +856,23 @@ async function scrapeAll(
           .update({ last_checked_at: new Date().toISOString() })
           .eq("id", actualProjectId);
       } else {
+        let mergedData = currentData;
+        if (existingRow && existingRow.portal_data && existingRow.portal_data.tabs && currentData.tabs) {
+          const existingTabs = existingRow.portal_data.tabs;
+          const newTabs = currentData.tabs;
+          const merged = { ...existingTabs, ...newTabs };
+          mergedData = { ...existingRow.portal_data, ...currentData, tabs: merged };
+          const keptKeys = Object.keys(existingTabs).filter((k) => !newTabs[k]);
+          if (keptKeys.length > 0) {
+            console.log(`   🔀 Merged tabs: kept existing [${keptKeys.join(", ")}], updated [${Object.keys(newTabs).join(", ")}]`);
+          }
+        }
+        const mergedHash = hashPortalData(mergedData);
         const updatePayload = {
-          portal_status: currentData.dashboardStatus || "Scraped",
+          portal_status: currentData.dashboardStatus || mergedData.dashboardStatus || "Scraped",
           last_checked_at: new Date().toISOString(),
-          portal_data: currentData,
-          portal_data_hash: newHash,
+          portal_data: mergedData,
+          portal_data_hash: mergedHash,
           permit_number: projectNum,
         };
 

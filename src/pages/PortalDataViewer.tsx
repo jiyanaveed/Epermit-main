@@ -1230,7 +1230,7 @@ export default function PortalDataViewer() {
                   </TableHeader>
                   <TableBody>
                     {reportsRows.map((row, ri) => {
-                      const reportName = (row["REPORT NAME"] ?? row["Report Name"] ?? "") as string;
+                      const reportName = String(row["REPORT NAME"] ?? row["Report Name"] ?? "");
                       const isExpanded = expandedReport === reportName;
                       const pdf = findPdfForReport(reportName);
                       const hasError = pdf?.error;

@@ -34,6 +34,7 @@ Preferred communication style: Simple, everyday language.
 - **Accela Scraper:** (`scraper-service/accela-scraper.js`) Handles Baltimore MD's Accela Citizen Access portal. Supports login, permit search, and extraction of: record info, processing status, plan review comments, related records, attachments, inspections, payments. Data structured in portal_data format compatible with existing frontend Portal Data Viewer.
 - **Dynamic Portal Routing:** The scraper accepts a `portalUrl` parameter in `/api/login` requests. For ProjectDox, it derives the WebUI base URL dynamically from the portal URL (subdomain + `-projectdoxwebui`). For Accela, it navigates directly to the portal URL. Falls back to Washington DC URL if no portal URL is provided.
 - **Credential Matching:** The frontend matches credentials by jurisdiction (exact match → partial match → single-credential fallback). Missing credentials or portal URL produce clear toast error messages.
+- **Tab-Merge Sync:** When syncing to Supabase, the scraper merges newly scraped tabs with existing `portal_data.tabs` so a partial scrape (e.g., files-only) doesn't wipe out previously scraped tabs (info, reports). Uses `{ ...existingTabs, ...newTabs }` spread.
 - **Sync-before-done:** The scraper sets `session.status = "done"` only AFTER the Supabase sync completes, preventing race conditions where the frontend starts the AI chain before portal_data is saved.
 - **Deployment:** Runs locally, proxied by Vite for frontend access.
 
