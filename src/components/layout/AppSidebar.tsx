@@ -359,11 +359,10 @@ export function AppSidebar() {
         selectedProject.setSelectedProjectId(null);
         return;
       }
+      selectedProject.setSelectedProjectId(v);
       const trimmed = permitNumber.trim();
       if (trimmed) {
         handleLinkProject(v);
-      } else {
-        selectedProject.setSelectedProjectId(v);
       }
     },
     [selectedProject, permitNumber, handleLinkProject]
