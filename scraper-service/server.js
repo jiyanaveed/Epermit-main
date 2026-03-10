@@ -1560,9 +1560,16 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
         let viewUrl = "";
         if (file.id) {
           console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via FileHandler: ${safeName}`);
-          const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session);
-          if (dlResult.success) {
-            viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+          try {
+            const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session);
+            if (dlResult.success) {
+              viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+              await page.waitForTimeout(4000);
+            } else {
+              console.log(`       ⚠️ File download failed (${dlResult.reason || "unknown"}), continuing to next file: ${safeName}`);
+            }
+          } catch (dlErr) {
+            console.log(`       ❌ Download exception for ${safeName}: ${dlErr.message}. Continuing to next file.`);
           }
         }
 
@@ -1883,12 +1890,15 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   const contextResponseHandler = async (response) => {
     const url = response.url();
     const ct = response.headers()["content-type"] || "";
+    const cl = parseInt(response.headers()["content-length"] || "0", 10);
     const status = response.status();
-    if (status === 200 && (
+    const isRealFile = status === 200 && (
       ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
       ct.includes("image/") || ct.includes("application/zip") ||
+      cl > 50000 ||
       url.match(/\.(pdf|dwg|doc|docx|xlsx|jpg|png|zip)(\?|$)/i)
-    )) {
+    );
+    if (isRealFile) {
       try {
         const body = await response.body().catch(() => null);
         if (body && body.length >= MIN_FILE_SIZE) {
@@ -1900,10 +1910,39 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
 
   const allPages = context.pages();
   for (const p of allPages) p.on("response", contextResponseHandler);
+  const onNewPageCapture = (newPage) => { newPage.on("response", contextResponseHandler); };
+  context.on("page", onNewPageCapture);
   let popup = null;
 
   try {
-    const popupPromise = context.waitForEvent("page", { timeout: 10000 }).catch(() => null);
+    const popupPromise = context.waitForEvent("page", { timeout: 20000 }).catch(() => null);
+
+    const realResponsePromise = new Promise((resolve) => {
+      let resolved = false;
+      const handler = async (response) => {
+        if (resolved) return;
+        const ct = response.headers()["content-type"] || "";
+        const cl = parseInt(response.headers()["content-length"] || "0", 10);
+        if (response.status() === 200 && (ct.includes("application/pdf") || ct.includes("application/octet-stream") || cl > 50000)) {
+          resolved = true;
+          resolve(true);
+        }
+      };
+      page.on("response", handler);
+      const onNewPage = (newPage) => { newPage.on("response", handler); };
+      context.on("page", onNewPage);
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve(false);
+        }
+        page.removeListener("response", handler);
+        context.removeListener("page", onNewPage);
+      }, 20000);
+    });
+
+    await page.evaluate(() => { window.name = ""; });
+
     await page.evaluate((fid) => {
       if (typeof viewFile === "function") {
         viewFile(fid);
@@ -1915,18 +1954,22 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
       }
     }, parseInt(fileId));
 
-    await page.waitForTimeout(3000);
+    const gotRealResponse = await realResponsePromise;
+    if (!gotRealResponse) {
+      console.log(`      ⚠️ No real file response received within 20s for fileId ${fileId}, falling back to captured responses`);
+    }
+    await page.waitForTimeout(1000);
     popup = await popupPromise;
 
     if (popup) {
       popup.on("response", contextResponseHandler);
       console.log(`      🔗 Viewer popup opened: ${popup.url()}`);
 
-      await popup.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+      await popup.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => {});
       await popup.waitForTimeout(3000);
 
       const [download] = await Promise.all([
-        popup.waitForEvent("download", { timeout: 10000 }).catch(() => null),
+        popup.waitForEvent("download", { timeout: 20000 }).catch(() => null),
         popup.evaluate(() => {
           const dlBtn = document.querySelector(
             'a[id*="download" i], button[id*="download" i], ' +
@@ -2083,6 +2126,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   } catch (err) {
     console.log(`      ❌ Download error for ${fileName}: ${err.message}`);
   } finally {
+    context.removeListener("page", onNewPageCapture);
     for (const p of context.pages()) {
       p.removeListener("response", contextResponseHandler);
     }
