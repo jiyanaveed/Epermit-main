@@ -990,7 +990,20 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
     console.log("     ⚠️ Session expired during Files tab scraping, skipping files");
     return { folders: [], error: "Session expired" };
   }
+  // DEBUG SNIPPET
+  const frameCount = page.frames().length;
+  console.log(`DEBUG: Total frames detected: ${frameCount}`);
 
+  page.frames().forEach((frame, i) => {
+      console.log(`Frame ${i} Name: ${frame.name()} | URL: ${frame.url().substring(0, 50)}...`);
+  });
+
+  const bodyText = await page.innerText('body');
+  console.log(`DEBUG: Main page text length: ${bodyText.length}`);
+  if (bodyText.length < 500) {
+      console.log("DEBUG: Main page looks empty. Data is almost certainly inside an iframe.");
+  }
+  // END DEBUG SNIPPET
   const result = { folders: [] };
 
   const folderElements = await page.$$eval(
