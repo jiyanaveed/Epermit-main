@@ -32,7 +32,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Save, Wand2, ArrowLeft, CheckCircle2, ShieldCheck, FileDown, UserCheck, Copy, FileQuestion, PenTool, PenLine, AlertCircle } from "lucide-react";
+import { Loader2, Save, Wand2, ArrowLeft, CheckCircle2, ShieldCheck, FileDown, UserCheck, Copy, FileQuestion, PenTool, PenLine, AlertCircle, ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ExportPackageDialog } from "@/components/response-matrix/ExportPackageDialog";
 import { getModifiedCommentIds } from "@/components/response-matrix/RoundChangeSummary";
 import { useResponsePackageDrafts } from "@/hooks/useResponsePackageDrafts";
@@ -523,82 +529,82 @@ export default function ResponseMatrix() {
                 {withoutMetadata.length} comment{withoutMetadata.length !== 1 ? "s" : ""}
               </span>
             )}
-            {/* Action bar: justify-between, scrollable secondary, Save pinned right */}
-            <div className="flex justify-between items-center gap-4 flex-1 min-w-0">
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-thin flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!projectId}
+                    data-testid="button-actions-dropdown"
+                    className="shrink-0"
+                  >
+                    Actions
+                    <ChevronDown className="h-3.5 w-3.5 ml-1.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    onClick={runValidateCompleteness}
+                    disabled={!projectId || validating}
+                    data-testid="menu-validate-completeness"
+                  >
+                    {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                    Validate Completeness
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={runQualityCheck}
+                    disabled={!projectId || qualityChecking || qualityCheckBlocked}
+                    data-testid="menu-quality-check"
+                  >
+                    {qualityChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
+                    Quality Check
+                    {qualityCheckBlocked && (
+                      <AlertCircle className="h-3.5 w-3.5 ml-1 text-amber-500" />
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setPlanMarkupOpen(true)}
+                    disabled={!projectId}
+                    data-testid="menu-plan-markup"
+                  >
+                    <PenTool className="h-4 w-4 mr-2" />
+                    Plan Markup
+                    {hasPendingMarkups && (
+                      <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0">
+                        {pendingCount}
+                      </Badge>
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setExportDialogOpen(true)}
+                    disabled={!projectId}
+                    data-testid="menu-export-response-package"
+                  >
+                    <FileDown className="h-4 w-4 mr-2" />
+                    Export Response Package
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={runRouteComments}
+                    disabled={!projectId || routing}
+                    data-testid="menu-route-comments"
+                  >
+                    {routing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCheck className="h-4 w-4 mr-2" />}
+                    Route Comments
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <ReviewTimer ref={timerRef} projectId={projectId} commentCount={rows.length} />
+              <div className="ml-auto">
                 <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={runValidateCompleteness}
-                  disabled={!projectId || validating}
-                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
-                  data-testid="button-validate-completeness"
+                  onClick={saveChanges}
+                  disabled={saving || rows.length === 0}
+                  className="bg-accent hover:bg-accent/90 shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md active:scale-[0.98]"
                 >
-                  {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                  Validate Completeness
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPlanMarkupOpen(true)}
-                  disabled={!projectId}
-                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
-                  data-testid="button-plan-markup"
-                >
-                  <PenTool className="h-4 w-4 mr-2" />
-                  Plan Markup
-                  {hasPendingMarkups && (
-                    <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0">
-                      {pendingCount}
-                    </Badge>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={runQualityCheck}
-                  disabled={!projectId || qualityChecking || qualityCheckBlocked}
-                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
-                  data-testid="button-quality-check"
-                  title={qualityCheckBlocked ? `${pendingCount} unapproved markup(s) — approve before running Quality Check` : undefined}
-                >
-                  {qualityChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
-                  Quality Check
-                  {qualityCheckBlocked && (
-                    <AlertCircle className="h-3.5 w-3.5 ml-1 text-amber-500" />
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setExportDialogOpen(true)}
-                  disabled={!projectId}
-                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
-                  data-testid="button-export-response-package"
-                >
-                  <FileDown className="h-4 w-4 mr-2" />
-                  Export Response Package
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={runRouteComments}
-                  disabled={!projectId || routing}
-                  className="shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md"
-                >
-                  {routing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCheck className="h-4 w-4 mr-2" />}
-                  Route Comments
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                  Save Changes
                 </Button>
               </div>
-              <ReviewTimer ref={timerRef} projectId={projectId} commentCount={rows.length} />
-              <Button
-                onClick={saveChanges}
-                disabled={saving || rows.length === 0}
-                className="bg-accent hover:bg-accent/90 flex-shrink-0 transition-transform hover:scale-[1.02] hover:shadow-md active:scale-[0.98] ml-2 pr-1"
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                Save Changes
-              </Button>
             </div>
           </div>
         </header>

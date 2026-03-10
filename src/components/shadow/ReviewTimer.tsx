@@ -83,10 +83,10 @@ export const ReviewTimer = forwardRef<ReviewTimerHandle, ReviewTimerProps>(
               {formatTime(elapsed)}
             </div>
             <Button
-              size="sm"
               variant="outline"
               onClick={stop}
               data-testid="button-stop-timer"
+              className="h-7 px-3 text-xs rounded-full"
             >
               <Square className="h-3 w-3 mr-1" />
               Stop Review
@@ -94,11 +94,11 @@ export const ReviewTimer = forwardRef<ReviewTimerHandle, ReviewTimerProps>(
           </>
         ) : (
           <Button
-            size="sm"
             variant="outline"
             onClick={start}
             disabled={!projectId || commentCount === 0}
             data-testid="button-start-timer"
+            className="h-7 px-3 text-xs rounded-full"
           >
             <Play className="h-3 w-3 mr-1" />
             Start Review Timer
