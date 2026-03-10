@@ -178,26 +178,29 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-const STORAGE_BUCKET = "project-drawings";
-let storageBucketReady = false;
+const STORAGE_BUCKET_NAME = "Project Drawings";
+let resolvedBucketId = null;
 
 async function ensureStorageBucket() {
-  if (storageBucketReady) return true;
+  if (resolvedBucketId) return true;
   try {
     const { data: buckets } = await supabase.storage.listBuckets();
-    const exists = buckets?.some((b) => b.name === STORAGE_BUCKET);
-    if (!exists) {
-      const { error } = await supabase.storage.createBucket(STORAGE_BUCKET, {
-        public: true,
-        fileSizeLimit: MAX_FILE_SIZE,
-      });
-      if (error) {
-        console.error(`❌ Failed to create storage bucket "${STORAGE_BUCKET}":`, error.message);
-        return false;
-      }
-      console.log(`✅ Created storage bucket "${STORAGE_BUCKET}"`);
+    const matched = buckets?.find((b) => b.name === STORAGE_BUCKET_NAME || b.id === STORAGE_BUCKET_NAME);
+    if (matched) {
+      resolvedBucketId = matched.id;
+      console.log(`✅ Found storage bucket "${STORAGE_BUCKET_NAME}" (id: ${resolvedBucketId})`);
+      return true;
     }
-    storageBucketReady = true;
+    const { data, error } = await supabase.storage.createBucket(STORAGE_BUCKET_NAME, {
+      public: true,
+      fileSizeLimit: MAX_FILE_SIZE,
+    });
+    if (error) {
+      console.error(`❌ Failed to create storage bucket "${STORAGE_BUCKET_NAME}":`, error.message);
+      return false;
+    }
+    resolvedBucketId = data?.name || STORAGE_BUCKET_NAME;
+    console.log(`✅ Created storage bucket "${STORAGE_BUCKET_NAME}" (id: ${resolvedBucketId})`);
     return true;
   } catch (err) {
     console.error(`❌ Storage bucket check failed:`, err.message);
@@ -221,7 +224,7 @@ async function uploadToSupabaseStorage(localPath, storagePath) {
     const contentType = mimeTypes[ext] || "application/octet-stream";
 
     const { data, error } = await supabase.storage
-      .from(STORAGE_BUCKET)
+      .from(resolvedBucketId)
       .upload(storagePath, fileBuffer, { contentType, upsert: true });
 
     if (error) {
@@ -230,7 +233,7 @@ async function uploadToSupabaseStorage(localPath, storagePath) {
     }
 
     const { data: urlData } = supabase.storage
-      .from(STORAGE_BUCKET)
+      .from(resolvedBucketId)
       .getPublicUrl(storagePath);
 
     return urlData?.publicUrl || null;
@@ -1947,7 +1950,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
       console.log(`      ⚠️ No projectId — keeping file locally: ${fileName}`);
       return { success: true, path: filePath, sizeMB, viewUrl: `/view-file/${encodeURIComponent(fileName)}` };
     }
-    const storagePath = `${projectId}/${fileName}`;
+    const storagePath = `drawings/${projectId}/${fileName}`;
     const publicUrl = await uploadToSupabaseStorage(filePath, storagePath);
     if (publicUrl) {
       console.log(`      ☁️  Uploaded to Supabase Storage: ${storagePath}`);
