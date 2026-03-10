@@ -63,6 +63,12 @@ Preferred communication style: Simple, everyday language.
 ### Auth & Roles
 - Manages user authentication, subscription tiers, project access via Postgres functions (`has_project_access`), and admin privileges (`has_role`).
 
+### Background Scrape (March 2026)
+- **Non-blocking polling**: `monitorScrapeInBackground` uses `setTimeout`-based fire-and-forget polling instead of a blocking `while` loop. The `/api/scrape` endpoint returns immediately; progress is tracked via `/api/data/:sessionId` polling.
+- **Floating progress bar**: Replaced full-screen blocking modal (`fixed inset-0 z-50`) with a compact floating widget (`fixed bottom-4 right-4`). Supports minimize/expand via `scrapingMinimized` state.
+- **Credential selection**: Scraper uses only `project.credential_id` — no auto-match fallback by jurisdiction or permit number.
+- **Cleanup**: `cleanupScrapeState` helper deduplicates EventSource/interval/ref teardown. Unmount effect ensures no leaked timers or connections.
+
 ### Data Fetching Optimization (March 2026)
 - **`useProjects` hook** excludes `portal_data` JSONB from default fetch to avoid loading megabytes on every page. Uses explicit column list.
 - **`useProjectPortalData` hook** (`src/hooks/useProjectPortalData.ts`) fetches `portal_data` on-demand for specific project IDs only.

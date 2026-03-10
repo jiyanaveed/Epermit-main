@@ -157,6 +157,7 @@ export function AgentWorkflowStatus() {
     completedSteps: Set<string>;
     currentStepKey: string | null;
   } | null>(null);
+  const [scrapingMinimized, setScrapingMinimized] = useState(false);
   const [scrapingElapsed, setScrapingElapsed] = useState(0);
   const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
@@ -227,6 +228,7 @@ export function AgentWorkflowStatus() {
     doneDismissTimeoutRef.current = setTimeout(() => {
       onScrapingCompleteRef.current?.();
       setScrapingOverlay(null);
+      setScrapingMinimized(false);
       doneDismissTimeoutRef.current = null;
     }, 3000);
     return () => {
@@ -236,6 +238,24 @@ export function AgentWorkflowStatus() {
       }
     };
   }, [scrapingOverlay?.phase]);
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      if (elapsedIntervalRef.current) {
+        clearInterval(elapsedIntervalRef.current);
+        elapsedIntervalRef.current = null;
+      }
+      if (doneDismissTimeoutRef.current) {
+        clearTimeout(doneDismissTimeoutRef.current);
+        doneDismissTimeoutRef.current = null;
+      }
+      activeSessionIdRef.current = null;
+    };
+  }, []);
 
   const cp = pipelineResult?.comment_parser;
   const dc = pipelineResult?.discipline_classifier;
@@ -926,6 +946,18 @@ export function AgentWorkflowStatus() {
     chainPipelineRef.current = runChainedPipeline;
   }, [runChainedPipeline]);
 
+  const cleanupScrapeState = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (elapsedIntervalRef.current) {
+      clearInterval(elapsedIntervalRef.current);
+      elapsedIntervalRef.current = null;
+    }
+    activeSessionIdRef.current = null;
+  }, []);
+
   const cancelScrape = useCallback(async () => {
     const sid = activeSessionIdRef.current;
     if (!sid) return;
@@ -939,21 +971,101 @@ export function AgentWorkflowStatus() {
       toast.error("Could not reach scraper to cancel");
       return;
     }
-    activeSessionIdRef.current = null;
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    if (elapsedIntervalRef.current) {
-      clearInterval(elapsedIntervalRef.current);
-      elapsedIntervalRef.current = null;
-    }
+    cleanupScrapeState();
     setPortalStatus("idle");
     setPortalStatusText("Cancelled");
     setScrapingOverlay(null);
+    setScrapingMinimized(false);
     setChainPhase("idle");
     toast.info("Scrape cancelled");
-  }, []);
+  }, [cleanupScrapeState]);
+
+  const monitorScrapeInBackground = useCallback((sessionId: string, projectIdToUse: string) => {
+    const pollInterval = 1500;
+    let attempts = 0;
+    const maxAttempts = 600;
+
+    const poll = async () => {
+      if (!activeSessionIdRef.current || activeSessionIdRef.current !== sessionId) return;
+      try {
+        const dataRes = await fetch(`${SCRAPER_URL}/api/data/${sessionId}`);
+        if (!dataRes.ok) {
+          if (attempts++ < maxAttempts) setTimeout(poll, pollInterval);
+          return;
+        }
+        const data = (await dataRes.json()) as {
+          status: string;
+          message?: string;
+          progress?: number;
+          total?: number;
+        };
+
+        if (data.status === "done") {
+          cleanupScrapeState();
+          const total = data.total ?? 0;
+          const progress = data.progress ?? 0;
+          const tabsExtracted = Math.max(progress, total, 1);
+          setScrapingOverlay((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  phase: "done",
+                  stepText: `Scraping complete! ${tabsExtracted}/${Math.max(total, 1)} tabs extracted`,
+                  progress: total,
+                  total,
+                  completedSteps: new Set(TAB_STEPS.map((t) => t.key)),
+                  currentStepKey: null,
+                }
+              : null,
+          );
+          setPortalStatusText("Done");
+          setPortalStatus("done");
+          toast.success(
+            `Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
+          );
+          await loadDashboardData();
+          await runChainedPipeline(projectIdToUse);
+          return;
+        }
+        if (data.status === "cancelled") {
+          cleanupScrapeState();
+          setPortalStatus("idle");
+          setPortalStatusText("Cancelled");
+          setScrapingOverlay(null);
+          setChainPhase("idle");
+          return;
+        }
+        if (data.status === "error") {
+          cleanupScrapeState();
+          setPortalStatus("idle");
+          setPortalStatusText("Error");
+          setScrapingOverlay(null);
+          setChainPhase("idle");
+          toast.error(data.message || "Scraping failed");
+          return;
+        }
+        const total = data.total ?? 0;
+        const progressVal = data.progress ?? 0;
+        const pct = total > 0 ? Math.round((progressVal / total) * 100) : 0;
+        setPortalStatusText(
+          pct > 0 ? `Scraping... ${pct}%` : data.message || "Scraping...",
+        );
+      } catch {
+        // network hiccup, retry
+      }
+      if (attempts++ < maxAttempts) {
+        setTimeout(poll, pollInterval);
+      } else {
+        cleanupScrapeState();
+        setPortalStatus("idle");
+        setPortalStatusText("Timeout");
+        setScrapingOverlay(null);
+        setChainPhase("idle");
+        toast.warning("Scraping took longer than expected. Check back shortly.");
+      }
+    };
+    setTimeout(poll, pollInterval);
+  }, [cleanupScrapeState, loadDashboardData, runChainedPipeline]);
 
   const runManualCheck = async (scrapeMode: "standard" | "all" | "files" | "comments" = "standard") => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
@@ -1139,7 +1251,7 @@ export function AgentWorkflowStatus() {
       };
       es.onerror = () => es.close();
 
-      toast.success("Scraping started");
+      toast.success("Scraping started — you can continue using the app.");
 
       const scrapeRes = await fetch(`${SCRAPER_URL}/api/scrape`, {
         method: "POST",
@@ -1158,122 +1270,14 @@ export function AgentWorkflowStatus() {
         throw new Error(errData.error || "Failed to start scrape");
       }
 
-      const pollInterval = 1000;
-      const maxAttempts = 180;
-      let attempts = 0;
-
-      const checkDone = async (): Promise<boolean> => {
-        const dataRes = await fetch(`${SCRAPER_URL}/api/data/${sessionId}`);
-        if (!dataRes.ok) return false;
-        const data = (await dataRes.json()) as {
-          status: string;
-          message?: string;
-          progress?: number;
-          total?: number;
-        };
-        if (data.status === "done") {
-          if (eventSourceRef.current) {
-            eventSourceRef.current.close();
-            eventSourceRef.current = null;
-          }
-          if (elapsedIntervalRef.current) {
-            clearInterval(elapsedIntervalRef.current);
-            elapsedIntervalRef.current = null;
-          }
-          const total = data.total ?? 0;
-          const progress = data.progress ?? 0;
-          const tabsExtracted = Math.max(progress, total, 1);
-          setScrapingOverlay((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  phase: "done",
-                  stepText: `Scraping complete! ${tabsExtracted}/${Math.max(total, 1)} tabs extracted`,
-                  progress: total,
-                  total,
-                  completedSteps: new Set(TAB_STEPS.map((t) => t.key)),
-                  currentStepKey: null,
-                }
-              : null,
-          );
-          activeSessionIdRef.current = null;
-          onScrapingCompleteRef.current = async () => {
-            setPortalStatusText("Done");
-            setPortalStatus("done");
-            toast.success(
-              `Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
-            );
-            console.log("[CHAIN DEBUG] Scrape complete callback fired. projectIdToUse:", projectIdToUse);
-            await loadDashboardData();
-            console.log("[CHAIN DEBUG] loadDashboardData done, starting chained pipeline...");
-            await runChainedPipeline(projectIdToUse);
-            console.log("[CHAIN DEBUG] runChainedPipeline finished.");
-          };
-          return true;
-        }
-        if (data.status === "cancelled") {
-          if (eventSourceRef.current) {
-            eventSourceRef.current.close();
-            eventSourceRef.current = null;
-          }
-          if (elapsedIntervalRef.current) {
-            clearInterval(elapsedIntervalRef.current);
-            elapsedIntervalRef.current = null;
-          }
-          activeSessionIdRef.current = null;
-          setPortalStatus("idle");
-          setPortalStatusText("Cancelled");
-          setScrapingOverlay(null);
-          setChainPhase("idle");
-          return true;
-        }
-        if (data.status === "error") {
-          throw new Error(data.message || "Scraping failed");
-        }
-        const total = data.total ?? 0;
-        const progress = data.progress ?? 0;
-        const pct = total > 0 ? Math.round((progress / total) * 100) : 0;
-        setPortalStatusText(
-          pct > 0 ? `Scraping... ${pct}%` : data.message || "Scraping...",
-        );
-        return false;
-      };
-
-      while (attempts < maxAttempts) {
-        if (await checkDone()) return;
-        await new Promise((r) => setTimeout(r, pollInterval));
-        attempts++;
-      }
-
-      setPortalStatus("idle");
-      setPortalStatusText("Timeout");
-      setScrapingOverlay(null);
-      setChainPhase("idle");
-      activeSessionIdRef.current = null;
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      if (elapsedIntervalRef.current) {
-        clearInterval(elapsedIntervalRef.current);
-        elapsedIntervalRef.current = null;
-      }
-      toast.warning("Scraping took longer than expected. Check back shortly.");
+      monitorScrapeInBackground(sessionId, projectIdToUse);
     } catch (error) {
       console.error(error);
+      cleanupScrapeState();
       setPortalStatus("idle");
       setPortalStatusText("Error");
       setScrapingOverlay(null);
       setChainPhase("idle");
-      activeSessionIdRef.current = null;
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      if (elapsedIntervalRef.current) {
-        clearInterval(elapsedIntervalRef.current);
-        elapsedIntervalRef.current = null;
-      }
       const msg = error instanceof Error ? error.message : String(error);
       const projectId = projectBySelectedId?.id ?? latestProjectId;
       if (projectId) {
@@ -1480,6 +1484,7 @@ export function AgentWorkflowStatus() {
     }
     onScrapingCompleteRef.current?.();
     setScrapingOverlay(null);
+    setScrapingMinimized(false);
   }, []);
 
   return (
@@ -1487,161 +1492,128 @@ export function AgentWorkflowStatus() {
       <style>{SCRAPE_KEYFRAMES}</style>
       {scrapingOverlay && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          role="dialog"
-          aria-modal="true"
+          className="fixed bottom-4 right-4 z-50 w-80"
+          role="status"
           aria-label="Scraping progress"
+          data-testid="scrape-progress-bar"
         >
-          <div className="relative w-full max-w-md rounded-xl border border-emerald-500/30 bg-zinc-900/95 shadow-2xl shadow-emerald-900/20 overflow-hidden">
+          <div className="relative rounded-xl border border-emerald-500/30 bg-zinc-900/95 shadow-2xl shadow-emerald-900/20 overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-emerald-600/5 pointer-events-none" />
-            <div
-              className="absolute inset-0 opacity-30 pointer-events-none"
-              style={{
-                background:
-                  "radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.15) 0%, transparent 60%)",
-                animation: "scrape-pulse-glow 2s ease-in-out infinite",
-              }}
-            />
-
-            <div className="relative p-6 space-y-5">
+            <div className="relative">
               {scrapingOverlay.phase === "scraping" ? (
-                <>
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-white">
-                      Scraping portal
-                    </h3>
-                    <span className="text-sm font-mono text-emerald-400 tabular-nums">
-                      {formatElapsed(scrapingElapsed)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-zinc-400">
-                    Project:{" "}
-                    <span className="font-medium text-emerald-400">
-                      {scrapingOverlay.projectNum}
-                    </span>
-                  </p>
-                  <div className="flex items-center gap-3">
+                scrapingMinimized ? (
+                  <button
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                    onClick={() => setScrapingMinimized(false)}
+                    data-testid="button-expand-scrape"
+                  >
                     <div
-                      className="h-5 w-5 shrink-0 rounded-full border-2 border-emerald-500 border-t-transparent"
+                      className="h-4 w-4 shrink-0 rounded-full border-2 border-emerald-500 border-t-transparent"
                       style={{ animation: "scrape-spin 0.8s linear infinite" }}
                     />
-                    <p className="text-sm text-zinc-300">
+                    <span className="text-xs text-zinc-300 truncate flex-1">
+                      {scrapingOverlay.stepText}
+                    </span>
+                    <span className="text-xs font-mono text-emerald-400 tabular-nums shrink-0">
+                      {formatElapsed(scrapingElapsed)}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="h-4 w-4 shrink-0 rounded-full border-2 border-emerald-500 border-t-transparent"
+                          style={{ animation: "scrape-spin 0.8s linear infinite" }}
+                        />
+                        <h3 className="text-sm font-semibold text-white">
+                          Scraping portal
+                        </h3>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-mono text-emerald-400 tabular-nums">
+                          {formatElapsed(scrapingElapsed)}
+                        </span>
+                        <button
+                          className="ml-1 p-1 rounded hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
+                          onClick={() => setScrapingMinimized(true)}
+                          title="Minimize"
+                          data-testid="button-minimize-scrape"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-xs text-zinc-400">
+                      Permit:{" "}
+                      <span className="font-medium text-emerald-400">
+                        {scrapingOverlay.projectNum}
+                      </span>
+                    </p>
+                    <p className="text-xs text-zinc-300">
                       {scrapingOverlay.stepText}
                     </p>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="h-2 rounded-full bg-zinc-700 overflow-hidden">
+                    <div className="h-1.5 rounded-full bg-zinc-700 overflow-hidden">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500 ease-out"
                         style={{
                           width: `${scrapingOverlay.total > 0 ? Math.round((scrapingOverlay.progress / scrapingOverlay.total) * 100) : 0}%`,
-                          animation:
-                            "scrape-pulse-glow 1.5s ease-in-out infinite",
                         }}
                       />
                     </div>
+                    <ul className="space-y-1">
+                      {TAB_STEPS.map((tab) => {
+                        const done = scrapingOverlay.completedSteps.has(tab.key);
+                        const current = scrapingOverlay.currentStepKey === tab.key;
+                        return (
+                          <li key={tab.key} className="flex items-center gap-2 text-xs">
+                            {done ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                            ) : current ? (
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+                                style={{ animation: "scrape-pulse-dot 1s ease-in-out infinite" }}
+                              />
+                            ) : (
+                              <Circle className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+                            )}
+                            <span className={done ? "text-zinc-400" : current ? "text-emerald-400 font-medium" : "text-zinc-600"}>
+                              {tab.label}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="w-full h-7 text-xs"
+                      onClick={cancelScrape}
+                      data-testid="button-cancel-scrape-overlay"
+                    >
+                      <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                      Cancel Scrape
+                    </Button>
                   </div>
-                  <ul className="space-y-2">
-                    {TAB_STEPS.map((tab) => {
-                      const done = scrapingOverlay.completedSteps.has(tab.key);
-                      const current =
-                        scrapingOverlay.currentStepKey === tab.key;
-                      return (
-                        <li
-                          key={tab.key}
-                          className="flex items-center gap-3 text-sm"
-                          style={
-                            done
-                              ? {
-                                  animation:
-                                    "scrape-fade-in-up 0.3s ease-out forwards",
-                                }
-                              : undefined
-                          }
-                        >
-                          {done ? (
-                            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
-                          ) : current ? (
-                            <span
-                              className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500"
-                              style={{
-                                animation:
-                                  "scrape-pulse-dot 1s ease-in-out infinite",
-                              }}
-                            />
-                          ) : (
-                            <Circle className="h-5 w-5 shrink-0 text-zinc-500" />
-                          )}
-                          <span
-                            className={
-                              done
-                                ? "text-zinc-300"
-                                : current
-                                  ? "text-emerald-400 font-medium"
-                                  : "text-zinc-500"
-                            }
-                          >
-                            {tab.label}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
+                )
               ) : (
-                <div className="text-center py-2">
-                  <div
-                    className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500"
-                    style={{
-                      animation: "scrape-scale-check 0.4s ease-out forwards",
-                    }}
-                  >
-                    <CheckCircle2 className="h-10 w-10" strokeWidth={2} />
+                <div className="p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                    <h3 className="text-sm font-semibold text-white">
+                      Scraping complete!
+                    </h3>
                   </div>
-                  <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-xl">
-                    <span
-                      className="absolute top-1/4 left-1/4 w-2 h-2 rounded-full bg-emerald-400"
-                      style={{
-                        animation: "scrape-sparkle 0.6s ease-out 0.1s forwards",
-                        opacity: 0,
-                      }}
-                    />
-                    <span
-                      className="absolute top-1/3 right-1/3 w-1.5 h-1.5 rounded-full bg-emerald-300"
-                      style={{
-                        animation: "scrape-sparkle 0.6s ease-out 0.2s forwards",
-                        opacity: 0,
-                      }}
-                    />
-                    <span
-                      className="absolute bottom-1/3 left-1/3 w-2 h-2 rounded-full bg-emerald-500"
-                      style={{
-                        animation: "scrape-sparkle 0.6s ease-out 0.3s forwards",
-                        opacity: 0,
-                      }}
-                    />
-                    <span
-                      className="absolute bottom-1/4 right-1/4 w-1.5 h-1.5 rounded-full bg-emerald-400"
-                      style={{
-                        animation:
-                          "scrape-sparkle 0.6s ease-out 0.25s forwards",
-                        opacity: 0,
-                      }}
-                    />
-                  </div>
-                  <h3 className="text-lg font-semibold text-white mb-1">
-                    Scraping complete!
-                  </h3>
-                  <p className="text-sm text-zinc-400 mb-1">
+                  <p className="text-xs text-zinc-400">
                     {scrapingOverlay.stepText}
                   </p>
-                  <p className="text-xs text-emerald-400 mb-4">
+                  <p className="text-xs text-emerald-400">
                     Launching agent chain...
                   </p>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10"
+                    className="w-full h-7 text-xs border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10"
                     onClick={handleDismissScrapingOverlay}
                     data-testid="button-dismiss-scraping"
                   >
