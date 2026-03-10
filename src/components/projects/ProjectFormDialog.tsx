@@ -435,17 +435,17 @@ export function ProjectFormDialog({
                 <Label htmlFor="credential_id" className="flex items-center">
                   <KeyRound className="h-3.5 w-3.5 mr-1" />
                   Portal Credential
-                  <FieldInfo info="Link a saved portal credential to this project for automatic matching when running the scraper agent." />
+                  <FieldInfo info="Link a saved portal credential to this project. The scraper will use this credential when running." />
                 </Label>
                 <Select
                   value={formData.credential_id}
                   onValueChange={(value) => setFormData(prev => ({ ...prev, credential_id: value === '__none__' ? '' : value }))}
                 >
                   <SelectTrigger data-testid="select-credential">
-                    <SelectValue placeholder="None (auto-match)" />
+                    <SelectValue placeholder="Select credential" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border shadow-lg z-50">
-                    <SelectItem value="__none__">None (auto-match by jurisdiction)</SelectItem>
+                    <SelectItem value="__none__">None (select a credential)</SelectItem>
                     {credentials.map((cred) => (
                       <SelectItem key={cred.id} value={cred.id}>
                         {cred.jurisdiction}{cred.portal_username ? ` — ${cred.portal_username}` : ''}

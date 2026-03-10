@@ -684,10 +684,10 @@ export function AppSidebar() {
                         onValueChange={handleCredentialChange}
                       >
                         <SelectTrigger className="h-9 w-full" data-testid="select-sidebar-credential">
-                          <SelectValue placeholder="Auto-match" />
+                          <SelectValue placeholder="Select credential" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">Auto-match by jurisdiction</SelectItem>
+                          <SelectItem value="__none__">None (select a credential)</SelectItem>
                           {sidebarCredentials.map((cred) => (
                             <SelectItem key={cred.id} value={cred.id}>
                               {cred.jurisdiction}{cred.portal_username ? ` — ${cred.portal_username}` : ""}

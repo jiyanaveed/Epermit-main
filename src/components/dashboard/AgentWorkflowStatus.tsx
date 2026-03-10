@@ -989,15 +989,18 @@ export function AgentWorkflowStatus() {
     toast.info("Chain Step 1/5: Portal Scraping...");
 
     try {
-      let projectJurisdiction = projectBySelectedId?.jurisdiction?.trim() || "";
+      const { data: projectRow } = await supabase
+        .from("projects")
+        .select("credential_id")
+        .eq("id", projectIdToUse)
+        .maybeSingle();
 
-      if (!projectJurisdiction) {
-        const { data: proj } = await supabase
-          .from("projects")
-          .select("jurisdiction")
-          .eq("id", projectIdToUse)
-          .maybeSingle();
-        projectJurisdiction = (proj?.jurisdiction as string)?.trim() || "";
+      const credentialId = projectRow?.credential_id;
+
+      if (!credentialId) {
+        throw new Error(
+          "No portal credential linked to this project. Select a credential in the sidebar dropdown under \"Portal Credential\", then try again.",
+        );
       }
 
       const { data: credentials, error: credError } = await supabase
@@ -1011,43 +1014,12 @@ export function AgentWorkflowStatus() {
           "No portal credentials found. Add credentials in Settings.",
         );
 
-      let cred: (typeof credentials)[number] | undefined;
-
-      if (projectBySelectedId?.credential_id) {
-        cred = credentials.find((c) => c.id === projectBySelectedId.credential_id);
-      }
+      const cred = credentials.find((c) => c.id === credentialId);
 
       if (!cred) {
-        const projectPermitNumber = projectBySelectedId?.permit_number?.trim() || "";
-        if (projectPermitNumber) {
-          cred = credentials.find((c) => c.permit_number?.trim() === projectPermitNumber);
-        }
-      }
-
-      if (!cred && projectJurisdiction) {
-        cred = credentials.find(
-          (c) =>
-            c.jurisdiction?.toLowerCase() === projectJurisdiction.toLowerCase(),
+        throw new Error(
+          "The linked credential was not found. Please re-select a credential in the sidebar dropdown under \"Portal Credential\".",
         );
-
-        if (!cred) {
-          cred = credentials.find((c) =>
-            c.jurisdiction?.toLowerCase().includes(projectJurisdiction.toLowerCase()) ||
-            projectJurisdiction.toLowerCase().includes(c.jurisdiction?.toLowerCase() ?? ""),
-          );
-        }
-      }
-
-      if (!cred) {
-        if (credentials.length === 1) {
-          cred = credentials[0];
-        } else {
-          throw new Error(
-            projectJurisdiction
-              ? `No portal credentials found for jurisdiction "${projectJurisdiction}". Add credentials in Settings, or link one to this project via the Edit Project form.`
-              : "This project has no jurisdiction set. Set a jurisdiction on the project, or link a portal credential via the Edit Project form.",
-          );
-        }
       }
 
       const loginUrl = cred.login_url?.trim();
