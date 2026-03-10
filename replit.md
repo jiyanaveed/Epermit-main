@@ -11,7 +11,7 @@ Preferred communication style: Simple, everyday language.
 ### Frontend
 - **Framework:** React 18 with TypeScript and Vite 5.
 - **UI/UX:** shadcn/ui (Radix UI primitives) and Tailwind CSS, supporting light/dark modes. Design adheres to a Commun-ET dark obsidian theme with specific fonts and color palettes.
-- **State Management:** TanStack React Query for server state; React hooks for local state; `SelectedProjectContext` for persistent project selection.
+- **State Management:** TanStack React Query for server state; React hooks for local state; `SelectedProjectContext` for persistent project selection (localStorage + URL `?projectId=` sync). Active project badge displayed in header bar.
 - **Forms:** React Hook Form with Zod for validation.
 - **PWA & Mobile:** Full PWA support and Capacitor 8 for potential native mobile applications.
 

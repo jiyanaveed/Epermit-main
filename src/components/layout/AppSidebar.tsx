@@ -290,7 +290,6 @@ export function AppSidebar() {
     ? projects.find((p) => p.id === selectedProject.selectedProjectId)
     : null;
 
-  // Load permit number from localStorage (only source for initial value; no auto-fill from project)
   useEffect(() => {
     if (!user) {
       setPermitNumber("");
@@ -304,6 +303,15 @@ export function AppSidebar() {
       setPermitNumber("");
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!selectedProjectData) return;
+    const projectPermit = selectedProjectData.permit_number;
+    if (projectPermit && projectPermit.trim() && !permitNumber.trim()) {
+      setPermitNumber(projectPermit.trim());
+      persistPermitNumber(projectPermit.trim());
+    }
+  }, [selectedProjectData?.id, selectedProjectData?.permit_number]);
 
   const persistPermitNumber = useCallback(
     (value: string) => {
@@ -410,11 +418,19 @@ export function AppSidebar() {
     if (createNewProject && permitNumber.trim()) setNewProjectName(permitNumber.trim());
   }, [createNewProject, permitNumber]);
 
+  const [projectsLoadedOnce, setProjectsLoadedOnce] = useState(false);
   useEffect(() => {
-    if (!selectedProject?.selectedProjectId || loading || projects.length === 0) return;
+    if (!loading && projects.length > 0) setProjectsLoadedOnce(true);
+  }, [loading, projects.length]);
+
+  useEffect(() => {
+    if (!selectedProject?.selectedProjectId || loading || !projectsLoadedOnce) return;
+    if (projects.length === 0) return;
     const exists = projects.some((p) => p.id === selectedProject.selectedProjectId);
-    if (!exists) selectedProject.setSelectedProjectId(null);
-  }, [selectedProject, projects, loading]);
+    if (!exists) {
+      selectedProject.setSelectedProjectId(null);
+    }
+  }, [selectedProject?.selectedProjectId, projects, loading, projectsLoadedOnce]);
 
   const isActive = (href: string) => location.pathname === href;
 

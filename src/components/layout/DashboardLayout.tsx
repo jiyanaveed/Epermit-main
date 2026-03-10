@@ -2,7 +2,7 @@ import { ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
-import { SelectedProjectProvider } from "@/contexts/SelectedProjectContext";
+import { SelectedProjectProvider, useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 
 import { CommandPalette } from "@/components/navigation/CommandPalette";
 import { FloatingHelpWidget } from "@/components/help/FloatingHelpWidget";
@@ -10,12 +10,42 @@ import { MobileBottomNav } from "./MobileBottomNav";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/hooks/useAuth";
-import { Search, LogOut } from "lucide-react";
+import { useProjects } from "@/hooks/useProjects";
+import { Search, LogOut, Building2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 interface DashboardLayoutProps {
   children: ReactNode;
+}
+
+function ActiveProjectBadge() {
+  const ctx = useSelectedProjectOptional();
+  const { projects } = useProjects();
+  if (!ctx?.selectedProjectId) return null;
+  const project = projects.find((p) => p.id === ctx.selectedProjectId);
+  if (!project) return null;
+  const permit = project.permit_number;
+  const jurisdiction = project.jurisdiction;
+  return (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground truncate min-w-0" data-testid="header-active-project">
+      <Building2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+      <span className="font-medium text-foreground truncate" data-testid="header-project-name">
+        {project.name}
+      </span>
+      {permit && (
+        <span className="hidden sm:inline text-xs bg-muted px-1.5 py-0.5 rounded" data-testid="header-permit-number">
+          {permit}
+        </span>
+      )}
+      {jurisdiction && (
+        <span className="hidden md:inline-flex items-center gap-1 text-xs" data-testid="header-jurisdiction">
+          <MapPin className="h-3 w-3" />
+          {jurisdiction}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function DashboardContent({ children }: { children: ReactNode }) {
@@ -37,7 +67,9 @@ function DashboardContent({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-40 flex h-14 items-center gap-2 sm:gap-4 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-3 sm:px-4 lg:px-6">
           <SidebarTrigger className="shrink-0" />
           
-          <div className="flex-1 min-w-0" />
+          <div className="flex-1 min-w-0">
+            <ActiveProjectBadge />
+          </div>
           
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <Button
