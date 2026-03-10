@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { SelectedProjectProvider, useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
+import { ScrapeProvider, useScrapeOptional } from "@/contexts/ScrapeContext";
 
 import { CommandPalette } from "@/components/navigation/CommandPalette";
 import { FloatingHelpWidget } from "@/components/help/FloatingHelpWidget";
@@ -11,7 +12,7 @@ import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
-import { Search, LogOut, Building2, MapPin } from "lucide-react";
+import { Search, LogOut, Building2, MapPin, Loader2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -48,6 +49,31 @@ function ActiveProjectBadge() {
   );
 }
 
+function ScrapeHeaderIndicator() {
+  const scrape = useScrapeOptional();
+  if (!scrape || !scrape.scrapeOverlay || scrape.scrapeOverlay.phase !== "scraping") return null;
+
+  const { scrapeOverlay, setScrapeMinimized } = scrape;
+  const pct = scrapeOverlay.total > 0
+    ? Math.round((scrapeOverlay.progress / scrapeOverlay.total) * 100)
+    : 0;
+
+  return (
+    <button
+      className="flex items-center gap-2 px-2.5 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+      onClick={() => setScrapeMinimized(false)}
+      data-testid="header-scrape-indicator"
+    >
+      <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+      <span className="hidden sm:inline">
+        Scraping: {scrapeOverlay.progress}/{scrapeOverlay.total}
+      </span>
+      <span className="sm:hidden">{pct}%</span>
+      <Eye className="h-3 w-3 shrink-0 opacity-60" />
+    </button>
+  );
+}
+
 function DashboardContent({ children }: { children: ReactNode }) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -63,7 +89,6 @@ function DashboardContent({ children }: { children: ReactNode }) {
   return (
     <>
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Topbar */}
         <header className="sticky top-0 z-40 flex h-14 items-center gap-2 sm:gap-4 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-3 sm:px-4 lg:px-6">
           <SidebarTrigger className="shrink-0" />
           
@@ -72,6 +97,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            <ScrapeHeaderIndicator />
             <Button
               variant="outline"
               size="sm"
@@ -113,12 +139,14 @@ function DashboardContent({ children }: { children: ReactNode }) {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
     <SelectedProjectProvider>
-      <SidebarProvider>
-        <div className="min-h-screen flex w-full">
-          <AppSidebar />
-          <DashboardContent>{children}</DashboardContent>
-        </div>
-      </SidebarProvider>
+      <ScrapeProvider>
+        <SidebarProvider>
+          <div className="min-h-screen flex w-full">
+            <AppSidebar />
+            <DashboardContent>{children}</DashboardContent>
+          </div>
+        </SidebarProvider>
+      </ScrapeProvider>
     </SelectedProjectProvider>
   );
 }

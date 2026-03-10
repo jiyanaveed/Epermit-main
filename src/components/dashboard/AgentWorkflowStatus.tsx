@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
+import { useScrape } from "@/contexts/ScrapeContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import {
@@ -33,39 +34,8 @@ import {
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
-const SCRAPE_KEYFRAMES = `
-  @keyframes scrape-pulse-glow {
-    0%, 100% { opacity: 1; box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
-    50% { opacity: 0.9; box-shadow: 0 0 24px rgba(16, 185, 129, 0.7); }
-  }
-  @keyframes scrape-spin {
-    to { transform: rotate(360deg); }
-  }
-  @keyframes scrape-fade-in-up {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes scrape-scale-check {
-    from { opacity: 0; transform: scale(0.5); }
-    to { opacity: 1; transform: scale(1); }
-  }
-  @keyframes scrape-pulse-dot {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(1.2); }
-  }
-  @keyframes scrape-sparkle {
-    0%, 100% { opacity: 0; transform: scale(0); }
-    50% { opacity: 1; transform: scale(1); }
-  }
-`;
-
-const TAB_STEPS = [
-  { key: "status", label: "Status tab" },
-  { key: "files", label: "Files tab" },
-  { key: "tasks", label: "Tasks tab" },
-  { key: "info", label: "Info tab" },
-  { key: "reports", label: "Reports tab" },
-];
+const SCRAPER_URL =
+  "https://60319c1c-9adb-4aa0-a7f5-cc9fa75759e9-00-23cha9g730ax7.janeway.replit.dev";
 
 type PipelineResult = {
   comment_parser?: {
@@ -78,9 +48,6 @@ type PipelineResult = {
   };
   discipline_classifier?: { classified_count?: number; error?: string };
 };
-
-const SCRAPER_URL =
-  "https://60319c1c-9adb-4aa0-a7f5-cc9fa75759e9-00-23cha9g730ax7.janeway.replit.dev";
 
 type StepStatus =
   | "idle"
@@ -123,6 +90,7 @@ export function AgentWorkflowStatus() {
   const navigate = useNavigate();
   const { selectedProjectId } = useSelectedProject();
   const queryClient = useQueryClient();
+  const scrape = useScrape();
 
   const [portalStatus, setPortalStatus] = useState<StepStatus>("idle");
   const [portalStatusText, setPortalStatusText] = useState<string | null>(null);
@@ -147,27 +115,6 @@ export function AgentWorkflowStatus() {
     jurisdiction: string | null;
     credential_id: string | null;
   } | null>(null);
-
-  const [scrapingOverlay, setScrapingOverlay] = useState<{
-    phase: "scraping" | "done";
-    stepText: string;
-    progress: number;
-    total: number;
-    projectNum: string;
-    completedSteps: Set<string>;
-    currentStepKey: string | null;
-  } | null>(null);
-  const [scrapingMinimized, setScrapingMinimized] = useState(false);
-  const [scrapingElapsed, setScrapingElapsed] = useState(0);
-  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-    null,
-  );
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const activeSessionIdRef = useRef<string | null>(null);
-  const onScrapingCompleteRef = useRef<(() => void) | null>(null);
-  const doneDismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
 
   const [chainPhase, setChainPhase] = useState<ChainPhase>("idle");
   const [chainError, setChainError] = useState<string | null>(null);
@@ -224,38 +171,19 @@ export function AgentWorkflowStatus() {
   }, [projectBySelectedId?.id, latestProjectId]);
 
   useEffect(() => {
-    if (scrapingOverlay?.phase !== "done") return;
-    doneDismissTimeoutRef.current = setTimeout(() => {
-      onScrapingCompleteRef.current?.();
-      setScrapingOverlay(null);
-      setScrapingMinimized(false);
-      doneDismissTimeoutRef.current = null;
-    }, 3000);
-    return () => {
-      if (doneDismissTimeoutRef.current) {
-        clearTimeout(doneDismissTimeoutRef.current);
-        doneDismissTimeoutRef.current = null;
+    if (scrape.isScraping) {
+      setPortalStatus("checking");
+      if (scrape.scrapeOverlay) {
+        const pct = scrape.scrapeOverlay.total > 0
+          ? Math.round((scrape.scrapeOverlay.progress / scrape.scrapeOverlay.total) * 100)
+          : 0;
+        setPortalStatusText(pct > 0 ? `Scraping... ${pct}%` : scrape.scrapeOverlay.stepText);
       }
-    };
-  }, [scrapingOverlay?.phase]);
-
-  useEffect(() => {
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      if (elapsedIntervalRef.current) {
-        clearInterval(elapsedIntervalRef.current);
-        elapsedIntervalRef.current = null;
-      }
-      if (doneDismissTimeoutRef.current) {
-        clearTimeout(doneDismissTimeoutRef.current);
-        doneDismissTimeoutRef.current = null;
-      }
-      activeSessionIdRef.current = null;
-    };
-  }, []);
+    } else if (scrape.scrapeOverlay?.phase === "done") {
+      setPortalStatus("done");
+      setPortalStatusText("Done");
+    }
+  }, [scrape.isScraping, scrape.scrapeOverlay]);
 
   const cp = pipelineResult?.comment_parser;
   const dc = pipelineResult?.discipline_classifier;
@@ -946,126 +874,36 @@ export function AgentWorkflowStatus() {
     chainPipelineRef.current = runChainedPipeline;
   }, [runChainedPipeline]);
 
-  const cleanupScrapeState = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    if (elapsedIntervalRef.current) {
-      clearInterval(elapsedIntervalRef.current);
-      elapsedIntervalRef.current = null;
-    }
-    activeSessionIdRef.current = null;
-  }, []);
-
-  const cancelScrape = useCallback(async () => {
-    const sid = activeSessionIdRef.current;
-    if (!sid) return;
-    try {
-      const res = await fetch(`${SCRAPER_URL}/api/scrape/cancel/${sid}`, { method: "POST" });
-      if (!res.ok) {
-        toast.error("Failed to cancel scrape");
-        return;
-      }
-    } catch (err) {
-      toast.error("Could not reach scraper to cancel");
-      return;
-    }
-    cleanupScrapeState();
-    setPortalStatus("idle");
-    setPortalStatusText("Cancelled");
-    setScrapingOverlay(null);
-    setScrapingMinimized(false);
-    setChainPhase("idle");
-    toast.info("Scrape cancelled");
-  }, [cleanupScrapeState]);
-
-  const monitorScrapeInBackground = useCallback((sessionId: string, projectIdToUse: string) => {
-    const pollInterval = 1500;
-    let attempts = 0;
-    const maxAttempts = 600;
-
-    const poll = async () => {
-      if (!activeSessionIdRef.current || activeSessionIdRef.current !== sessionId) return;
-      try {
-        const dataRes = await fetch(`${SCRAPER_URL}/api/data/${sessionId}`);
-        if (!dataRes.ok) {
-          if (attempts++ < maxAttempts) setTimeout(poll, pollInterval);
-          return;
-        }
-        const data = (await dataRes.json()) as {
-          status: string;
-          message?: string;
-          progress?: number;
-          total?: number;
-        };
-
-        if (data.status === "done") {
-          cleanupScrapeState();
-          const total = data.total ?? 0;
-          const progress = data.progress ?? 0;
-          const tabsExtracted = Math.max(progress, total, 1);
-          setScrapingOverlay((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  phase: "done",
-                  stepText: `Scraping complete! ${tabsExtracted}/${Math.max(total, 1)} tabs extracted`,
-                  progress: total,
-                  total,
-                  completedSteps: new Set(TAB_STEPS.map((t) => t.key)),
-                  currentStepKey: null,
-                }
-              : null,
-          );
-          setPortalStatusText("Done");
-          setPortalStatus("done");
-          toast.success(
-            `Scraping complete! ${tabsExtracted} tab${tabsExtracted === 1 ? "" : "s"} extracted. Data saved.`,
-          );
-          await loadDashboardData();
-          await runChainedPipeline(projectIdToUse);
-          return;
-        }
-        if (data.status === "cancelled") {
-          cleanupScrapeState();
-          setPortalStatus("idle");
-          setPortalStatusText("Cancelled");
-          setScrapingOverlay(null);
-          setChainPhase("idle");
-          return;
-        }
-        if (data.status === "error") {
-          cleanupScrapeState();
-          setPortalStatus("idle");
-          setPortalStatusText("Error");
-          setScrapingOverlay(null);
-          setChainPhase("idle");
-          toast.error(data.message || "Scraping failed");
-          return;
-        }
-        const total = data.total ?? 0;
-        const progressVal = data.progress ?? 0;
-        const pct = total > 0 ? Math.round((progressVal / total) * 100) : 0;
-        setPortalStatusText(
-          pct > 0 ? `Scraping... ${pct}%` : data.message || "Scraping...",
-        );
-      } catch {
-        // network hiccup, retry
-      }
-      if (attempts++ < maxAttempts) {
-        setTimeout(poll, pollInterval);
-      } else {
-        cleanupScrapeState();
-        setPortalStatus("idle");
-        setPortalStatusText("Timeout");
-        setScrapingOverlay(null);
-        setChainPhase("idle");
-        toast.warning("Scraping took longer than expected. Check back shortly.");
-      }
+  useEffect(() => {
+    scrape.onScrapeCompleteRef.current = async (projectId: string) => {
+      setPortalStatus("done");
+      setPortalStatusText("Done");
+      await loadDashboardData();
+      await runChainedPipeline(projectId);
     };
-    setTimeout(poll, pollInterval);
-  }, [cleanupScrapeState, loadDashboardData, runChainedPipeline]);
+    return () => {
+      scrape.onScrapeCompleteRef.current = null;
+    };
+  }, [loadDashboardData, runChainedPipeline, scrape.onScrapeCompleteRef]);
+
+  useEffect(() => {
+    if (scrape.pendingCompletionProjectId) {
+      const projectId = scrape.pendingCompletionProjectId;
+      scrape.clearPendingCompletion();
+      setPortalStatus("done");
+      setPortalStatusText("Done");
+      loadDashboardData().then(() => runChainedPipeline(projectId));
+    }
+  }, [scrape.pendingCompletionProjectId, scrape.clearPendingCompletion, loadDashboardData, runChainedPipeline]);
+
+  useEffect(() => {
+    if (scrape.lastScrapeOutcome && scrape.lastScrapeOutcome !== "done") {
+      scrape.clearLastScrapeOutcome();
+      setPortalStatus("idle");
+      setPortalStatusText("");
+      setChainPhase("idle");
+    }
+  }, [scrape.lastScrapeOutcome, scrape.clearLastScrapeOutcome]);
 
   const runManualCheck = async (scrapeMode: "standard" | "all" | "files" | "comments" = "standard") => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
@@ -1166,90 +1004,6 @@ export function AgentWorkflowStatus() {
 
       const loginData = (await loginRes.json()) as { sessionId: string };
       const { sessionId } = loginData;
-      activeSessionIdRef.current = sessionId;
-
-      const completedSteps = new Set<string>();
-      setScrapingOverlay({
-        phase: "scraping",
-        stepText: "Logging in...",
-        progress: 0,
-        total: 5,
-        projectNum: String(permitNumberToUse).trim(),
-        completedSteps,
-        currentStepKey: null,
-      });
-      setScrapingElapsed(0);
-      elapsedIntervalRef.current = setInterval(() => {
-        setScrapingElapsed((s) => s + 1);
-      }, 1000);
-
-      const progressUrl = `${SCRAPER_URL}/api/progress/${sessionId}`;
-      const es = new EventSource(progressUrl);
-      eventSourceRef.current = es;
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data) as {
-            status?: string;
-            message?: string;
-            progress?: number;
-            total?: number;
-          };
-          const total = data.total ?? 0;
-          const progress = data.progress ?? 0;
-          const msg = (data.message ?? "").trim();
-          setScrapingOverlay((prev) => {
-            if (!prev) return prev;
-            const nextCompleted = new Set(prev.completedSteps);
-            if (msg.includes("→ Info")) {
-              nextCompleted.add("info");
-              nextCompleted.add("status");
-              nextCompleted.add("files");
-              nextCompleted.add("tasks");
-            }
-            if (msg.includes("→ Reports")) {
-              nextCompleted.add("reports");
-            }
-            if (msg.includes("→ Status")) nextCompleted.add("status");
-            if (msg.includes("→ Files")) nextCompleted.add("files");
-            if (msg.includes("→ Tasks")) nextCompleted.add("tasks");
-            let stepText = prev.stepText;
-            if (data.status === "done") {
-              stepText = "Saving to database...";
-            } else if (msg) {
-              if (msg.includes("→ Info")) stepText = "Scraping Info tab...";
-              else if (msg.includes("→ Reports"))
-                stepText = "Scraping Reports tab...";
-              else if (msg.includes("→ Status"))
-                stepText = "Scraping Status tab...";
-              else if (msg.includes("→ Files"))
-                stepText = "Scraping Files tab...";
-              else if (msg.includes("→ Tasks"))
-                stepText = "Scraping Tasks tab...";
-              else stepText = msg;
-            }
-            const currentKey = msg.includes("→ Reports")
-              ? "reports"
-              : msg.includes("→ Info")
-                ? "info"
-                : msg.includes("→ Status")
-                  ? "status"
-                  : msg.includes("→ Files")
-                    ? "files"
-                    : msg.includes("→ Tasks")
-                      ? "tasks"
-                      : prev.currentStepKey;
-            return {
-              ...prev,
-              stepText,
-              progress,
-              total: total || prev.total,
-              completedSteps: nextCompleted,
-              currentStepKey: currentKey,
-            };
-          });
-        } catch (_) {}
-      };
-      es.onerror = () => es.close();
 
       toast.success("Scraping started — you can continue using the app.");
 
@@ -1270,13 +1024,12 @@ export function AgentWorkflowStatus() {
         throw new Error(errData.error || "Failed to start scrape");
       }
 
-      monitorScrapeInBackground(sessionId, projectIdToUse);
+      scrape.startScrapeSession(sessionId, projectIdToUse, String(permitNumberToUse).trim());
     } catch (error) {
       console.error(error);
-      cleanupScrapeState();
+      scrape.cleanupScrapeState();
       setPortalStatus("idle");
       setPortalStatusText("Error");
-      setScrapingOverlay(null);
       setChainPhase("idle");
       const msg = error instanceof Error ? error.message : String(error);
       const projectId = projectBySelectedId?.id ?? latestProjectId;
@@ -1324,7 +1077,7 @@ export function AgentWorkflowStatus() {
             <Button
               size="sm"
               variant="destructive"
-              onClick={cancelScrape}
+              onClick={scrape.cancelScrape}
               data-testid="button-cancel-scrape"
               className="transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
             >
@@ -1471,316 +1224,162 @@ export function AgentWorkflowStatus() {
     },
   ];
 
-  const formatElapsed = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  };
-
-  const handleDismissScrapingOverlay = useCallback(() => {
-    if (doneDismissTimeoutRef.current) {
-      clearTimeout(doneDismissTimeoutRef.current);
-      doneDismissTimeoutRef.current = null;
-    }
-    onScrapingCompleteRef.current?.();
-    setScrapingOverlay(null);
-    setScrapingMinimized(false);
-  }, []);
-
   return (
-    <>
-      <style>{SCRAPE_KEYFRAMES}</style>
-      {scrapingOverlay && (
-        <div
-          className="fixed bottom-4 right-4 z-50 w-80"
-          role="status"
-          aria-label="Scraping progress"
-          data-testid="scrape-progress-bar"
-        >
-          <div className="relative rounded-xl border border-emerald-500/30 bg-zinc-900/95 shadow-2xl shadow-emerald-900/20 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-emerald-600/5 pointer-events-none" />
-            <div className="relative">
-              {scrapingOverlay.phase === "scraping" ? (
-                scrapingMinimized ? (
-                  <button
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                    onClick={() => setScrapingMinimized(false)}
-                    data-testid="button-expand-scrape"
-                  >
-                    <div
-                      className="h-4 w-4 shrink-0 rounded-full border-2 border-emerald-500 border-t-transparent"
-                      style={{ animation: "scrape-spin 0.8s linear infinite" }}
-                    />
-                    <span className="text-xs text-zinc-300 truncate flex-1">
-                      {scrapingOverlay.stepText}
-                    </span>
-                    <span className="text-xs font-mono text-emerald-400 tabular-nums shrink-0">
-                      {formatElapsed(scrapingElapsed)}
-                    </span>
-                  </button>
+    <Card className="relative overflow-hidden border-0 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl shadow-xl">
+      <div className="absolute inset-0 rounded-xl border border-transparent bg-gradient-to-br from-emerald-500/20 via-transparent to-transparent bg-[length:200%_200%] animate-shimmer pointer-events-none" />
+      <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-emerald-500/20 pointer-events-none" />
+      <CardHeader className="relative">
+        <CardTitle className="flex items-center gap-2 text-lg flex-wrap">
+          <span className="flex items-center gap-2">
+            <Workflow
+              className="h-5 w-5 text-emerald-400 animate-pulse-glow"
+              style={{ boxShadow: "0 0 12px rgba(16, 185, 129, 0.3)" }}
+            />
+            DesignCheck Intake Pipeline
+          </span>
+          <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
+            AI-Powered
+          </span>
+          {chainRunning && (
+            <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400 animate-pulse" data-testid="badge-chain-running">
+              Chain Active
+            </span>
+          )}
+          {chainPhase === "complete" && (
+            <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400" data-testid="badge-chain-complete">
+              Chain Complete
+            </span>
+          )}
+          {isShadowMode && chainPhase !== "idle" && (
+            <span className="inline-flex items-center rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-400" data-testid="badge-shadow-mode">
+              Shadow Mode
+            </span>
+          )}
+        </CardTitle>
+        <CardDescription>
+          {chainRunning
+            ? `Agent chain in progress — ${chainPhase} step active. All agents fire sequentially.`
+            : "Agentic workflow status (Steps 1-5). Run a manual portal check to trigger the full chain."}
+        </CardDescription>
+        {chainError && (
+          <p className="text-xs text-red-400 mt-1" data-testid="text-chain-error">
+            Last error: {chainError}
+          </p>
+        )}
+      </CardHeader>
+      <CardContent className="relative space-y-0">
+        {steps.map((step, i) => (
+          <div
+            key={i}
+            className="flex gap-4 group transition-transform duration-200 hover:scale-[1.02]"
+            style={{
+              animation: "fade-in-up 0.4s ease-out forwards",
+              animationDelay: `${i * 100}ms`,
+              opacity: 0,
+            }}
+          >
+            <div className="flex flex-col items-center shrink-0">
+              <div
+                className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all duration-300 group-hover:shadow-lg ${
+                  step.status === "checking"
+                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)] [animation:spin_0.8s_linear_infinite]"
+                    : step.status === "done"
+                      ? "border-emerald-500 bg-emerald-500/20 text-emerald-500"
+                      : step.status === "failed"
+                        ? "border-red-500 bg-red-500/10 text-red-500 animate-status-shake"
+                        : "border-muted-foreground/40 bg-muted/50 text-muted-foreground animate-pulse-glow"
+                }`}
+                style={
+                  step.status === "checking"
+                    ? { animation: "scrape-spin 0.8s linear infinite" }
+                    : undefined
+                }
+              >
+                {step.status === "checking" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : step.status === "done" ? (
+                  <CheckCircle2
+                    className="h-4 w-4"
+                    style={{ animation: "scrape-scale-check 0.3s ease-out" }}
+                  />
+                ) : step.status === "failed" ? (
+                  <XCircle className="h-4 w-4" />
                 ) : (
-                  <div className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="h-4 w-4 shrink-0 rounded-full border-2 border-emerald-500 border-t-transparent"
-                          style={{ animation: "scrape-spin 0.8s linear infinite" }}
-                        />
-                        <h3 className="text-sm font-semibold text-white">
-                          Scraping portal
-                        </h3>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs font-mono text-emerald-400 tabular-nums">
-                          {formatElapsed(scrapingElapsed)}
-                        </span>
-                        <button
-                          className="ml-1 p-1 rounded hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
-                          onClick={() => setScrapingMinimized(true)}
-                          title="Minimize"
-                          data-testid="button-minimize-scrape"
-                        >
-                          <ChevronDown className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-xs text-zinc-400">
-                      Permit:{" "}
-                      <span className="font-medium text-emerald-400">
-                        {scrapingOverlay.projectNum}
-                      </span>
-                    </p>
-                    <p className="text-xs text-zinc-300">
-                      {scrapingOverlay.stepText}
-                    </p>
-                    <div className="h-1.5 rounded-full bg-zinc-700 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500 ease-out"
-                        style={{
-                          width: `${scrapingOverlay.total > 0 ? Math.round((scrapingOverlay.progress / scrapingOverlay.total) * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                    <ul className="space-y-1">
-                      {TAB_STEPS.map((tab) => {
-                        const done = scrapingOverlay.completedSteps.has(tab.key);
-                        const current = scrapingOverlay.currentStepKey === tab.key;
-                        return (
-                          <li key={tab.key} className="flex items-center gap-2 text-xs">
-                            {done ? (
-                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                            ) : current ? (
-                              <span
-                                className="h-2 w-2 shrink-0 rounded-full bg-emerald-500"
-                                style={{ animation: "scrape-pulse-dot 1s ease-in-out infinite" }}
-                              />
-                            ) : (
-                              <Circle className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-                            )}
-                            <span className={done ? "text-zinc-400" : current ? "text-emerald-400 font-medium" : "text-zinc-600"}>
-                              {tab.label}
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="w-full h-7 text-xs"
-                      onClick={cancelScrape}
-                      data-testid="button-cancel-scrape-overlay"
-                    >
-                      <XCircle className="h-3.5 w-3.5 mr-1.5" />
-                      Cancel Scrape
-                    </Button>
-                  </div>
-                )
-              ) : (
-                <div className="p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                    <h3 className="text-sm font-semibold text-white">
-                      Scraping complete!
-                    </h3>
-                  </div>
-                  <p className="text-xs text-zinc-400">
-                    {scrapingOverlay.stepText}
-                  </p>
-                  <p className="text-xs text-emerald-400">
-                    Launching agent chain...
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full h-7 text-xs border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10"
-                    onClick={handleDismissScrapingOverlay}
-                    data-testid="button-dismiss-scraping"
-                  >
-                    Dismiss
-                  </Button>
+                  <Circle className="h-4 w-4" />
+                )}
+              </div>
+              {i < steps.length - 1 && (
+                <div className="w-0.5 flex-1 min-h-[24px] my-1 bg-border overflow-hidden">
+                  <div
+                    className="w-full bg-emerald-500/60 transition-all duration-500 ease-out min-h-0"
+                    style={{ height: step.status === "done" ? "100%" : "0%" }}
+                  />
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
-      <Card className="relative overflow-hidden border-0 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl shadow-xl">
-        <div className="absolute inset-0 rounded-xl border border-transparent bg-gradient-to-br from-emerald-500/20 via-transparent to-transparent bg-[length:200%_200%] animate-shimmer pointer-events-none" />
-        <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-emerald-500/20 pointer-events-none" />
-        <CardHeader className="relative">
-          <CardTitle className="flex items-center gap-2 text-lg flex-wrap">
-            <span className="flex items-center gap-2">
-              <Workflow
-                className="h-5 w-5 text-emerald-400 animate-pulse-glow"
-                style={{ boxShadow: "0 0 12px rgba(16, 185, 129, 0.3)" }}
-              />
-              DesignCheck Intake Pipeline
-            </span>
-            <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
-              AI-Powered
-            </span>
-            {chainRunning && (
-              <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400 animate-pulse" data-testid="badge-chain-running">
-                Chain Active
-              </span>
-            )}
-            {chainPhase === "complete" && (
-              <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400" data-testid="badge-chain-complete">
-                Chain Complete
-              </span>
-            )}
-            {isShadowMode && chainPhase !== "idle" && (
-              <span className="inline-flex items-center rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-400" data-testid="badge-shadow-mode">
-                Shadow Mode
-              </span>
-            )}
-          </CardTitle>
-          <CardDescription>
-            {chainRunning
-              ? `Agent chain in progress — ${chainPhase} step active. All agents fire sequentially.`
-              : "Agentic workflow status (Steps 1-5). Run a manual portal check to trigger the full chain."}
-          </CardDescription>
-          {chainError && (
-            <p className="text-xs text-red-400 mt-1" data-testid="text-chain-error">
-              Last error: {chainError}
-            </p>
-          )}
-        </CardHeader>
-        <CardContent className="relative space-y-0">
-          {steps.map((step, i) => (
-            <div
-              key={i}
-              className="flex gap-4 group transition-transform duration-200 hover:scale-[1.02]"
-              style={{
-                animation: "fade-in-up 0.4s ease-out forwards",
-                animationDelay: `${i * 100}ms`,
-                opacity: 0,
-              }}
-            >
-              <div className="flex flex-col items-center shrink-0">
-                <div
-                  className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all duration-300 group-hover:shadow-lg ${
+            <div className="pb-4 min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-medium">{step.title}</p>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
                     step.status === "checking"
-                      ? "border-emerald-500 bg-emerald-500/20 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)] [animation:spin_0.8s_linear_infinite]"
+                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                       : step.status === "done"
-                        ? "border-emerald-500 bg-emerald-500/20 text-emerald-500"
-                        : step.status === "failed"
-                          ? "border-red-500 bg-red-500/10 text-red-500 animate-status-shake"
-                          : "border-muted-foreground/40 bg-muted/50 text-muted-foreground animate-pulse-glow"
-                  }`}
-                  style={
-                    step.status === "checking"
-                      ? { animation: "scrape-spin 0.8s linear infinite" }
-                      : undefined
-                  }
-                >
-                  {step.status === "checking" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : step.status === "done" ? (
-                    <CheckCircle2
-                      className="h-4 w-4"
-                      style={{ animation: "scrape-scale-check 0.3s ease-out" }}
-                    />
-                  ) : step.status === "failed" ? (
-                    <XCircle className="h-4 w-4" />
-                  ) : (
-                    <Circle className="h-4 w-4" />
-                  )}
-                </div>
-                {i < steps.length - 1 && (
-                  <div className="w-0.5 flex-1 min-h-[24px] my-1 bg-border overflow-hidden">
-                    <div
-                      className="w-full bg-emerald-500/60 transition-all duration-500 ease-out min-h-0"
-                      style={{ height: step.status === "done" ? "100%" : "0%" }}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="pb-4 min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-medium">{step.title}</p>
-                  <span
-                    className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
-                      step.status === "checking"
                         ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                        : step.status === "done"
-                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                          : step.status === "failed"
-                            ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                            : step.status === "waiting"
-                              ? "bg-muted/50 text-muted-foreground border border-border animate-pulse-glow"
-                              : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                    }`}
-                  >
-                    {step.status === "checking" && (
-                      <span className="inline-flex gap-0.5 mr-1">
-                        <span className="animate-pulse">.</span>
-                        <span
-                          className="animate-pulse"
-                          style={{ animationDelay: "0.2s" }}
-                        >
-                          .
-                        </span>
-                        <span
-                          className="animate-pulse"
-                          style={{ animationDelay: "0.4s" }}
-                        >
-                          .
-                        </span>
+                        : step.status === "failed"
+                          ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                          : step.status === "waiting"
+                            ? "bg-muted/50 text-muted-foreground border border-border animate-pulse-glow"
+                            : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                  }`}
+                >
+                  {step.status === "checking" && (
+                    <span className="inline-flex gap-0.5 mr-1">
+                      <span className="animate-pulse">.</span>
+                      <span
+                        className="animate-pulse"
+                        style={{ animationDelay: "0.2s" }}
+                      >
+                        .
                       </span>
-                    )}
-                    {step.status === "done" && (
-                      <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
-                    )}
-                    {step.status === "failed" && (
-                      <XCircle className="h-3 w-3 mr-1 shrink-0" />
-                    )}
-                    {step.status === "waiting" && "Waiting for Doc"}
-                    {step.status === "pending" && "Pending"}
-                    {step.status === "checking" && "Running"}
-                    {step.status === "done" && "Complete"}
-                    {step.status === "failed" && "Error"}
-                    {![
-                      "checking",
-                      "done",
-                      "failed",
-                      "waiting",
-                      "pending",
-                    ].includes(step.status) && "Idle"}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  {step.description}
-                </p>
-                <div className="mt-2 [&_button]:transition-all [&_button]:duration-200 [&_button:hover]:-translate-y-0.5 [&_button:hover]:shadow-md [&_button:active]:scale-[0.98]">
-                  {"action" in step && step.action}
-                </div>
+                      <span
+                        className="animate-pulse"
+                        style={{ animationDelay: "0.4s" }}
+                      >
+                        .
+                      </span>
+                    </span>
+                  )}
+                  {step.status === "done" && (
+                    <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
+                  )}
+                  {step.status === "failed" && (
+                    <XCircle className="h-3 w-3 mr-1 shrink-0" />
+                  )}
+                  {step.status === "waiting" && "Waiting for Doc"}
+                  {step.status === "pending" && "Pending"}
+                  {step.status === "checking" && "Running"}
+                  {step.status === "done" && "Complete"}
+                  {step.status === "failed" && "Error"}
+                  {![
+                    "checking",
+                    "done",
+                    "failed",
+                    "waiting",
+                    "pending",
+                  ].includes(step.status) && "Idle"}
+                </span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {step.description}
+              </p>
+              <div className="mt-2 [&_button]:transition-all [&_button]:duration-200 [&_button:hover]:-translate-y-0.5 [&_button:hover]:shadow-md [&_button:active]:scale-[0.98]">
+                {"action" in step && step.action}
               </div>
             </div>
-          ))}
-        </CardContent>
-      </Card>
-    </>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
