@@ -178,6 +178,68 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+const STORAGE_BUCKET = "project-drawings";
+let storageBucketReady = false;
+
+async function ensureStorageBucket() {
+  if (storageBucketReady) return true;
+  try {
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const exists = buckets?.some((b) => b.name === STORAGE_BUCKET);
+    if (!exists) {
+      const { error } = await supabase.storage.createBucket(STORAGE_BUCKET, {
+        public: true,
+        fileSizeLimit: MAX_FILE_SIZE,
+      });
+      if (error) {
+        console.error(`❌ Failed to create storage bucket "${STORAGE_BUCKET}":`, error.message);
+        return false;
+      }
+      console.log(`✅ Created storage bucket "${STORAGE_BUCKET}"`);
+    }
+    storageBucketReady = true;
+    return true;
+  } catch (err) {
+    console.error(`❌ Storage bucket check failed:`, err.message);
+    return false;
+  }
+}
+
+async function uploadToSupabaseStorage(localPath, storagePath) {
+  const ready = await ensureStorageBucket();
+  if (!ready) return null;
+  try {
+    const fileBuffer = fs.readFileSync(localPath);
+    const ext = path.extname(storagePath).toLowerCase();
+    const mimeTypes = {
+      ".pdf": "application/pdf", ".dwg": "application/octet-stream",
+      ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+      ".zip": "application/zip",
+    };
+    const contentType = mimeTypes[ext] || "application/octet-stream";
+
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, fileBuffer, { contentType, upsert: true });
+
+    if (error) {
+      console.error(`      ❌ Supabase upload failed for ${storagePath}:`, error.message);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from(STORAGE_BUCKET)
+      .getPublicUrl(storagePath);
+
+    return urlData?.publicUrl || null;
+  } catch (err) {
+    console.error(`      ❌ Supabase upload exception for ${storagePath}:`, err.message);
+    return null;
+  }
+}
+
 const sessions = {};
 
 app.get("/", (req, res) =>
@@ -1099,6 +1161,7 @@ async function scrapeAll(
             context,
             session,
             commentsOnly,
+            supabaseProjectId,
           );
           tabData.folders = filesResult.folders;
           const totalFiles = filesResult.folders.reduce(
@@ -1324,7 +1387,7 @@ function escapeCSSId(str) {
   return str.replace(/([^\w-])/g, "\\$1");
 }
 
-async function extractFilesTab(page, context, session, commentsOnly = false) {
+async function extractFilesTab(page, context, session, commentsOnly = false, supabaseProjectId = null) {
   cleanupDownloadsDir();
 
   if (!session._scrapeCumulativeBytes) session._scrapeCumulativeBytes = 0;
@@ -1561,9 +1624,9 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
         if (file.id) {
           console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via FileHandler: ${safeName}`);
           try {
-            const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session);
+            const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session, supabaseProjectId);
             if (dlResult.success) {
-              viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
+              viewUrl = dlResult.viewUrl || `/view-file/${encodeURIComponent(safeName)}`;
               await page.waitForTimeout(4000);
             } else {
               console.log(`       ⚠️ File download failed (${dlResult.reason || "unknown"}), continuing to next file: ${safeName}`);
@@ -1867,7 +1930,7 @@ async function extractPDFsFromPage(page, context) {
   return pdfData;
 }
 
-async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase, session) {
+async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase, session, projectId) {
   const downloadDir = getDownloadsDir();
 
   if (session && session._scrapeCumulativeBytes >= MAX_SCRAPE_CUMULATIVE_SIZE) {
@@ -1878,6 +1941,22 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   console.log(`      📥 Downloading file ID ${fileId}: ${fileName}`);
 
   const downloadPath = path.join(downloadDir, fileName);
+
+  const tryUploadAndClean = async (filePath, sizeMB) => {
+    if (!projectId) {
+      console.log(`      ⚠️ No projectId — keeping file locally: ${fileName}`);
+      return { success: true, path: filePath, sizeMB, viewUrl: `/view-file/${encodeURIComponent(fileName)}` };
+    }
+    const storagePath = `${projectId}/${fileName}`;
+    const publicUrl = await uploadToSupabaseStorage(filePath, storagePath);
+    if (publicUrl) {
+      console.log(`      ☁️  Uploaded to Supabase Storage: ${storagePath}`);
+      try { fs.unlinkSync(filePath); } catch (_) {}
+      return { success: true, path: filePath, sizeMB, viewUrl: publicUrl };
+    }
+    console.log(`      ⚠️ Supabase upload failed — keeping local copy: ${fileName}`);
+    return { success: true, path: filePath, sizeMB, viewUrl: `/view-file/${encodeURIComponent(fileName)}` };
+  };
 
   const existingPages = context.pages();
   for (const p of existingPages) {
@@ -2013,7 +2092,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
         const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
         console.log(`      ✅ Downloaded via viewer download button: ${fileName} (${sizeMB} MB)`);
         await popup.close().catch(() => {});
-        return { success: true, path: downloadPath, sizeMB };
+        return await tryUploadAndClean(downloadPath, sizeMB);
       }
 
       const fileSourceUrl = await popup.evaluate(() => {
@@ -2075,7 +2154,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
               const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
               console.log(`      ✅ Downloaded via viewer source URL: ${fileName} (${sizeMB} MB)`);
               await popup.close().catch(() => {});
-              return { success: true, path: downloadPath, sizeMB };
+              return await tryUploadAndClean(downloadPath, sizeMB);
             }
           }
         } catch (srcErr) {
@@ -2115,7 +2194,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           if (session) session._scrapeCumulativeBytes = cumulative;
           const sizeMB = (best.body.length / 1024 / 1024).toFixed(2);
           console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB)`);
-          return { success: true, path: downloadPath, sizeMB };
+          return await tryUploadAndClean(downloadPath, sizeMB);
         }
       } else {
         console.log(`      ⚠️ Captured file too large (${(best.body.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);

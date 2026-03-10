@@ -68,6 +68,7 @@ Preferred communication style: Simple, everyday language.
 - **Floating progress bar**: Replaced full-screen blocking modal (`fixed inset-0 z-50`) with a compact floating widget (`fixed bottom-4 right-4`). Supports minimize/expand via `scrapingMinimized` state.
 - **Credential selection**: Scraper uses only `project.credential_id` — no auto-match fallback by jurisdiction or permit number.
 - **Cleanup**: `cleanupScrapeState` helper deduplicates EventSource/interval/ref teardown. Unmount effect ensures no leaked timers or connections.
+- **File storage**: Downloaded files are uploaded to Supabase Storage bucket `project-drawings` at path `${projectId}/${fileId}_${fileName}`. Public URLs stored as `viewUrl` in `portal_data`. Local file deleted after successful upload; kept as backup if upload fails. Bucket auto-created on first use.
 
 ### Data Fetching Optimization (March 2026)
 - **`useProjects` hook** excludes `portal_data` JSONB from default fetch to avoid loading megabytes on every page. Uses explicit column list.
