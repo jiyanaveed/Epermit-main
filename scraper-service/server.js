@@ -1091,6 +1091,17 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
   })();
 
   console.log(`\n🕵️ Extracting Files tab (download + grid)...`);
+  console.log(`     WebUI base for downloads: ${webUiBase}`);
+
+  const discoveredDownloadUrls = [];
+  const networkHandler = (request) => {
+    const url = request.url();
+    if (/file.*download|download.*file|filehandler|filehandler\.ashx/i.test(url)) {
+      discoveredDownloadUrls.push(url);
+    }
+  };
+  page.on("request", networkHandler);
+
   const result = { folders: [] };
 
   const folderElements = await page.$$eval(
@@ -1320,15 +1331,24 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
         }
         if (!viewUrl) {
           try {
+            await page.evaluate(() => {
+              const dialogs = document.querySelectorAll('.ui-igdialog, .ui-dialog, [id*="dlgTask"]');
+              dialogs.forEach(d => { d.style.display = "none"; });
+              const overlays = document.querySelectorAll('.ui-igdialog-overlay, .ui-widget-overlay');
+              overlays.forEach(o => { o.style.display = "none"; });
+            });
+
             console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via click: ${file.name}`);
             const downloadDir = path.join(__dirname, "downloads");
             if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
 
-            const fileGridLink = await page.$(`a:text-is("${file.name.replace(/"/g, '\\"')}")`);
+            const escapedName = file.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const fileGridLink = await page.$(`a:text-is("${file.name}")`) 
+              || await page.$(`a:has-text("${file.name}")`);
             if (fileGridLink) {
               const [download] = await Promise.all([
-                page.waitForEvent("download", { timeout: 15000 }).catch(() => null),
-                fileGridLink.click(),
+                page.waitForEvent("download", { timeout: 10000 }).catch(() => null),
+                fileGridLink.click({ force: true }),
               ]);
               if (download) {
                 const dlPath = path.join(downloadDir, safeName);
@@ -1346,14 +1366,6 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
                 if (popup) {
                   const popupUrl = popup.url();
                   console.log(`       🔗 File opened in popup: ${popupUrl}`);
-                  const idFromUrl = popupUrl.match(/fileID[=:](\d+)/i);
-                  if (idFromUrl) {
-                    file.id = idFromUrl[1];
-                    const dlResult2 = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase);
-                    if (dlResult2.success) {
-                      viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
-                    }
-                  }
                   await popup.close().catch(() => {});
                 } else {
                   console.log(`       ⚠️ No download or popup triggered for ${file.name}`);
@@ -1393,6 +1405,11 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
       });
     }
   }
+  page.removeListener("request", networkHandler);
+  if (discoveredDownloadUrls.length > 0) {
+    console.log(`     🔗 Discovered download URLs during scrape:`, discoveredDownloadUrls.slice(0, 5));
+  }
+
   return result;
 }
 
@@ -1661,37 +1678,68 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   if (!fs.existsSync(downloadDir))
     fs.mkdirSync(downloadDir, { recursive: true });
 
-  const downloadUrl = `${webUiBase || "https://washington-dc-us-projectdoxwebui.avolvecloud.com"}/WebForms/FileHandler.ashx?action=download&fileID=${fileId}`;
-  console.log(`      📥 Downloading via FileHandler: ${fileName}`);
+  const base = webUiBase || "https://washington-dc-us-projectdoxwebui.avolvecloud.com";
+  const candidateUrls = [
+    `${base}/WebForms/FileHandler.ashx?action=download&fileID=${fileId}`,
+    `${base}/FileHandler.ashx?action=download&fileID=${fileId}`,
+    `${base}/api/File/Download?fileID=${fileId}`,
+    `${base}/api/files/${fileId}/download`,
+    `${base}/WebForms/FileDownload.aspx?fileID=${fileId}`,
+    `${base}/File/Download/${fileId}`,
+  ];
 
-  try {
-    const base64Data = await page.evaluate(async (url) => {
-      const r = await fetch(url, { credentials: "include" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const buf = await r.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
+  console.log(`      📥 Downloading file ID ${fileId}: ${fileName}`);
+
+  for (const downloadUrl of candidateUrls) {
+    try {
+      const result = await page.evaluate(async (url) => {
+        const r = await fetch(url, { credentials: "include", redirect: "follow" });
+        if (!r.ok) return { error: `HTTP ${r.status}`, url };
+        const ct = r.headers.get("content-type") || "";
+        if (ct.includes("text/html")) {
+          const text = await r.text();
+          if (text.length < 5000 && (text.includes("<!DOCTYPE") || text.includes("<html"))) {
+            return { error: "Got HTML page instead of file", url };
+          }
+        }
+        const buf = await r.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        const chunks = [];
+        const chunkSize = 8192;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+          let binary = "";
+          for (let j = 0; j < slice.length; j++) {
+            binary += String.fromCharCode(slice[j]);
+          }
+          chunks.push(btoa(binary));
+        }
+        return { chunks, size: bytes.length };
+      }, downloadUrl);
+
+      if (result.error) {
+        continue;
       }
-      return btoa(binary);
-    }, downloadUrl);
 
-    const buffer = Buffer.from(base64Data, "base64");
-    if (buffer.length < 1000) {
-      console.log(`      ⚠️ File too small (${buffer.length} bytes), skipping: ${fileName}`);
-      return { success: false };
+      const buffers = result.chunks.map(c => Buffer.from(c, "base64"));
+      const buffer = Buffer.concat(buffers);
+      if (buffer.length < 1000) {
+        console.log(`      ⚠️ File too small (${buffer.length} bytes) from ${downloadUrl}`);
+        continue;
+      }
+
+      const downloadPath = path.join(downloadDir, fileName);
+      fs.writeFileSync(downloadPath, buffer);
+      const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+      console.log(`      ✅ Downloaded: ${fileName} (${sizeMB} MB) from ${downloadUrl}`);
+      return { success: true, path: downloadPath, sizeMB };
+    } catch (err) {
+      continue;
     }
-
-    const downloadPath = path.join(downloadDir, fileName);
-    fs.writeFileSync(downloadPath, buffer);
-    const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-    console.log(`      ✅ Downloaded: ${fileName} (${sizeMB} MB)`);
-    return { success: true, path: downloadPath, sizeMB };
-  } catch (err) {
-    console.error(`      ❌ Download failed for ${fileName}: ${err.message}`);
-    return { success: false };
   }
+
+  console.log(`      ❌ All download URL patterns failed for file ID ${fileId}`);
+  return { success: false };
 }
 async function extractPageData(page) {
   const data = await page.evaluate(() => {
