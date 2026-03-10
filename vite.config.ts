@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 5000,
     allowedHosts: true,
+    watch: {
+      ignored: ["**/node_modules/**", "**/.cache/**", "**/scraper-service/downloads/**"],
+    },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:3001",
