@@ -92,6 +92,69 @@ app.use("/view-file", express.static(path.join(__dirname, "downloads")));
 const PORT = 3001;
 const DEFAULT_DASHBOARD_URL = "https://washington-dc-us.avolvecloud.com";
 
+const MIN_FILE_SIZE = 1024;
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
+const MAX_SCRAPE_CUMULATIVE_SIZE = 500 * 1024 * 1024;
+const MAX_DOWNLOADS_DIR_SIZE = 1 * 1024 * 1024 * 1024;
+
+function getDownloadsDir() {
+  const dir = path.join(__dirname, "downloads");
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function getDownloadsDirSize() {
+  const dir = getDownloadsDir();
+  try {
+    const files = fs.readdirSync(dir);
+    let total = 0;
+    for (const f of files) {
+      try {
+        const stat = fs.statSync(path.join(dir, f));
+        if (stat.isFile()) total += stat.size;
+      } catch (e) {}
+    }
+    return total;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function cleanupDownloadsDir() {
+  const dir = getDownloadsDir();
+  const currentSize = getDownloadsDirSize();
+  if (currentSize <= MAX_DOWNLOADS_DIR_SIZE) return;
+
+  console.log(`⚠️ Downloads directory size ${(currentSize / 1024 / 1024).toFixed(0)} MB exceeds 1 GB limit. Cleaning up oldest files...`);
+  try {
+    const files = fs.readdirSync(dir)
+      .map(f => {
+        try {
+          const stat = fs.statSync(path.join(dir, f));
+          return { name: f, mtime: stat.mtimeMs, size: stat.size };
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter(f => f !== null)
+      .sort((a, b) => a.mtime - b.mtime);
+
+    let freed = 0;
+    const target = currentSize - MAX_DOWNLOADS_DIR_SIZE;
+    for (const file of files) {
+      if (freed >= target) break;
+      try {
+        fs.unlinkSync(path.join(dir, file.name));
+        freed += file.size;
+        console.log(`   Deleted: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+      } catch (e) {}
+    }
+    console.log(`   Freed ${(freed / 1024 / 1024).toFixed(0)} MB`);
+  } catch (e) {
+    console.error(`   ⚠️ Cleanup error: ${e.message}`);
+  }
+}
+
 function deriveWebUiBase(dashboardUrl) {
   try {
     const u = new URL(dashboardUrl);
@@ -668,6 +731,8 @@ async function scrapeAll(
     ? TAB_DEFS.filter((t) => tabsFilter.has(t.key))
     : TAB_DEFS;
 
+  session._scrapeCumulativeBytes = 0;
+
   console.log(`\n🔍 Scraping ${projects.length} projects...`);
   const context = session.context;
   const dashPage = session.page;
@@ -1071,6 +1136,10 @@ function escapeCSSId(str) {
 }
 
 async function extractFilesTab(page, context, session, commentsOnly = false) {
+  cleanupDownloadsDir();
+
+  if (!session._scrapeCumulativeBytes) session._scrapeCumulativeBytes = 0;
+
   const currentUrl = page.url();
   if (currentUrl.includes('b2clogin') || currentUrl.includes('Login') || currentUrl.includes('SessionEnded')) {
     console.log("     ⚠️ Session expired during Files tab scraping, skipping files");
@@ -1158,28 +1227,6 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
       console.log(`       ⏳ Waiting for file grid...`);
       await page.waitForSelector(".ui-iggrid-table tbody tr", { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(2000);
-
-      const debugGridHTML = await page.evaluate(() => {
-        const firstRow = document.querySelector(".ui-iggrid-table tbody tr");
-        if (!firstRow) return { html: "NO ROWS", headers: [] };
-        const headerCells = document.querySelectorAll(".ui-iggrid-table thead th, .ui-iggrid-headercolumn");
-        const headers = Array.from(headerCells).map(h => h.textContent.trim());
-        const cells = firstRow.querySelectorAll("td");
-        const cellDebug = Array.from(cells).map((c, i) => {
-          const links = c.querySelectorAll("a");
-          const linkInfo = Array.from(links).map(a => ({
-            text: a.textContent.trim().substring(0, 50),
-            onclick: (a.getAttribute("onclick") || "").substring(0, 100),
-            href: (a.getAttribute("href") || "").substring(0, 100),
-            id: a.getAttribute("id") || "",
-            "data-fileid": a.getAttribute("data-fileid") || a.getAttribute("data-id") || "",
-          }));
-          return { col: i, text: c.textContent.trim().substring(0, 60), links: linkInfo };
-        });
-        const rowAttrs = { id: firstRow.getAttribute("id") || "", "data-id": firstRow.getAttribute("data-id") || "" };
-        return { headers, cells: cellDebug, rowAttrs };
-      });
-      console.log("       🔍 Grid debug:", JSON.stringify(debugGridHTML, null, 2));
 
       const filesFound = await page.evaluate(() => {
         const rows = [];
@@ -1282,8 +1329,8 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
             name,
             id: fileId,
             status: cellTexts[afterName] || "",
-            reviewedBy: cellTexts[afterName + 1] || "",
-            uploadedDate: cellTexts[afterName + 2] || "",
+            reviewedBy: cellTexts[afterName + 2] || "",
+            uploadedDate: cellTexts[afterName + 3] || "",
           });
         });
         return rows;
@@ -1324,58 +1371,9 @@ async function extractFilesTab(page, context, session, commentsOnly = false) {
         let viewUrl = "";
         if (file.id) {
           console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via FileHandler: ${safeName}`);
-          const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase);
+          const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session);
           if (dlResult.success) {
             viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
-          }
-        }
-        if (!viewUrl) {
-          try {
-            await page.evaluate(() => {
-              const dialogs = document.querySelectorAll('.ui-igdialog, .ui-dialog, [id*="dlgTask"]');
-              dialogs.forEach(d => { d.style.display = "none"; });
-              const overlays = document.querySelectorAll('.ui-igdialog-overlay, .ui-widget-overlay');
-              overlays.forEach(o => { o.style.display = "none"; });
-            });
-
-            console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via click: ${file.name}`);
-            const downloadDir = path.join(__dirname, "downloads");
-            if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
-
-            const escapedName = file.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const fileGridLink = await page.$(`a:text-is("${file.name}")`) 
-              || await page.$(`a:has-text("${file.name}")`);
-            if (fileGridLink) {
-              const [download] = await Promise.all([
-                page.waitForEvent("download", { timeout: 10000 }).catch(() => null),
-                fileGridLink.click({ force: true }),
-              ]);
-              if (download) {
-                const dlPath = path.join(downloadDir, safeName);
-                await download.saveAs(dlPath);
-                const stat = fs.statSync(dlPath);
-                if (stat.size > 500) {
-                  viewUrl = `/view-file/${encodeURIComponent(safeName)}`;
-                  console.log(`       ✅ Downloaded via click: ${safeName} (${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
-                } else {
-                  console.log(`       ⚠️ File too small via click (${stat.size} bytes), skipping`);
-                  fs.unlinkSync(dlPath);
-                }
-              } else {
-                const popup = await page.waitForEvent("popup", { timeout: 5000 }).catch(() => null);
-                if (popup) {
-                  const popupUrl = popup.url();
-                  console.log(`       🔗 File opened in popup: ${popupUrl}`);
-                  await popup.close().catch(() => {});
-                } else {
-                  console.log(`       ⚠️ No download or popup triggered for ${file.name}`);
-                }
-              }
-            } else {
-              console.log(`       ⚠️ Could not find link for ${file.name}`);
-            }
-          } catch (dlErr) {
-            console.log(`       ⚠️ Click-download failed for ${file.name}: ${dlErr.message}`);
           }
         }
 
@@ -1673,72 +1671,307 @@ async function extractPDFsFromPage(page, context) {
   return pdfData;
 }
 
-async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase) {
-  const downloadDir = path.join(__dirname, "downloads");
-  if (!fs.existsSync(downloadDir))
-    fs.mkdirSync(downloadDir, { recursive: true });
+async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase, session) {
+  const downloadDir = getDownloadsDir();
 
-  const base = webUiBase || "https://washington-dc-us-projectdoxwebui.avolvecloud.com";
-  const candidateUrls = [
-    `${base}/WebForms/FileHandler.ashx?action=download&fileID=${fileId}`,
-    `${base}/FileHandler.ashx?action=download&fileID=${fileId}`,
-    `${base}/api/File/Download?fileID=${fileId}`,
-    `${base}/api/files/${fileId}/download`,
-    `${base}/WebForms/FileDownload.aspx?fileID=${fileId}`,
-    `${base}/File/Download/${fileId}`,
-  ];
+  if (session && session._scrapeCumulativeBytes >= MAX_SCRAPE_CUMULATIVE_SIZE) {
+    console.log(`      ⚠️ Cumulative download limit reached (${(session._scrapeCumulativeBytes / 1024 / 1024).toFixed(0)} MB / ${(MAX_SCRAPE_CUMULATIVE_SIZE / 1024 / 1024).toFixed(0)} MB). Skipping file: ${fileName}`);
+    return { success: false, reason: "cumulative_limit" };
+  }
 
   console.log(`      📥 Downloading file ID ${fileId}: ${fileName}`);
 
-  for (const downloadUrl of candidateUrls) {
-    try {
-      const result = await page.evaluate(async (url) => {
-        const r = await fetch(url, { credentials: "include", redirect: "follow" });
-        if (!r.ok) return { error: `HTTP ${r.status}`, url };
-        const ct = r.headers.get("content-type") || "";
-        if (ct.includes("text/html")) {
-          const text = await r.text();
-          if (text.length < 5000 && (text.includes("<!DOCTYPE") || text.includes("<html"))) {
-            return { error: "Got HTML page instead of file", url };
-          }
-        }
-        const buf = await r.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        const chunks = [];
-        const chunkSize = 8192;
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-          const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-          let binary = "";
-          for (let j = 0; j < slice.length; j++) {
-            binary += String.fromCharCode(slice[j]);
-          }
-          chunks.push(btoa(binary));
-        }
-        return { chunks, size: bytes.length };
-      }, downloadUrl);
+  const downloadPath = path.join(downloadDir, fileName);
 
-      if (result.error) {
-        continue;
-      }
-
-      const buffers = result.chunks.map(c => Buffer.from(c, "base64"));
-      const buffer = Buffer.concat(buffers);
-      if (buffer.length < 1000) {
-        console.log(`      ⚠️ File too small (${buffer.length} bytes) from ${downloadUrl}`);
-        continue;
-      }
-
-      const downloadPath = path.join(downloadDir, fileName);
-      fs.writeFileSync(downloadPath, buffer);
-      const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-      console.log(`      ✅ Downloaded: ${fileName} (${sizeMB} MB) from ${downloadUrl}`);
-      return { success: true, path: downloadPath, sizeMB };
-    } catch (err) {
-      continue;
+  const capturedUrls = [];
+  const responseHandler = async (response) => {
+    const url = response.url();
+    const ct = response.headers()["content-type"] || "";
+    if (ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
+        ct.includes("image/") || ct.includes("application/zip") ||
+        url.match(/\.(pdf|dwg|doc|docx|xlsx|jpg|png|zip)(\?|$)/i)) {
+      capturedUrls.push({ url, contentType: ct, status: response.status() });
     }
+  };
+
+  page.on("response", responseHandler);
+  let popup = null;
+
+  try {
+    [popup] = await Promise.all([
+      page.waitForEvent("popup", { timeout: 15000 }).catch(() => null),
+      page.evaluate((fid) => {
+        if (typeof viewFile === "function") {
+          viewFile(fid);
+        } else if (typeof window.viewFile === "function") {
+          window.viewFile(fid);
+        } else {
+          const link = document.querySelector(`a[href*="viewFile(${fid})"]`);
+          if (link) link.click();
+        }
+      }, parseInt(fileId)),
+    ]);
+
+    if (popup) {
+      console.log(`      🔗 Viewer popup opened: ${popup.url()}`);
+
+      await popup.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+      await popup.waitForTimeout(3000);
+
+      const popupCapturedUrls = [];
+      const popupResponseHandler = async (response) => {
+        const url = response.url();
+        const ct = response.headers()["content-type"] || "";
+        if (ct.includes("application/pdf") || ct.includes("application/octet-stream") ||
+            ct.includes("image/") || url.match(/\.(pdf|dwg|doc|docx|xlsx)(\?|$)/i)) {
+          popupCapturedUrls.push({ url, contentType: ct, status: response.status() });
+        }
+      };
+      popup.on("response", popupResponseHandler);
+
+      const [download] = await Promise.all([
+        popup.waitForEvent("download", { timeout: 10000 }).catch(() => null),
+        popup.evaluate(() => {
+          const dlBtn = document.querySelector(
+            'a[id*="download" i], button[id*="download" i], ' +
+            'a[title*="download" i], button[title*="download" i], ' +
+            'a[onclick*="download" i], button[onclick*="download" i], ' +
+            '[id*="btnDownload"], [id*="lnkDownload"], ' +
+            'a.download-link, .toolbar a[title*="Save"], ' +
+            'a[id*="save" i], button[id*="save" i]'
+          );
+          if (dlBtn) {
+            dlBtn.click();
+            return "clicked_download";
+          }
+          return "no_download_button";
+        }),
+      ]);
+
+      if (download) {
+        await download.saveAs(downloadPath);
+        const stat = fs.statSync(downloadPath);
+        if (stat.size < MIN_FILE_SIZE) {
+          console.log(`      ⚠️ File too small (${stat.size} bytes < ${MIN_FILE_SIZE} bytes min). Rejected: ${fileName}`);
+          fs.unlinkSync(downloadPath);
+          await popup.close().catch(() => {});
+          return { success: false, reason: "too_small" };
+        }
+        if (stat.size > MAX_FILE_SIZE) {
+          console.log(`      ⚠️ File too large (${(stat.size / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
+          fs.unlinkSync(downloadPath);
+          await popup.close().catch(() => {});
+          return { success: false, reason: "too_large" };
+        }
+        const cumulative = (session?._scrapeCumulativeBytes || 0) + stat.size;
+        if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
+          console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Rejected: ${fileName}`);
+          fs.unlinkSync(downloadPath);
+          await popup.close().catch(() => {});
+          return { success: false, reason: "cumulative_cap" };
+        }
+        if (session) session._scrapeCumulativeBytes = cumulative;
+        const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
+        console.log(`      ✅ Downloaded via viewer download button: ${fileName} (${sizeMB} MB)`);
+        await popup.close().catch(() => {});
+        return { success: true, path: downloadPath, sizeMB };
+      }
+
+      popup.removeListener("response", popupResponseHandler);
+
+      const fileSourceUrl = await popup.evaluate(() => {
+        const embed = document.querySelector("embed[src], object[data], iframe[src]");
+        if (embed) return embed.getAttribute("src") || embed.getAttribute("data") || "";
+        const viewer = document.querySelector("[id*='viewer'] canvas, [id*='Viewer'] canvas");
+        if (viewer) {
+          const scripts = document.querySelectorAll("script");
+          for (const s of scripts) {
+            const text = s.textContent || "";
+            const urlMatch = text.match(/(?:fileUrl|documentUrl|pdfUrl|src)\s*[:=]\s*['"]([^'"]+)['"]/i);
+            if (urlMatch) return urlMatch[1];
+          }
+        }
+        const links = document.querySelectorAll("a[href]");
+        for (const a of links) {
+          const href = a.getAttribute("href") || "";
+          if (href.match(/\.(pdf|dwg|doc|docx|xlsx|zip)(\?|$)/i) && !href.startsWith("javascript:")) {
+            return href;
+          }
+        }
+        return "";
+      });
+
+      if (fileSourceUrl) {
+        console.log(`      🔗 Found file source URL in viewer: ${fileSourceUrl.substring(0, 100)}`);
+        try {
+          const base64Data = await popup.evaluate(async (url) => {
+            const r = await fetch(url, { credentials: "include" });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const buf = await r.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            const chunks = [];
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+              let binary = "";
+              for (let j = 0; j < slice.length; j++) {
+                binary += String.fromCharCode(slice[j]);
+              }
+              chunks.push(btoa(binary));
+            }
+            return { chunks, size: bytes.length };
+          }, fileSourceUrl);
+
+          const buffers = base64Data.chunks.map(c => Buffer.from(c, "base64"));
+          const buffer = Buffer.concat(buffers);
+          if (buffer.length < MIN_FILE_SIZE) {
+            console.log(`      ⚠️ File too small (${buffer.length} bytes < ${MIN_FILE_SIZE} bytes min). Rejected: ${fileName}`);
+          } else if (buffer.length > MAX_FILE_SIZE) {
+            console.log(`      ⚠️ File too large (${(buffer.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
+          } else {
+            const cumulative = (session?._scrapeCumulativeBytes || 0) + buffer.length;
+            if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
+              console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Rejected: ${fileName}`);
+            } else {
+              fs.writeFileSync(downloadPath, buffer);
+              if (session) session._scrapeCumulativeBytes = cumulative;
+              const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+              console.log(`      ✅ Downloaded via viewer source URL: ${fileName} (${sizeMB} MB)`);
+              await popup.close().catch(() => {});
+              return { success: true, path: downloadPath, sizeMB };
+            }
+          }
+        } catch (srcErr) {
+          console.log(`      ⚠️ Failed to fetch viewer source URL: ${srcErr.message}`);
+        }
+      }
+
+      const allCaptured = [...capturedUrls, ...popupCapturedUrls];
+      if (allCaptured.length > 0) {
+        console.log(`      🔗 Captured ${allCaptured.length} file-like responses during viewer load`);
+        for (const cap of allCaptured) {
+          if (cap.status !== 200) continue;
+          try {
+            const fetchResult = await popup.evaluate(async (url) => {
+              const r = await fetch(url, { credentials: "include" });
+              if (!r.ok) return { error: `HTTP ${r.status}` };
+              const buf = await r.arrayBuffer();
+              const bytes = new Uint8Array(buf);
+              const chunks = [];
+              const chunkSize = 8192;
+              for (let i = 0; i < bytes.length; i += chunkSize) {
+                const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+                let binary = "";
+                for (let j = 0; j < slice.length; j++) {
+                  binary += String.fromCharCode(slice[j]);
+                }
+                chunks.push(btoa(binary));
+              }
+              return { chunks, size: bytes.length };
+            }, cap.url);
+
+            if (!fetchResult.error) {
+              const buffers = fetchResult.chunks.map(c => Buffer.from(c, "base64"));
+              const buffer = Buffer.concat(buffers);
+              if (buffer.length < MIN_FILE_SIZE) {
+                console.log(`      ⚠️ Captured file too small (${buffer.length} bytes < ${MIN_FILE_SIZE} bytes min). Rejected: ${fileName}`);
+              } else if (buffer.length > MAX_FILE_SIZE) {
+                console.log(`      ⚠️ Captured file too large (${(buffer.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
+              } else {
+                const cumulative = (session?._scrapeCumulativeBytes || 0) + buffer.length;
+                if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
+                  console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Rejected: ${fileName}`);
+                  continue;
+                }
+                fs.writeFileSync(downloadPath, buffer);
+                if (session) session._scrapeCumulativeBytes = cumulative;
+                const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+                console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB)`);
+                await popup.close().catch(() => {});
+                return { success: true, path: downloadPath, sizeMB };
+              }
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+
+      const popupHtml = await popup.evaluate(() => {
+        return {
+          title: document.title,
+          url: window.location.href,
+          bodyText: document.body?.innerText?.substring(0, 500) || "",
+          iframeCount: document.querySelectorAll("iframe").length,
+          embedCount: document.querySelectorAll("embed, object").length,
+          canvasCount: document.querySelectorAll("canvas").length,
+          downloadLinks: Array.from(document.querySelectorAll("a")).filter(a => {
+            const h = a.getAttribute("href") || "";
+            const t = a.textContent || "";
+            return /download|save/i.test(t) || /download|save/i.test(h);
+          }).map(a => ({ text: a.textContent.trim().substring(0, 50), href: (a.getAttribute("href") || "").substring(0, 100) })),
+        };
+      });
+      console.log(`      🔍 Viewer popup debug:`, JSON.stringify(popupHtml));
+
+      await popup.close().catch(() => {});
+    }
+
+    if (!popup && capturedUrls.length > 0) {
+      console.log(`      🔗 No popup, but captured ${capturedUrls.length} file-like responses from main page`);
+      for (const cap of capturedUrls) {
+        if (cap.status !== 200) continue;
+        try {
+          const fetchResult = await page.evaluate(async (url) => {
+            const r = await fetch(url, { credentials: "include" });
+            if (!r.ok) return { error: `HTTP ${r.status}` };
+            const buf = await r.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            const chunks = [];
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+              let binary = "";
+              for (let j = 0; j < slice.length; j++) {
+                binary += String.fromCharCode(slice[j]);
+              }
+              chunks.push(btoa(binary));
+            }
+            return { chunks, size: bytes.length };
+          }, cap.url);
+
+          if (!fetchResult.error) {
+            const buffers = fetchResult.chunks.map(c => Buffer.from(c, "base64"));
+            const buffer = Buffer.concat(buffers);
+            if (buffer.length >= MIN_FILE_SIZE && buffer.length <= MAX_FILE_SIZE) {
+              const cumulative = (session?._scrapeCumulativeBytes || 0) + buffer.length;
+              if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
+                console.log(`      ⚠️ Would exceed cumulative cap (${(cumulative / 1024 / 1024).toFixed(0)} MB). Skipping: ${fileName}`);
+              } else {
+                fs.writeFileSync(downloadPath, buffer);
+                if (session) session._scrapeCumulativeBytes = cumulative;
+                const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+                console.log(`      ✅ Downloaded via main-page captured response: ${fileName} (${sizeMB} MB)`);
+                return { success: true, path: downloadPath, sizeMB };
+              }
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+    }
+
+    if (!popup && capturedUrls.length === 0) {
+      console.log(`      ⚠️ No viewer popup and no captured responses for viewFile(${fileId})`);
+    }
+  } catch (err) {
+    console.log(`      ❌ Download error for ${fileName}: ${err.message}`);
+  } finally {
+    page.removeListener("response", responseHandler);
+    if (popup) await popup.close().catch(() => {});
   }
 
-  console.log(`      ❌ All download URL patterns failed for file ID ${fileId}`);
   return { success: false };
 }
 async function extractPageData(page) {

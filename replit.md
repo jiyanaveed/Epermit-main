@@ -24,7 +24,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Scraper Service
 - **Technology:** Node.js/Express with Playwright for browser automation, supporting multi-portal types (ProjectDox, Accela).
-- **Functionality:** Extracts project data, PDFs, files, and comments, syncing to Supabase. Handles dynamic portal routing and credential matching by jurisdiction.
+- **Functionality:** Extracts project data, PDFs, files, and comments, syncing to Supabase. Handles dynamic portal routing and credential matching by jurisdiction. File downloads use `viewFile(fileId)` popup approach with multi-strategy fallback (download button, embed src, captured responses). File-size guardrails: MIN 1KB, MAX 100MB per file, 500MB per-scrape cumulative cap, 1GB downloads dir cleanup.
 - **Data Sync:** Merges newly scraped data with existing `portal_data` to avoid data loss during partial scrapes. Ensures Supabase sync completion before marking a session as "done."
 
 ### Shadow Mode
