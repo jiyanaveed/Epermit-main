@@ -265,6 +265,16 @@ export default function PortalDataViewer() {
     ? `Last checked: ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}`
     : null;
 
+  if (!portalData?.tabs) {
+    return (
+      <section className="py-6 px-4 sm:px-6 max-w-5xl">
+        <div className="p-8 text-center text-gray-400">
+          No portal data available. Run a scrape first.
+        </div>
+      </section>
+    );
+  }
+
   const infoTab = portalData.tabs?.info;
   const reportsTab = portalData.tabs?.reports;
   const filesTab = portalData.tabs?.files;
@@ -1099,7 +1109,7 @@ export default function PortalDataViewer() {
               {infoTab?.error ? (
                 <div className="p-4 text-destructive flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
-                  {infoTab.error}
+                  {infoTab?.error}
                 </div>
               ) : hasInfoData ? (
                 <div>
@@ -1135,9 +1145,9 @@ export default function PortalDataViewer() {
                       </div>
                     </div>
                   )}
-                  {infoTab.keyValues && infoTab.keyValues.length > 0 && displayProjectInfo.length === 0 && (
+                  {infoTab?.keyValues && infoTab?.keyValues?.length > 0 && displayProjectInfo.length === 0 && (
                     <div className="border-0">
-                      {infoTab.keyValues.map((kv, i) => (
+                      {infoTab?.keyValues?.map((kv, i) => (
                         <div
                           key={i}
                           className={`flex border-b border-border last:border-b-0 ${
@@ -1158,7 +1168,7 @@ export default function PortalDataViewer() {
                     <div
                       key={ti}
                       className={`overflow-x-auto ${
-                        ti === 0 && !infoTab.keyValues?.length && displayProjectInfo.length === 0
+                        ti === 0 && !infoTab?.keyValues?.length && displayProjectInfo.length === 0
                           ? ""
                           : "mt-4"
                       }`}
@@ -1204,7 +1214,7 @@ export default function PortalDataViewer() {
               {reportsTab?.error ? (
                 <div className="p-4 text-destructive flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
-                  {reportsTab.error}
+                  {reportsTab?.error}
                 </div>
               ) : reportsTable ? (
                 <Table>
@@ -1361,16 +1371,16 @@ export default function PortalDataViewer() {
             <Card>
               <CardContent className="p-0">
                 <TabErrorBoundary tabName="Files">
-                {filesTab.error ? (
+                {filesTab?.error ? (
                   <div className="p-4 text-destructive flex items-center gap-2">
                     <AlertCircle className="h-4 w-4" />
-                    {filesTab.error}
+                    {filesTab?.error}
                   </div>
-                ) : (filesTab.folders ?? []).length === 0 ? (
+                ) : (filesTab?.folders ?? []).length === 0 ? (
                   <p className="p-4 text-muted-foreground">No files data available.</p>
                 ) : (
                   <div className="divide-y divide-border">
-                    {(filesTab.folders ?? []).map((folder, fi) => {
+                    {(filesTab?.folders ?? []).map((folder, fi) => {
                           const folderKey = `${folder.name}-${fi}`;
                           const isOpen = expandedFolders.has(folderKey);
                           const totalComments = folder.files?.reduce((sum, f) => sum + (f.commentCount || 0), 0) ?? 0;
