@@ -1645,7 +1645,8 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
           try {
             const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session, supabaseProjectId);
             if (dlResult.success) {
-              viewUrl = dlResult.viewUrl || `/view-file/${encodeURIComponent(safeName)}`;
+              viewUrl = dlResult.viewUrl || "";
+              console.log(`       🔗 viewUrl for ${safeName}: ${viewUrl || "(empty)"}`);
               await page.waitForTimeout(4000);
             } else {
               console.log(`       ⚠️ File download failed (${dlResult.reason || "unknown"}), continuing to next file: ${safeName}`);
@@ -1964,7 +1965,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   const tryUploadAndClean = async (filePath, sizeMB) => {
     if (!projectId) {
       console.log(`      ⚠️ No projectId — keeping file locally: ${fileName}`);
-      return { success: true, path: filePath, sizeMB, viewUrl: `/view-file/${encodeURIComponent(fileName)}` };
+      return { success: true, path: filePath, sizeMB, viewUrl: "" };
     }
     const storagePath = `drawings/${projectId}/${fileName}`;
     const publicUrl = await uploadToSupabaseStorage(filePath, storagePath);
@@ -1974,7 +1975,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
       return { success: true, path: filePath, sizeMB, viewUrl: publicUrl };
     }
     console.log(`      ⚠️ Supabase upload failed — keeping local copy: ${fileName}`);
-    return { success: true, path: filePath, sizeMB, viewUrl: `/view-file/${encodeURIComponent(fileName)}` };
+    return { success: true, path: filePath, sizeMB, viewUrl: "" };
   };
 
   const existingPages = context.pages();

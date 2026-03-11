@@ -136,6 +136,7 @@ export default function PortalDataViewer() {
   const [portalStatus, setPortalStatus] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [noPermitConfigured, setNoPermitConfigured] = useState(false);
+  const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedFileComments, setExpandedFileComments] = useState<Set<string>>(new Set());
@@ -156,12 +157,12 @@ export default function PortalDataViewer() {
     setLoading(true);
     setNoPermitConfigured(false);
     try {
-      let project: { portal_data: unknown; portal_status: string | null; last_checked_at: string | null } | null = null;
+      let project: { id: string; portal_data: unknown; portal_status: string | null; last_checked_at: string | null } | null = null;
 
       if (selectedProjectId) {
         const { data, error } = await supabase
           .from("projects")
-          .select("portal_data, portal_status, last_checked_at")
+          .select("id, portal_data, portal_status, last_checked_at")
           .eq("id", selectedProjectId)
           .eq("user_id", user.id)
           .maybeSingle();
@@ -171,7 +172,7 @@ export default function PortalDataViewer() {
       if (!project?.portal_data) {
         const { data, error } = await supabase
           .from("projects")
-          .select("portal_data, portal_status, last_checked_at")
+          .select("id, portal_data, portal_status, last_checked_at")
           .eq("user_id", user.id)
           .not("portal_data", "is", null)
           .order("last_checked_at", { ascending: false })
@@ -191,10 +192,12 @@ export default function PortalDataViewer() {
         setPortalData(null);
         setPortalStatus(null);
         setLastCheckedAt(null);
+        setResolvedProjectId(null);
       } else {
         setPortalData((project.portal_data as PortalData) || null);
         setPortalStatus((project.portal_status as string) ?? null);
         setLastCheckedAt((project.last_checked_at as string) ?? null);
+        setResolvedProjectId(project.id);
       }
     } catch (err) {
       console.error(err);
@@ -211,6 +214,33 @@ export default function PortalDataViewer() {
     }
     fetchData();
   }, [user, authLoading, navigate, fetchData]);
+
+  useEffect(() => {
+    if (!user || !resolvedProjectId) return;
+    const channel = supabase
+      .channel(`portal-data-${resolvedProjectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "projects",
+          filter: `id=eq.${resolvedProjectId}`,
+        },
+        (payload) => {
+          const updated = payload.new as { portal_data: unknown; portal_status: string | null; last_checked_at: string | null };
+          if (updated.portal_data) {
+            setPortalData(updated.portal_data as PortalData);
+            setPortalStatus(updated.portal_status ?? null);
+            setLastCheckedAt(updated.last_checked_at ?? null);
+          }
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, resolvedProjectId]);
 
   if (authLoading || loading) {
     return (
