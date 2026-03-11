@@ -31,6 +31,7 @@ import {
   FolderOpen,
   MessageSquare,
   Layers,
+  FileBox,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -905,7 +906,7 @@ export function AgentWorkflowStatus() {
     }
   }, [scrape.lastScrapeOutcome, scrape.clearLastScrapeOutcome]);
 
-  const runManualCheck = async (scrapeMode: "standard" | "all" | "files" | "comments" = "standard") => {
+  const runManualCheck = async (scrapeMode: "standard" | "all" | "files" | "comments" | "supporting_docs" = "standard") => {
     const projectIdToUse = projectBySelectedId?.id ?? latestProjectId;
     const permitNumberToUse =
       projectBySelectedId?.permit_number ?? latestPermitNumber;
@@ -1137,6 +1138,13 @@ export function AgentWorkflowStatus() {
                   >
                     <MessageSquare className="h-4 w-4 mr-2" />
                     Comments Only
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => runManualCheck("supporting_docs")}
+                    data-testid="menu-scrape-supporting-docs"
+                  >
+                    <FileBox className="h-4 w-4 mr-2" />
+                    Scrape Supporting Docs Only
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

@@ -87,6 +87,7 @@ Preferred communication style: Simple, everyday language.
   - **Folder name on files**: Each file entry includes `folderName` attribute for UI grouping (e.g. "Drawings", "Supporting Documents").
   - **Extended timeouts**: Navigation timeout increased to 90s, grid wait timeout to 60s to prevent premature timeouts on slow portals.
 - **PortalDataViewer real-time refresh**: Supabase realtime subscription triggers `silentRefetch` (full DB query) instead of using payload directly (avoids Supabase ~1MB payload limit). Auto-polls every 10s while scraping is active via `useScrape().isScraping`. Manual "Refresh Data" button for on-demand refresh. Console logs file count and viewUrl status on load/refetch.
+- **Targeted folder scraping (March 2026)**: `scrapeMode: "supporting_docs"` triggers files-only scrape filtered to the "Supporting Documents" folder. `targetFolder` param threaded through `/api/scrape` → `scrapeAll` → `extractFilesTab`. `TARGET_FOLDER_MAP` maps folder keys to regex patterns. Folder-level merge logic preserves existing folders (e.g. Drawings) when only targeted folders are updated. Falls back to all folders if no match found. Progress messages show "Targeting: Supporting Documents..." during the scrape. Frontend dropdown option: "Scrape Supporting Docs Only" in AgentWorkflowStatus.
 
 ### Data Fetching Optimization (March 2026)
 - **`useProjects` hook** excludes `portal_data` JSONB from default fetch to avoid loading megabytes on every page. Uses explicit column list.

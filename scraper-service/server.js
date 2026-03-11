@@ -848,6 +848,7 @@ app.post("/api/scrape", async (req, res) => {
     projectId,
     userId,
     scrapeMode,
+    targetFolder,
   } = req.body;
   const session = sessions[sessionId];
   if (!session) return res.status(404).json({ error: "Session not found" });
@@ -928,11 +929,12 @@ app.post("/api/scrape", async (req, res) => {
     standard: ["status", "tasks", "info", "reports"],
     files: ["files"],
     comments: ["files"],
+    supporting_docs: ["files"],
   };
 
   if (scrapeMode && !SCRAPE_MODE_TABS[scrapeMode]) {
     return res.status(400).json({
-      error: `Invalid scrapeMode: "${scrapeMode}". Valid modes: all, standard, files, comments`,
+      error: `Invalid scrapeMode: "${scrapeMode}". Valid modes: all, standard, files, comments, supporting_docs`,
     });
   }
 
@@ -946,6 +948,7 @@ app.post("/api/scrape", async (req, res) => {
   }
 
   const commentsOnly = scrapeMode === "comments";
+  const effectiveTargetFolder = scrapeMode === "supporting_docs" ? "supporting_docs" : (targetFolder || null);
 
   const tabCount = TAB_DEFS.filter((t) => tabsToUse.includes(t.key)).length;
   session.status = "scraping";
@@ -965,6 +968,7 @@ app.post("/api/scrape", async (req, res) => {
     projectId,
     userId,
     commentsOnly,
+    effectiveTargetFolder,
   ).catch((err) => {
     session.status = "error";
     session.message = `Error: ${err.message}`;
@@ -988,6 +992,7 @@ async function scrapeAll(
   supabaseProjectId,
   userId,
   commentsOnly = false,
+  targetFolder = null,
 ) {
   const tabsFilter =
     tabsToUse && tabsToUse.length > 0 ? new Set(tabsToUse) : null;
@@ -1023,8 +1028,11 @@ async function scrapeAll(
         console.log("   🛑 Scrape cancelled by user — aborting tab loop");
         return;
       }
-      session.message = `${project.projectNum} → ${tab.label}`;
-      console.log(`   📑 ${tab.label}...`);
+      const targetLabel = targetFolder === "supporting_docs" ? "Targeting: Supporting Documents" : null;
+      session.message = targetLabel
+        ? `${project.projectNum} → ${targetLabel}`
+        : `${project.projectNum} → ${tab.label}`;
+      console.log(`   📑 ${tab.label}...${targetLabel ? ` (${targetLabel})` : ""}`);
 
       let context = session.context;
       let page;
@@ -1187,6 +1195,7 @@ async function scrapeAll(
             session,
             commentsOnly,
             supabaseProjectId,
+            targetFolder,
           );
           tabData.folders = filesResult.folders;
           const totalFiles = filesResult.folders.reduce(
@@ -1284,6 +1293,17 @@ async function scrapeAll(
         ) {
           const existingTabs = existingRow.portal_data.tabs;
           const newTabs = currentData.tabs;
+
+          if (targetFolder && newTabs.files && existingTabs.files) {
+            const existingFolders = existingTabs.files.folders || [];
+            const newFolders = newTabs.files.folders || [];
+            const newFolderNames = new Set(newFolders.map((f) => f.name));
+            const keptFolders = existingFolders.filter((f) => !newFolderNames.has(f.name));
+            const mergedFolders = [...keptFolders, ...newFolders];
+            newTabs.files = { ...existingTabs.files, ...newTabs.files, folders: mergedFolders };
+            console.log(`    🔀 Folder-level merge: kept [${keptFolders.map(f => f.name).join(", ")}], updated [${[...newFolderNames].join(", ")}]`);
+          }
+
           const merged = { ...existingTabs, ...newTabs };
           mergedData = {
             ...existingRow.portal_data,
@@ -1518,7 +1538,7 @@ async function recoverPage(context, session, webUiBase, pdxProjectId, folderInfo
   }
 }
 
-async function extractFilesTab(_page, _context, session, commentsOnly = false, supabaseProjectId = null) {
+async function extractFilesTab(_page, _context, session, commentsOnly = false, supabaseProjectId = null, targetFolder = null) {
   let page = _page;
   let context = _context;
   cleanupDownloadsDir();
@@ -1594,6 +1614,28 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
   }
 
   console.log(`     📁 Found ${folderElements.length} folders`);
+
+  const TARGET_FOLDER_MAP = {
+    supporting_docs: /supporting\s*doc/i,
+    drawings: /^drawings$/i,
+  };
+
+  if (targetFolder && TARGET_FOLDER_MAP[targetFolder]) {
+    const pattern = TARGET_FOLDER_MAP[targetFolder];
+    const before = folderElements.length;
+    const filtered = folderElements.filter((f) => {
+      const name = f.text.replace(/\s*\(.*$/, "").trim();
+      return pattern.test(name);
+    });
+    if (filtered.length > 0) {
+      folderElements.length = 0;
+      folderElements.push(...filtered);
+      console.log(`     🎯 targetFolder="${targetFolder}": filtered ${before} → ${folderElements.length} folders`);
+    } else {
+      console.log(`     ⚠️ targetFolder="${targetFolder}": no matching folder found among [${folderElements.map(f => f.text.replace(/\s*\(.*$/, "").trim()).join(", ")}]. Scraping all folders.`);
+    }
+  }
+
   let totalDownloadableCount = 0;
 
   for (let fi = 0; fi < folderElements.length; fi++) {
@@ -1602,7 +1644,7 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
     const fileCount = countMatch ? parseInt(countMatch[1], 10) : 0;
     const folderName = fInfo.text.replace(/\s*\(.*$/, "").trim();
     console.log(`     📁 [${fi + 1}/${folderElements.length}] "${folderName}" (${fileCount} files)`);
-    if (session) session.message = `Files → ${folderName}`;
+    if (session) session.message = targetFolder ? `Targeting: ${folderName}...` : `Files → ${folderName}`;
 
     try {
       const browserDead = session.browser && !session.browser.isConnected();
