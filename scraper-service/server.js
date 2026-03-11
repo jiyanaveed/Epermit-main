@@ -996,6 +996,7 @@ async function scrapeAll(
     : TAB_DEFS;
 
   session._scrapeCumulativeBytes = 0;
+  session._downloadedHashes = new Map();
 
   console.log(`\n🔍 Scraping ${projects.length} projects...`);
   const context = session.context;
@@ -1416,6 +1417,7 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
   cleanupDownloadsDir();
 
   if (!session._scrapeCumulativeBytes) session._scrapeCumulativeBytes = 0;
+  if (!session._downloadedHashes) session._downloadedHashes = new Map();
 
   const currentUrl = page.url();
   if (currentUrl.includes('b2clogin') || currentUrl.includes('Login') || currentUrl.includes('SessionEnded')) {
@@ -1967,21 +1969,36 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   console.log(`      📥 Downloading file ID ${fileId}: ${fileName}`);
 
   const downloadPath = path.join(downloadDir, fileName);
+  const cacheBuster = `_nocache=${Date.now()}_${fileId}`;
 
-  const tryUploadAndClean = async (filePath, sizeMB) => {
+  function computeHash(buffer) {
+    return crypto.createHash("md5").update(buffer).digest("hex");
+  }
+
+  function checkDuplicate(contentHash) {
+    if (!contentHash || !session?._downloadedHashes) return;
+    const prevFile = session._downloadedHashes.get(contentHash);
+    if (prevFile) {
+      console.log(`      ⚠️ DUPLICATE DETECTED: ${fileName} has same content (md5: ${contentHash}) as previously downloaded "${prevFile}".`);
+    }
+    session._downloadedHashes.set(contentHash, fileName);
+  }
+
+  const tryUploadAndClean = async (filePath, sizeMB, contentHash) => {
+    checkDuplicate(contentHash);
     if (!projectId) {
       console.log(`      ⚠️ No projectId — keeping file locally: ${fileName}`);
-      return { success: true, path: filePath, sizeMB, viewUrl: "" };
+      return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash };
     }
     const storagePath = `drawings/${projectId}/${fileName}`;
     const publicUrl = await uploadToSupabaseStorage(filePath, storagePath);
     if (publicUrl) {
       console.log(`      ☁️  Uploaded to Supabase Storage: ${storagePath}`);
       try { fs.unlinkSync(filePath); } catch (_) {}
-      return { success: true, path: filePath, sizeMB, viewUrl: publicUrl };
+      return { success: true, path: filePath, sizeMB, viewUrl: publicUrl, contentHash };
     }
     console.log(`      ⚠️ Supabase upload failed — keeping local copy: ${fileName}`);
-    return { success: true, path: filePath, sizeMB, viewUrl: "" };
+    return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash };
   };
 
   const existingPages = context.pages();
@@ -2024,6 +2041,26 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
     }
   };
 
+  const cacheRouteHandler = async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (isFileContentType(req.headers()["accept"] || "") || isFileUrl(url) ||
+        /filehandler|viewfile|getfile|filedownload/i.test(url)) {
+      await route.continue({
+        headers: {
+          ...req.headers(),
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "If-None-Match": "",
+          "If-Modified-Since": "",
+        },
+      });
+    } else {
+      await route.continue();
+    }
+  };
+  await context.route("**/*", cacheRouteHandler);
+
   const allPages = context.pages();
   for (const p of allPages) p.on("response", contextResponseHandler);
   const onNewPageCapture = (newPage) => { newPage.on("response", contextResponseHandler); };
@@ -2042,6 +2079,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
         if (response.status() === 200 && (isFileContentType(ct) || isFileUrl(url))) {
           if (!ct.includes("text/html") && !ct.includes("text/javascript") && !ct.includes("text/css")) {
             resolved = true;
+            console.log(`      📡 Real file response for fileId ${fileId}: ${url.substring(0, 120)} (${ct})`);
             resolve(true);
           }
         }
@@ -2114,12 +2152,9 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           await popup.close().catch(() => {});
           return { success: false, reason: "too_small" };
         }
-        const headerBuf = Buffer.alloc(4);
-        const fd = fs.openSync(downloadPath, "r");
-        fs.readSync(fd, headerBuf, 0, 4, 0);
-        fs.closeSync(fd);
-        if (fileName.toLowerCase().endsWith(".pdf") && !hasValidPdfHeader(headerBuf)) {
-          console.log(`      ⚠️ Invalid PDF header (got ${JSON.stringify(headerBuf.toString("ascii"))}). Corrupted file rejected: ${fileName}`);
+        const fileBuffer = fs.readFileSync(downloadPath);
+        if (fileName.toLowerCase().endsWith(".pdf") && !hasValidPdfHeader(fileBuffer)) {
+          console.log(`      ⚠️ Invalid PDF header (got ${JSON.stringify(fileBuffer.slice(0, 4).toString("ascii"))}). Corrupted file rejected: ${fileName}`);
           fs.unlinkSync(downloadPath);
           await popup.close().catch(() => {});
           return { success: false, reason: "corrupt_pdf" };
@@ -2138,10 +2173,11 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           return { success: false, reason: "cumulative_cap" };
         }
         if (session) session._scrapeCumulativeBytes = cumulative;
+        const contentHash = computeHash(fileBuffer);
         const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
-        console.log(`      ✅ Downloaded via viewer download button: ${fileName} (${sizeMB} MB)`);
+        console.log(`      ✅ Downloaded via viewer download button: ${fileName} (${sizeMB} MB, md5: ${contentHash})`);
         await popup.close().catch(() => {});
-        return await tryUploadAndClean(downloadPath, sizeMB);
+        return await tryUploadAndClean(downloadPath, sizeMB, contentHash);
       }
 
       const fileSourceUrl = await popup.evaluate(() => {
@@ -2167,10 +2203,11 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
       });
 
       if (fileSourceUrl) {
-        console.log(`      🔗 Found file source URL in viewer: ${fileSourceUrl.substring(0, 100)}`);
+        console.log(`      🔗 Found file source URL in viewer: ${fileSourceUrl.substring(0, 150)}`);
         try {
+          const fetchUrlWithBust = fileSourceUrl + (fileSourceUrl.includes("?") ? "&" : "?") + cacheBuster;
           const base64Data = await popup.evaluate(async (url) => {
-            const r = await fetch(url, { credentials: "include" });
+            const r = await fetch(url, { credentials: "include", cache: "no-store" });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const buf = await r.arrayBuffer();
             const bytes = new Uint8Array(buf);
@@ -2185,7 +2222,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
               chunks.push(btoa(binary));
             }
             return { chunks, size: bytes.length };
-          }, fileSourceUrl);
+          }, fetchUrlWithBust);
 
           const buffers = base64Data.chunks.map(c => Buffer.from(c, "base64"));
           const buffer = Buffer.concat(buffers);
@@ -2202,10 +2239,11 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
             } else {
               fs.writeFileSync(downloadPath, buffer);
               if (session) session._scrapeCumulativeBytes = cumulative;
+              const contentHash = computeHash(buffer);
               const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-              console.log(`      ✅ Downloaded via viewer source URL: ${fileName} (${sizeMB} MB)`);
+              console.log(`      ✅ Downloaded via viewer source URL: ${fileName} (${sizeMB} MB, md5: ${contentHash})`);
               await popup.close().catch(() => {});
-              return await tryUploadAndClean(downloadPath, sizeMB);
+              return await tryUploadAndClean(downloadPath, sizeMB, contentHash);
             }
           }
         } catch (srcErr) {
@@ -2234,7 +2272,8 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
     }
 
     if (capturedResponses.length > 0) {
-      console.log(`      🔗 Captured ${capturedResponses.length} file-like response(s) from viewFile call`);
+      console.log(`      🔗 Captured ${capturedResponses.length} file-like response(s) from viewFile call:`);
+      capturedResponses.forEach((r, i) => console.log(`         [${i}] ${r.url.substring(0, 120)} (${r.contentType}, ${r.body.length} bytes)`));
       const isPdf = fileName.toLowerCase().endsWith(".pdf");
       const validResponses = isPdf
         ? capturedResponses.filter((r) => hasValidPdfHeader(r.body))
@@ -2252,9 +2291,10 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
         } else {
           fs.writeFileSync(downloadPath, best.body);
           if (session) session._scrapeCumulativeBytes = cumulative;
+          const contentHash = computeHash(best.body);
           const sizeMB = (best.body.length / 1024 / 1024).toFixed(2);
-          console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB)`);
-          return await tryUploadAndClean(downloadPath, sizeMB);
+          console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB, md5: ${contentHash}, url: ${best.url.substring(0, 120)})`);
+          return await tryUploadAndClean(downloadPath, sizeMB, contentHash);
         }
       } else if (best) {
         console.log(`      ⚠️ Captured file too large (${(best.body.length / 1024 / 1024).toFixed(2)} MB > ${(MAX_FILE_SIZE / 1024 / 1024).toFixed(0)} MB max). Rejected: ${fileName}`);
@@ -2265,10 +2305,13 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   } catch (err) {
     console.log(`      ❌ Download error for ${fileName}: ${err.message}`);
   } finally {
-    context.removeListener("page", onNewPageCapture);
-    for (const p of context.pages()) {
-      p.removeListener("response", contextResponseHandler);
-    }
+    try { await context.unroute("**/*", cacheRouteHandler); } catch (_) {}
+    try { context.removeListener("page", onNewPageCapture); } catch (_) {}
+    try {
+      for (const p of context.pages()) {
+        p.removeListener("response", contextResponseHandler);
+      }
+    } catch (_) {}
     if (popup && popup !== page) await popup.close().catch(() => {});
   }
 
