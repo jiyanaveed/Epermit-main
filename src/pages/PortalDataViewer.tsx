@@ -73,6 +73,7 @@ interface FileComment {
 interface FileEntry {
   name: string;
   fileId?: string;
+  folderName?: string;
   status: string;
   reviewedBy: string;
   uploadedDate: string;

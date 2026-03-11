@@ -1031,7 +1031,7 @@ async function scrapeAll(
       try {
         page = await context.newPage();
         const webUiUrl = `${session.webUiBase}/WebForms/Frame.aspx?tab=${tab.param}&ProjectID=${project.projectId}`;
-        await page.goto(webUiUrl, { waitUntil: "networkidle", timeout: 30000 });
+        await page.goto(webUiUrl, { waitUntil: "networkidle", timeout: 90000 });
         await page.waitForTimeout(2000);
 
         let pUrl = page.url();
@@ -1464,7 +1464,7 @@ async function reinitializeBrowser(session) {
       const testPage = await context.newPage();
       await testPage.goto(
         `${session.webUiBase}/WebForms/Frame.aspx?tab=projectStatusTab&ProjectID=${firstProjectId}`,
-        { waitUntil: 'networkidle', timeout: 30000 }
+        { waitUntil: 'networkidle', timeout: 90000 }
       ).catch(() => {});
       await testPage.waitForTimeout(2000);
       await testPage.close();
@@ -1484,7 +1484,7 @@ async function recreateFilesPage(context, webUiBase, pdxProjectId, folderInfo) {
   }
   const freshPage = await context.newPage();
   const url = `${webUiBase}/WebForms/Frame.aspx?tab=filesTab&ProjectID=${pdxProjectId}`;
-  await freshPage.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+  await freshPage.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
   await freshPage.waitForTimeout(2000);
   if (folderInfo && folderInfo.path) {
     const selector = folderInfo.path.startsWith('#')
@@ -1497,7 +1497,7 @@ async function recreateFilesPage(context, webUiBase, pdxProjectId, folderInfo) {
         if (t.trim() === folderInfo.text) { await link.click(); break; }
       }
     });
-    await freshPage.waitForSelector('.ui-iggrid-table tbody tr', { timeout: 20000 }).catch(() => {});
+    await freshPage.waitForSelector('.ui-iggrid-table tbody tr', { timeout: 60000 }).catch(() => {});
     await freshPage.waitForTimeout(2000);
   }
   return freshPage;
@@ -1605,14 +1605,24 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
     if (session) session.message = `Files → ${folderName}`;
 
     try {
-      if (!(await isPageAlive(page))) {
-        console.log(`     🔄 Page died before folder "${folderName}", recovering...`);
+      const browserDead = session.browser && !session.browser.isConnected();
+      const pageDead = browserDead || !(await isPageAlive(page));
+      if (pageDead) {
+        console.log(`     🔄 ${browserDead ? 'Browser disconnected' : 'Page died'} before folder "${folderName}", recovering...`);
         try {
-          const recovered = await recoverPage(context, session, webUiBase, pdxProjectId, null);
-          page = recovered.page;
-          context = recovered.context;
+          if (browserDead) {
+            console.log(`     🔄 Browser.isConnected() === false, full re-initialization required...`);
+            const reInit = await reinitializeBrowser(session);
+            context = reInit.context;
+            page = await recreateFilesPage(context, webUiBase, pdxProjectId, null);
+          } else {
+            const recovered = await recoverPage(context, session, webUiBase, pdxProjectId, null);
+            page = recovered.page;
+            context = recovered.context;
+          }
+          console.log(`     ✅ Recovered before folder "${folderName}"`);
         } catch (recErr) {
-          console.log(`     ❌ Could not recover page: ${recErr.message}. Skipping remaining folders.`);
+          console.log(`     ❌ Could not recover: ${recErr.message}. Skipping remaining folders.`);
           for (let rfi = fi; rfi < folderElements.length; rfi++) {
             const rfName = folderElements[rfi].text.replace(/\s*\(.*$/, "").trim();
             const rfCount = (folderElements[rfi].text.match(/\((\d+)/) || [])[1] || 0;
@@ -1636,7 +1646,7 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
       }
 
       console.log(`       ⏳ Waiting for file grid...`);
-      await page.waitForSelector(".ui-iggrid-table tbody tr", { timeout: 20000 }).catch(() => {});
+      await page.waitForSelector(".ui-iggrid-table tbody tr", { timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(2000);
 
       const filesFound = await page.evaluate(() => {
@@ -1763,6 +1773,7 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
           folderFiles.push({
             name: filesFound[i].name,
             fileId: filesFound[i].id,
+            folderName,
             status: filesFound[i].status,
             reviewedBy: filesFound[i].reviewedBy,
             uploadedDate: filesFound[i].uploadedDate,
@@ -1785,6 +1796,7 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
             folderFiles.push({
               name: file.name,
               fileId: file.id,
+              folderName,
               status: file.status,
               reviewedBy: file.reviewedBy,
               uploadedDate: file.uploadedDate,
@@ -1817,7 +1829,7 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
                 console.log(`       ❌ Recovery failed: ${recErr.message}. Marking remaining files as failed.`);
                 folderAborted = true;
                 folderFiles.push({
-                  name: file.name, fileId: file.id, status: file.status,
+                  name: file.name, fileId: file.id, folderName, status: file.status,
                   reviewedBy: file.reviewedBy, uploadedDate: file.uploadedDate,
                   commentCount: 0, comments: [], viewUrl: "",
                   downloadStatus: "failed", downloadError: "Browser crashed and could not recover",
@@ -1880,6 +1892,7 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
         folderFiles.push({
           name: file.name,
           fileId: file.id,
+          folderName,
           status: file.status,
           reviewedBy: file.reviewedBy,
           uploadedDate: file.uploadedDate,
