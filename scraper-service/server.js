@@ -999,8 +999,6 @@ async function scrapeAll(
   session._downloadedHashes = new Map();
 
   console.log(`\n🔍 Scraping ${projects.length} projects...`);
-  const context = session.context;
-  const dashPage = session.page;
 
   for (let pi = 0; pi < projects.length; pi++) {
     if (session._cancelRequested) {
@@ -1028,6 +1026,7 @@ async function scrapeAll(
       session.message = `${project.projectNum} → ${tab.label}`;
       console.log(`   📑 ${tab.label}...`);
 
+      let context = session.context;
       let page;
       try {
         page = await context.newPage();
@@ -1224,8 +1223,19 @@ async function scrapeAll(
         if (tab.key === "reports") errTab.pdfs = [];
         if (tab.key === "files") errTab.folders = [];
         session.data[project.id].tabs[tab.key] = errTab;
+
+        if (isTargetClosedError(err)) {
+          console.log(`      🔄 Browser crashed during ${tab.label} tab, attempting recovery...`);
+          try {
+            await reinitializeBrowser(session);
+            console.log(`      ✅ Browser recovered for next tab`);
+          } catch (recErr) {
+            console.log(`      ❌ Browser recovery failed: ${recErr.message}`);
+          }
+        }
       }
       if (page) await page.close().catch(() => {});
+      context = session.context;
       session.progress++;
     }
   }
@@ -1413,7 +1423,104 @@ function escapeCSSId(str) {
   return str.replace(/([^\w-])/g, "\\$1");
 }
 
-async function extractFilesTab(page, context, session, commentsOnly = false, supabaseProjectId = null) {
+const MINI_RESET_INTERVAL = 10;
+
+async function isPageAlive(pg) {
+  try {
+    await pg.evaluate(() => true);
+    return true;
+  } catch { return false; }
+}
+
+function isTargetClosedError(err) {
+  const msg = (err && err.message || '').toLowerCase();
+  return msg.includes('target closed') ||
+    msg.includes('has been closed') ||
+    msg.includes('session closed') ||
+    msg.includes('browser disconnected') ||
+    msg.includes('connection refused') ||
+    msg.includes('browser has been closed') ||
+    msg.includes('context has been closed');
+}
+
+async function reinitializeBrowser(session) {
+  console.log('   🔄 Re-initializing browser after crash...');
+  try { if (session.browser) await session.browser.close().catch(() => {}); } catch (_) {}
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    deviceScaleFactor: 2,
+    acceptDownloads: true,
+  });
+  const loginPage = await context.newPage();
+  if (session.portalType === 'accela') {
+    await accelaScraperLogin(loginPage, session.username, session.password, session.dashboardUrl);
+  } else {
+    await performLogin(loginPage, session.username, session.password, session.dashboardUrl);
+  }
+  if (session.webUiBase && session.projects && session.projects.length > 0) {
+    const firstProjectId = session.projects[0].projectId;
+    if (firstProjectId) {
+      const testPage = await context.newPage();
+      await testPage.goto(
+        `${session.webUiBase}/WebForms/Frame.aspx?tab=projectStatusTab&ProjectID=${firstProjectId}`,
+        { waitUntil: 'networkidle', timeout: 30000 }
+      ).catch(() => {});
+      await testPage.waitForTimeout(2000);
+      await testPage.close();
+    }
+  }
+  session.browser = browser;
+  session.context = context;
+  session.page = loginPage;
+  console.log('   ✅ Browser re-initialized successfully');
+  return { browser, context };
+}
+
+async function recreateFilesPage(context, webUiBase, pdxProjectId, folderInfo) {
+  const pages = context.pages();
+  for (let i = pages.length - 1; i >= 1; i--) {
+    await pages[i].close().catch(() => {});
+  }
+  const freshPage = await context.newPage();
+  const url = `${webUiBase}/WebForms/Frame.aspx?tab=filesTab&ProjectID=${pdxProjectId}`;
+  await freshPage.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+  await freshPage.waitForTimeout(2000);
+  if (folderInfo && folderInfo.path) {
+    const selector = folderInfo.path.startsWith('#')
+      ? `${folderInfo.path} a`
+      : `#folderTree li[data-path="${folderInfo.path}"] a`;
+    await freshPage.click(selector).catch(async () => {
+      const allLinks = await freshPage.$$('a');
+      for (const link of allLinks) {
+        const t = await link.textContent().catch(() => '');
+        if (t.trim() === folderInfo.text) { await link.click(); break; }
+      }
+    });
+    await freshPage.waitForSelector('.ui-iggrid-table tbody tr', { timeout: 20000 }).catch(() => {});
+    await freshPage.waitForTimeout(2000);
+  }
+  return freshPage;
+}
+
+async function recoverPage(context, session, webUiBase, pdxProjectId, folderInfo) {
+  try {
+    const freshPage = await recreateFilesPage(context, webUiBase, pdxProjectId, folderInfo);
+    return { page: freshPage, context };
+  } catch (err) {
+    if (isTargetClosedError(err)) {
+      console.log('       🔄 Context also dead, re-initializing browser...');
+      const reInit = await reinitializeBrowser(session);
+      const freshPage = await recreateFilesPage(reInit.context, webUiBase, pdxProjectId, folderInfo);
+      return { page: freshPage, context: reInit.context };
+    }
+    throw err;
+  }
+}
+
+async function extractFilesTab(_page, _context, session, commentsOnly = false, supabaseProjectId = null) {
+  let page = _page;
+  let context = _context;
   cleanupDownloadsDir();
 
   if (!session._scrapeCumulativeBytes) session._scrapeCumulativeBytes = 0;
@@ -1424,6 +1531,13 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
     console.log("     ⚠️ Session expired during Files tab scraping, skipping files");
     return { folders: [], error: "Session expired" };
   }
+
+  const pdxProjectId = (() => {
+    try {
+      const u = new URL(currentUrl);
+      return u.searchParams.get('ProjectID') || '';
+    } catch { return ''; }
+  })();
 
   const webUiBase = (() => {
     try {
@@ -1480,6 +1594,7 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
   }
 
   console.log(`     📁 Found ${folderElements.length} folders`);
+  let totalDownloadableCount = 0;
 
   for (let fi = 0; fi < folderElements.length; fi++) {
     const fInfo = folderElements[fi];
@@ -1490,6 +1605,23 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
     if (session) session.message = `Files → ${folderName}`;
 
     try {
+      if (!(await isPageAlive(page))) {
+        console.log(`     🔄 Page died before folder "${folderName}", recovering...`);
+        try {
+          const recovered = await recoverPage(context, session, webUiBase, pdxProjectId, null);
+          page = recovered.page;
+          context = recovered.context;
+        } catch (recErr) {
+          console.log(`     ❌ Could not recover page: ${recErr.message}. Skipping remaining folders.`);
+          for (let rfi = fi; rfi < folderElements.length; rfi++) {
+            const rfName = folderElements[rfi].text.replace(/\s*\(.*$/, "").trim();
+            const rfCount = (folderElements[rfi].text.match(/\((\d+)/) || [])[1] || 0;
+            result.folders.push({ name: rfName, fileCount: parseInt(rfCount, 10), files: [], folderError: "browser_crashed" });
+          }
+          break;
+        }
+      }
+
       if (fInfo.path) {
         const selector = fInfo.path.startsWith("#")
           ? `${fInfo.path} a`
@@ -1625,7 +1757,24 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
 
       const folderSafe = folderName.replace(/[/\\?%*:|"<>\s]/g, "_").substring(0, 30);
       const folderFiles = [];
+      let folderAborted = false;
       for (let i = 0; i < filesFound.length; i++) {
+        if (folderAborted) {
+          folderFiles.push({
+            name: filesFound[i].name,
+            fileId: filesFound[i].id,
+            status: filesFound[i].status,
+            reviewedBy: filesFound[i].reviewedBy,
+            uploadedDate: filesFound[i].uploadedDate,
+            commentCount: 0,
+            comments: [],
+            viewUrl: "",
+            downloadStatus: "failed",
+            downloadError: "Browser crashed and could not recover",
+          });
+          continue;
+        }
+
         const file = filesFound[i];
         const rawSafe = file.name.replace(/[/\\?%*:|"<>]/g, "-");
         const safeName = file.id ? `${file.id}_${rawSafe}` : `${folderSafe}_${i}_${rawSafe}`;
@@ -1647,20 +1796,84 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
           }
         }
 
+        if (file.id) totalDownloadableCount++;
+
+        if (totalDownloadableCount > 0 && totalDownloadableCount % MINI_RESET_INTERVAL === 0 && file.id) {
+          console.log(`       🔄 Mini-reset after ${totalDownloadableCount} total downloads to free memory...`);
+          try {
+            const oldPage = page;
+            page = await recreateFilesPage(context, webUiBase, pdxProjectId, fInfo);
+            await oldPage.close().catch(() => {});
+            console.log(`       ✅ Mini-reset complete, continuing downloads`);
+          } catch (resetErr) {
+            console.log(`       ⚠️ Mini-reset failed: ${resetErr.message}`);
+            if (isTargetClosedError(resetErr)) {
+              try {
+                const recovered = await recoverPage(context, session, webUiBase, pdxProjectId, fInfo);
+                page = recovered.page;
+                context = recovered.context;
+                console.log(`       ✅ Browser recovered after mini-reset failure`);
+              } catch (recErr) {
+                console.log(`       ❌ Recovery failed: ${recErr.message}. Marking remaining files as failed.`);
+                folderAborted = true;
+                folderFiles.push({
+                  name: file.name, fileId: file.id, status: file.status,
+                  reviewedBy: file.reviewedBy, uploadedDate: file.uploadedDate,
+                  commentCount: 0, comments: [], viewUrl: "",
+                  downloadStatus: "failed", downloadError: "Browser crashed and could not recover",
+                });
+                continue;
+              }
+            }
+          }
+        }
+
         let viewUrl = "";
+        let downloadStatus = null;
+        let downloadError = null;
         if (file.id) {
           console.log(`       📥 [${i + 1}/${filesFound.length}] Downloading via FileHandler: ${safeName}`);
           try {
             const dlResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session, supabaseProjectId);
             if (dlResult.success) {
               viewUrl = dlResult.viewUrl || "";
+              downloadStatus = dlResult.skippedDuplicate ? "skipped_duplicate" : "success";
               console.log(`       🔗 viewUrl for ${safeName}: ${viewUrl || "(empty)"}`);
               await page.waitForTimeout(4000);
             } else {
               console.log(`       ⚠️ File download failed (${dlResult.reason || "unknown"}), continuing to next file: ${safeName}`);
+              downloadStatus = "failed";
+              downloadError = dlResult.reason || "download_failed";
             }
           } catch (dlErr) {
-            console.log(`       ❌ Download exception for ${safeName}: ${dlErr.message}. Continuing to next file.`);
+            console.log(`       ❌ Download exception for ${safeName}: ${dlErr.message}`);
+            downloadStatus = "failed";
+            downloadError = dlErr.message;
+
+            if (isTargetClosedError(dlErr)) {
+              console.log(`       🔄 Target closed — attempting recovery and retry...`);
+              try {
+                const recovered = await recoverPage(context, session, webUiBase, pdxProjectId, fInfo);
+                page = recovered.page;
+                context = recovered.context;
+                console.log(`       ✅ Recovered, retrying file ${safeName}...`);
+                try {
+                  const retryResult = await downloadProjectDoxFile(page, context, file.id, safeName, webUiBase, session, supabaseProjectId);
+                  if (retryResult.success) {
+                    viewUrl = retryResult.viewUrl || "";
+                    downloadStatus = retryResult.skippedDuplicate ? "skipped_duplicate" : "success";
+                    downloadError = null;
+                    console.log(`       ✅ Retry succeeded for ${safeName}`);
+                    await page.waitForTimeout(4000);
+                  }
+                } catch (retryErr) {
+                  console.log(`       ⚠️ Retry also failed for ${safeName}: ${retryErr.message}`);
+                }
+              } catch (recErr) {
+                console.log(`       ❌ Recovery failed: ${recErr.message}. Marking remaining files as failed.`);
+                folderAborted = true;
+              }
+            }
           }
         }
 
@@ -1673,6 +1886,8 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
           commentCount: 0,
           comments: [],
           viewUrl: viewUrl,
+          ...(downloadStatus && { downloadStatus }),
+          ...(downloadError && { downloadError }),
         });
       }
 
@@ -1687,10 +1902,28 @@ async function extractFilesTab(page, context, session, commentsOnly = false, sup
         name: folderName,
         fileCount: fileCount,
         files: [],
+        ...(isTargetClosedError(err) && { folderError: "browser_crashed" }),
       });
+      if (isTargetClosedError(err)) {
+        console.log(`     🔄 Browser crashed during folder "${folderName}", attempting recovery for next folder...`);
+        try {
+          const recovered = await recoverPage(context, session, webUiBase, pdxProjectId, null);
+          page = recovered.page;
+          context = recovered.context;
+          console.log(`     ✅ Recovered after folder error`);
+        } catch (recErr) {
+          console.log(`     ❌ Recovery failed: ${recErr.message}. Skipping remaining folders.`);
+          for (let rfi = fi + 1; rfi < folderElements.length; rfi++) {
+            const rfName = folderElements[rfi].text.replace(/\s*\(.*$/, "").trim();
+            const rfCount = (folderElements[rfi].text.match(/\((\d+)/) || [])[1] || 0;
+            result.folders.push({ name: rfName, fileCount: parseInt(rfCount, 10), files: [], folderError: "browser_crashed" });
+          }
+          break;
+        }
+      }
     }
   }
-  page.removeListener("request", networkHandler);
+  try { page.removeListener("request", networkHandler); } catch (_) {}
   if (discoveredDownloadUrls.length > 0) {
     console.log(`     🔗 Discovered download URLs during scrape:`, discoveredDownloadUrls.slice(0, 5));
   }

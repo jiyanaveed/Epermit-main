@@ -79,6 +79,8 @@ interface FileEntry {
   commentCount: number;
   comments?: FileComment[];
   viewUrl?: string;
+  downloadStatus?: string;
+  downloadError?: string;
 }
 
 interface FolderEntry {
@@ -1573,6 +1575,15 @@ export default function PortalDataViewer() {
                                                     </a>
                                                   ) : (
                                                     <span className="truncate max-w-[300px]">{file.name}</span>
+                                                  )}
+                                                  {file.downloadStatus === "failed" && (
+                                                    <Badge
+                                                      className="bg-red-600 text-white text-[10px] px-1.5 py-0 shrink-0"
+                                                      title={file.downloadError || "Download failed"}
+                                                      data-testid={`badge-failed-${fi}-${fIdx}`}
+                                                    >
+                                                      Failed
+                                                    </Badge>
                                                   )}
                                                 </div>
                                               </TableCell>
