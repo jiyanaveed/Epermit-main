@@ -1975,17 +1975,28 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
     return crypto.createHash("md5").update(buffer).digest("hex");
   }
 
-  function checkDuplicate(contentHash) {
-    if (!contentHash || !session?._downloadedHashes) return;
+  function isDuplicate(contentHash) {
+    if (!contentHash || !session?._downloadedHashes) return false;
     const prevFile = session._downloadedHashes.get(contentHash);
     if (prevFile) {
-      console.log(`      ⚠️ DUPLICATE DETECTED: ${fileName} has same content (md5: ${contentHash}) as previously downloaded "${prevFile}".`);
+      console.log(`      ⚠️ DUPLICATE DETECTED: ${fileName} has same content (md5: ${contentHash}) as previously downloaded "${prevFile}". Skipping upload.`);
+      return true;
     }
     session._downloadedHashes.set(contentHash, fileName);
+    return false;
+  }
+
+  const JUNK_URL_PATTERNS = /pdfnet\.res|spinner\.gif|PDFNetCWasm|webviewer\.min|chunks\/|core\/.*\.js|ui\/.*\.css/i;
+
+  function isJunkUrl(url) {
+    return JUNK_URL_PATTERNS.test(url);
   }
 
   const tryUploadAndClean = async (filePath, sizeMB, contentHash) => {
-    checkDuplicate(contentHash);
+    if (isDuplicate(contentHash)) {
+      try { fs.unlinkSync(filePath); } catch (_) {}
+      return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash, skippedDuplicate: true };
+    }
     if (!projectId) {
       console.log(`      ⚠️ No projectId — keeping file locally: ${fileName}`);
       return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash };
@@ -2031,6 +2042,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
     const ct = response.headers()["content-type"] || "";
     const status = response.status();
     if (status === 200 && (isFileContentType(ct) || isFileUrl(url))) {
+      if (isJunkUrl(url)) return;
       try {
         const body = await response.body().catch(() => null);
         if (body && body.length >= MIN_FILE_SIZE) {
@@ -2273,17 +2285,45 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
 
     if (capturedResponses.length > 0) {
       console.log(`      🔗 Captured ${capturedResponses.length} file-like response(s) from viewFile call:`);
-      capturedResponses.forEach((r, i) => console.log(`         [${i}] ${r.url.substring(0, 120)} (${r.contentType}, ${r.body.length} bytes)`));
+      capturedResponses.forEach((r, i) => console.log(`         [${i}] ${r.url.substring(0, 150)} (${r.contentType}, ${r.body.length} bytes, pdfHeader: ${hasValidPdfHeader(r.body)})`));
       const isPdf = fileName.toLowerCase().endsWith(".pdf");
-      const validResponses = isPdf
-        ? capturedResponses.filter((r) => hasValidPdfHeader(r.body))
-        : capturedResponses;
-      if (isPdf && validResponses.length === 0 && capturedResponses.length > 0) {
-        console.log(`      ⚠️ All ${capturedResponses.length} captured responses failed PDF header validation. Headers: ${capturedResponses.map(r => JSON.stringify(r.body.slice(0, 4).toString("ascii"))).join(", ")}`);
+
+      let best = null;
+      if (isPdf) {
+        const pdfResponses = capturedResponses.filter((r) =>
+          r.contentType.includes("application/pdf") &&
+          hasValidPdfHeader(r.body) &&
+          !isJunkUrl(r.url)
+        );
+        const retrieveFileResponses = pdfResponses.filter((r) =>
+          /RetrieveFile|File\/Download/i.test(r.url)
+        );
+        if (retrieveFileResponses.length > 0) {
+          best = retrieveFileResponses.sort((a, b) => b.body.length - a.body.length)[0];
+          console.log(`      📎 Selected RetrieveFile PDF response: ${best.url.substring(0, 150)} (${best.body.length} bytes)`);
+        } else if (pdfResponses.length > 0) {
+          best = pdfResponses.sort((a, b) => b.body.length - a.body.length)[0];
+          console.log(`      📎 Selected application/pdf response: ${best.url.substring(0, 150)} (${best.body.length} bytes)`);
+        }
+        if (!best) {
+          const fallback = capturedResponses.filter((r) =>
+            hasValidPdfHeader(r.body) && !isJunkUrl(r.url)
+          );
+          if (fallback.length > 0) {
+            best = fallback.sort((a, b) => b.body.length - a.body.length)[0];
+            console.log(`      📎 Fallback: valid PDF header response: ${best.url.substring(0, 150)} (${best.body.length} bytes)`);
+          }
+        }
+        if (!best) {
+          console.log(`      ⚠️ No valid PDF response found among ${capturedResponses.length} captured responses.`);
+        }
+      } else {
+        const nonJunk = capturedResponses.filter((r) => !isJunkUrl(r.url));
+        best = nonJunk.length > 0
+          ? nonJunk.sort((a, b) => b.body.length - a.body.length)[0]
+          : null;
       }
-      const best = validResponses.length > 0
-        ? validResponses.sort((a, b) => b.body.length - a.body.length)[0]
-        : null;
+
       if (best && best.body.length <= MAX_FILE_SIZE) {
         const cumulative = (session?._scrapeCumulativeBytes || 0) + best.body.length;
         if (cumulative > MAX_SCRAPE_CUMULATIVE_SIZE) {
@@ -2293,7 +2333,7 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
           if (session) session._scrapeCumulativeBytes = cumulative;
           const contentHash = computeHash(best.body);
           const sizeMB = (best.body.length / 1024 / 1024).toFixed(2);
-          console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB, md5: ${contentHash}, url: ${best.url.substring(0, 120)})`);
+          console.log(`      ✅ Downloaded via captured response: ${fileName} (${sizeMB} MB, md5: ${contentHash}, url: ${best.url.substring(0, 150)})`);
           return await tryUploadAndClean(downloadPath, sizeMB, contentHash);
         }
       } else if (best) {
