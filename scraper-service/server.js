@@ -185,27 +185,17 @@ async function ensureStorageBucket() {
   if (resolvedBucketId) return true;
   try {
     const { data: buckets } = await supabase.storage.listBuckets();
-    console.log(`📦 Available buckets: ${(buckets || []).map(b => `"${b.name}" (id: ${b.id})`).join(", ") || "none"}`);
-
-    const exactSlug = buckets?.find((b) => b.id === STORAGE_BUCKET_SLUG);
-    if (exactSlug) {
-      resolvedBucketId = exactSlug.id;
-      console.log(`✅ Found bucket by slug "${resolvedBucketId}"`);
-      return true;
-    }
-
-    const spaceName = buckets?.find((b) => b.name === "Project Drawings" || b.id === "Project Drawings");
-    if (spaceName) {
-      resolvedBucketId = spaceName.id;
-      if (!spaceName.public) {
+    const matched = buckets?.find((b) => b.id === STORAGE_BUCKET_SLUG);
+    if (matched) {
+      resolvedBucketId = matched.id;
+      if (!matched.public) {
         await supabase.storage.updateBucket(resolvedBucketId, { public: true });
-        console.log(`✅ Found bucket "${spaceName.name}" (id: ${resolvedBucketId}) — set to public`);
+        console.log(`✅ Found bucket "${resolvedBucketId}" — set to public`);
       } else {
-        console.log(`✅ Found bucket "${spaceName.name}" (id: ${resolvedBucketId})`);
+        console.log(`✅ Found bucket "${resolvedBucketId}"`);
       }
       return true;
     }
-
     const { error } = await supabase.storage.createBucket(STORAGE_BUCKET_SLUG, {
       public: true,
       fileSizeLimit: MAX_FILE_SIZE,
