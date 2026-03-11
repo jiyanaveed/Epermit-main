@@ -208,12 +208,27 @@ async function ensureStorageBucket() {
   }
 }
 
+function sanitizeStorageKey(key) {
+  return key
+    .split("/")
+    .map((segment) =>
+      segment
+        .replace(/\s+/g, "_")
+        .replace(/[^a-zA-Z0-9._-]/g, "")
+    )
+    .join("/")
+    .replace(/^\/+/, "");
+}
+
 async function uploadToSupabaseStorage(localPath, storagePath) {
   const ready = await ensureStorageBucket();
   if (!ready) return null;
   try {
+    const sanitizedPath = sanitizeStorageKey(storagePath);
+    console.log(`      📤 Supabase upload key: "${sanitizedPath}" (bucket: ${resolvedBucketId})`);
+
     const fileBuffer = fs.readFileSync(localPath);
-    const ext = path.extname(storagePath).toLowerCase();
+    const ext = path.extname(sanitizedPath).toLowerCase();
     const mimeTypes = {
       ".pdf": "application/pdf", ".dwg": "application/octet-stream",
       ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -225,17 +240,18 @@ async function uploadToSupabaseStorage(localPath, storagePath) {
 
     const { data, error } = await supabase.storage
       .from(resolvedBucketId)
-      .upload(storagePath, fileBuffer, { contentType, upsert: true });
+      .upload(sanitizedPath, fileBuffer, { contentType, upsert: true });
 
     if (error) {
-      console.error(`      ❌ Supabase upload failed for ${storagePath}:`, error.message);
+      console.error(`      ❌ Supabase upload failed for ${sanitizedPath}:`, error.message);
       return null;
     }
 
     const { data: urlData } = supabase.storage
       .from(resolvedBucketId)
-      .getPublicUrl(storagePath);
+      .getPublicUrl(sanitizedPath);
 
+    console.log(`      ✅ Public URL: ${urlData?.publicUrl}`);
     return urlData?.publicUrl || null;
   } catch (err) {
     console.error(`      ❌ Supabase upload exception for ${storagePath}:`, err.message);
