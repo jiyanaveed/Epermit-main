@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,9 +20,10 @@ import {
 } from "@/components/ui/collapsible";
 import { useAuth } from "@/hooks/useAuth";
 import { useSelectedProject } from "@/contexts/SelectedProjectContext";
+import { useScrape } from "@/contexts/ScrapeContext";
 import { supabase } from "@/lib/supabase";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare, ArrowLeft } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare, ArrowLeft, Loader2 } from "lucide-react";
 
 class TabErrorBoundary extends React.Component<
   { tabName: string; children: React.ReactNode },
@@ -137,6 +138,8 @@ export default function PortalDataViewer() {
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [noPermitConfigured, setNoPermitConfigured] = useState(false);
   const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const scrape = useScrape();
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedFileComments, setExpandedFileComments] = useState<Set<string>>(new Set());
@@ -194,10 +197,17 @@ export default function PortalDataViewer() {
         setLastCheckedAt(null);
         setResolvedProjectId(null);
       } else {
-        setPortalData((project.portal_data as PortalData) || null);
+        const pd = (project.portal_data as PortalData) || null;
+        setPortalData(pd);
         setPortalStatus((project.portal_status as string) ?? null);
         setLastCheckedAt((project.last_checked_at as string) ?? null);
         setResolvedProjectId(project.id);
+        if (pd?.tabs?.files) {
+          const filesTab = pd.tabs.files as FilesTabData;
+          const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
+          const withUrl = allFiles.filter((f) => !!f.viewUrl);
+          console.log(`[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`, withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })));
+        }
       }
     } catch (err) {
       console.error(err);
@@ -206,6 +216,43 @@ export default function PortalDataViewer() {
       setLoading(false);
     }
   }, [user, selectedProjectId]);
+
+  const silentRefetch = useCallback(async () => {
+    if (!user || !resolvedProjectId) return;
+    try {
+      const { data, error } = await supabase
+        .from("projects")
+        .select("id, portal_data, portal_status, last_checked_at")
+        .eq("id", resolvedProjectId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!error && data) {
+        setPortalStatus((data.portal_status as string) ?? null);
+        setLastCheckedAt((data.last_checked_at as string) ?? null);
+        if (data.portal_data) {
+          const pd = data.portal_data as PortalData;
+          const filesTab = pd.tabs?.files as FilesTabData | undefined;
+          if (filesTab?.folders) {
+            const urlCount = filesTab.folders.reduce(
+              (sum, f) => sum + (f.files?.filter((file) => !!file.viewUrl).length ?? 0),
+              0,
+            );
+            console.log(`[PortalDataViewer] silentRefetch: ${urlCount} files with viewUrl`);
+          }
+          setPortalData(pd);
+        }
+      }
+    } catch {}
+  }, [user, resolvedProjectId]);
+
+  const handleManualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await silentRefetch();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [silentRefetch]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -227,20 +274,21 @@ export default function PortalDataViewer() {
           table: "projects",
           filter: `id=eq.${resolvedProjectId}`,
         },
-        (payload) => {
-          const updated = payload.new as { portal_data: unknown; portal_status: string | null; last_checked_at: string | null };
-          if (updated.portal_data) {
-            setPortalData(updated.portal_data as PortalData);
-            setPortalStatus(updated.portal_status ?? null);
-            setLastCheckedAt(updated.last_checked_at ?? null);
-          }
+        () => {
+          silentRefetch();
         },
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, resolvedProjectId]);
+  }, [user, resolvedProjectId, silentRefetch]);
+
+  useEffect(() => {
+    if (!scrape.isScraping || !resolvedProjectId) return;
+    const interval = setInterval(silentRefetch, 10000);
+    return () => clearInterval(interval);
+  }, [scrape.isScraping, resolvedProjectId, silentRefetch]);
 
   if (authLoading || loading) {
     return (
@@ -1109,12 +1157,28 @@ export default function PortalDataViewer() {
               )}
             </div>
           </div>
-          <Button asChild variant="outline" size="sm" className="shrink-0">
-            <Link to="/dashboard">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            {scrape.isScraping && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1" data-testid="text-auto-refresh-active">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Auto-refreshing
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleManualRefresh}
+              disabled={refreshing}
+              data-testid="button-refresh-portal-data"
+            >
+              {refreshing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-2" />
+              )}
+              {refreshing ? "Refreshing..." : "Refresh Data"}
+            </Button>
+          </div>
         </div>
       </div>
 
