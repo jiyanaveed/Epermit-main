@@ -178,29 +178,44 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-const STORAGE_BUCKET_NAME = "Project Drawings";
+const STORAGE_BUCKET_SLUG = "project-drawings";
 let resolvedBucketId = null;
 
 async function ensureStorageBucket() {
   if (resolvedBucketId) return true;
   try {
     const { data: buckets } = await supabase.storage.listBuckets();
-    const matched = buckets?.find((b) => b.name === STORAGE_BUCKET_NAME || b.id === STORAGE_BUCKET_NAME);
-    if (matched) {
-      resolvedBucketId = matched.id;
-      console.log(`✅ Found storage bucket "${STORAGE_BUCKET_NAME}" (id: ${resolvedBucketId})`);
+    console.log(`📦 Available buckets: ${(buckets || []).map(b => `"${b.name}" (id: ${b.id})`).join(", ") || "none"}`);
+
+    const exactSlug = buckets?.find((b) => b.id === STORAGE_BUCKET_SLUG);
+    if (exactSlug) {
+      resolvedBucketId = exactSlug.id;
+      console.log(`✅ Found bucket by slug "${resolvedBucketId}"`);
       return true;
     }
-    const { data, error } = await supabase.storage.createBucket(STORAGE_BUCKET_NAME, {
+
+    const spaceName = buckets?.find((b) => b.name === "Project Drawings" || b.id === "Project Drawings");
+    if (spaceName) {
+      resolvedBucketId = spaceName.id;
+      if (!spaceName.public) {
+        await supabase.storage.updateBucket(resolvedBucketId, { public: true });
+        console.log(`✅ Found bucket "${spaceName.name}" (id: ${resolvedBucketId}) — set to public`);
+      } else {
+        console.log(`✅ Found bucket "${spaceName.name}" (id: ${resolvedBucketId})`);
+      }
+      return true;
+    }
+
+    const { error } = await supabase.storage.createBucket(STORAGE_BUCKET_SLUG, {
       public: true,
       fileSizeLimit: MAX_FILE_SIZE,
     });
     if (error) {
-      console.error(`❌ Failed to create storage bucket "${STORAGE_BUCKET_NAME}":`, error.message);
+      console.error(`❌ Failed to create storage bucket "${STORAGE_BUCKET_SLUG}":`, error.message);
       return false;
     }
-    resolvedBucketId = data?.name || STORAGE_BUCKET_NAME;
-    console.log(`✅ Created storage bucket "${STORAGE_BUCKET_NAME}" (id: ${resolvedBucketId})`);
+    resolvedBucketId = STORAGE_BUCKET_SLUG;
+    console.log(`✅ Created storage bucket "${STORAGE_BUCKET_SLUG}"`);
     return true;
   } catch (err) {
     console.error(`❌ Storage bucket check failed:`, err.message);
@@ -251,8 +266,9 @@ async function uploadToSupabaseStorage(localPath, storagePath) {
       .from(resolvedBucketId)
       .getPublicUrl(sanitizedPath);
 
-    console.log(`      ✅ Public URL: ${urlData?.publicUrl}`);
-    return urlData?.publicUrl || null;
+    const publicUrl = urlData?.publicUrl || null;
+    console.log(`      ✅ Public URL: ${publicUrl}`);
+    return publicUrl;
   } catch (err) {
     console.error(`      ❌ Supabase upload exception for ${storagePath}:`, err.message);
     return null;
