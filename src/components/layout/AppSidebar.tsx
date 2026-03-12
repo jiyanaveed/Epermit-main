@@ -270,6 +270,13 @@ export function AppSidebar() {
     if (!selectedProject?.selectedProjectId || !user) return;
     const updated = await updateProject(selectedProject.selectedProjectId, { credential_id: credId });
     if (updated) {
+      if (previousValue && previousValue !== (credId ?? "")) {
+        await supabase
+          .from("projects")
+          .update({ portal_data: null, portal_status: null, last_checked_at: null })
+          .eq("id", selectedProject.selectedProjectId);
+        if (import.meta.env.DEV) console.log("[Sidebar] Credential changed, cleared stale portal_data for project", selectedProject.selectedProjectId);
+      }
       fetchProjects();
     } else {
       setSelectedCredentialId(previousValue);

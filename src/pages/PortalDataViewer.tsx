@@ -257,9 +257,11 @@ export default function PortalDataViewer() {
               (sum, f) => sum + (f.files?.filter((file) => !!file.viewUrl).length ?? 0),
               0,
             );
-            console.log(`[PortalDataViewer] silentRefetch: ${urlCount} files with viewUrl`);
+            if (import.meta.env.DEV) console.log(`[PortalDataViewer] silentRefetch: ${urlCount} files with viewUrl`);
           }
           setPortalData(pd);
+        } else {
+          setPortalData(null);
         }
       }
     } catch {}
