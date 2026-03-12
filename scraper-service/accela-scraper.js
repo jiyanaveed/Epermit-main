@@ -20,8 +20,15 @@ async function findFieldInFrames(page, selectors) {
 }
 
 async function waitForAccelaLoad(page, timeoutMs = 30000) {
-  await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
-  await page.waitForSelector(".aca_loading, .ACA_Loading, .loading-mask", { state: "detached", timeout: 10000 }).catch(() => {});
+  await page
+    .waitForLoadState("networkidle", { timeout: timeoutMs })
+    .catch(() => {});
+  await page
+    .waitForSelector(".aca_loading, .ACA_Loading, .loading-mask", {
+      state: "detached",
+      timeout: 10000,
+    })
+    .catch(() => {});
   await page.waitForTimeout(1500);
 }
 
@@ -35,7 +42,9 @@ async function clickAccelaLink(page, selectors, label) {
         await waitForAccelaLoad(page);
         return true;
       } catch (clickErr) {
-        console.log(`     ⚠️ Click failed for "${label}" (${sel}): ${clickErr.message}, trying next selector...`);
+        console.log(
+          `     ⚠️ Click failed for "${label}" (${sel}): ${clickErr.message}, trying next selector...`,
+        );
         continue;
       }
     }
@@ -216,72 +225,37 @@ async function searchPermit(page, portalUrl, permitNumber) {
 
   console.log("  Scanning the loaded records list...");
 
-  // 3. Optional: If the list is long, Accela usually provides a filter box above the grid
-  const filterBox = await findFieldInFrames(page, [
-    'input[type="text"][id*="txtSearchCondition"]', // Specific to Baltimore Search
-    'input[type="text"][id*="txtFilter"]',         // Specific to Grid Filters
-    'input[type="text"][title*="Search"]',         // Fallback with type enforcement
-  ]);
+// 3. SKIP THE FILTER BOX - Go straight to scanning the list
+console.log("  Scanning visible records list (Manual-Style)...");
 
-  if (filterBox) {
-    console.log(`  Found a list filter box, typing permit: ${permitNumber}`);
-    await filterBox.focus();
-    await filterBox.fill("");
-    await filterBox.type(permitNumber, { delay: 50 });
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(4000); // Wait for postback filter
-  } else {
-    console.log("  No specific filter box found, scanning visible list...");
-  }
+  // 4. Find the specific permit link by scanning all clickable elements
+  const permitFound = await page.evaluate((targetPermit) => {
+    // Broad search: look for links, spans, or table cells containing the number
+    const elements = Array.from(document.querySelectorAll('a, span, td'));
 
-  // 4. Find the specific permit link in the results and click it
-  const resultSelectors = [
-    `a:has-text("${permitNumber}")`,
-    `td a:has-text("${permitNumber}")`,
-    `span:has-text("${permitNumber}")`,
-    'table[id*="GridView"] a',
-  ];
+    // Find the first visible element that exactly matches or contains the permit
+    const match = elements.find(el => {
+      const text = el.textContent.trim();
+      const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
+      return isVisible && text.includes(targetPermit);
+    });
 
-  for (const sel of resultSelectors) {
-    // Check main page and all iframes
-    const framesToCheck = [page, ...page.frames()];
-
-    for (const frame of framesToCheck) {
-      const links = await frame.$$(sel);
-      for (const link of links) {
-        const text = (await link.innerText().catch(() => "")).trim();
-        const visible = await link.isVisible().catch(() => false);
-
-        if (visible && text.includes(permitNumber)) {
-          console.log(
-            `  ✅ Found permit in list! Clicking: "${text.substring(0, 80)}"`,
-          );
-          await Promise.all([
-            page
-              .waitForLoadState("networkidle", { timeout: 30000 })
-              .catch(() => {}),
-            link.click(),
-          ]);
-          await page.waitForTimeout(3000);
-
-          if (page.url().includes("Login.aspx")) {
-            throw new Error(
-              "Session expired — landed on login page after clicking record.",
-            );
-          }
-
-          return; // We successfully navigated to the detail page!
-        }
-      }
+    if (match) {
+      // Force a click on the element (or its closest anchor parent)
+      const clickable = match.tagName === 'A' ? match : match.closest('a') || match;
+      clickable.click();
+      return true;
     }
-  }
+    return false;
+  }, permitNumber);
 
-  // If we reach here, the permit wasn't on the screen
-  await page.screenshot({ path: "debug_accela_search.png", fullPage: true });
-  throw new Error(
-    `Permit ${permitNumber} not found in the Permits and Inspections record list.`,
-  );
-}
+  if (permitFound) {
+    console.log(`  ✅ Found and clicked permit: ${permitNumber}`);
+    await waitForAccelaLoad(page);
+  } else {
+    await page.screenshot({ path: "grid_not_found.png", fullPage: true });
+    throw new Error(`Permit ${permitNumber} not visible in the current list.`);
+  }
 // ==============================================================================
 
 async function extractRecordHeader(page) {
@@ -324,17 +298,25 @@ async function extractRecordHeader(page) {
 async function extractRecordDetails(page) {
   console.log("  📋 Extracting record details...");
 
-  await clickAccelaLink(page, [
-    'a:has-text("Record Info")',
-    'a[id*="RecordInfo"]',
-    '#ctl00_PlaceHolderMain_TabDataList a:has-text("Record")',
-  ], "Record Info");
+  await clickAccelaLink(
+    page,
+    [
+      'a:has-text("Record Info")',
+      'a[id*="RecordInfo"]',
+      '#ctl00_PlaceHolderMain_TabDataList a:has-text("Record")',
+    ],
+    "Record Info",
+  );
 
-  await clickAccelaLink(page, [
-    'a:has-text("Record Details")',
-    'a:has-text("Record Detail")',
-    'a[id*="RecordDetail"]',
-  ], "Record Details");
+  await clickAccelaLink(
+    page,
+    [
+      'a:has-text("Record Details")',
+      'a:has-text("Record Detail")',
+      'a[id*="RecordDetail"]',
+    ],
+    "Record Details",
+  );
 
   const moreDetailsBtn = await page.$(
     'a:has-text("More Details"), a:has-text("Show More"), [id*="MoreDetail"]',
@@ -405,11 +387,15 @@ async function extractRecordDetails(page) {
 async function extractProcessingStatus(page) {
   console.log("  📋 Extracting processing status...");
 
-  const found = await clickAccelaLink(page, [
-    'a:has-text("Processing Status")',
-    'a[id*="ProcessingStatus"]',
-    'a:has-text("Workflow")',
-  ], "Processing Status");
+  const found = await clickAccelaLink(
+    page,
+    [
+      'a:has-text("Processing Status")',
+      'a[id*="ProcessingStatus"]',
+      'a:has-text("Workflow")',
+    ],
+    "Processing Status",
+  );
 
   if (!found) {
     return { departments: [], screenshot: null };
@@ -447,8 +433,12 @@ async function extractProcessingStatus(page) {
       const name = nameEl ? nameEl.textContent.trim() : "";
       const statusText = statusEl ? statusEl.textContent.trim() : "";
 
-      const checkImg = row.querySelector('img[src*="check"], img[src*="complete"], img[src*="green"]');
-      const clockImg = row.querySelector('img[src*="clock"], img[src*="pending"], img[src*="yellow"], img[src*="wait"]');
+      const checkImg = row.querySelector(
+        'img[src*="check"], img[src*="complete"], img[src*="green"]',
+      );
+      const clockImg = row.querySelector(
+        'img[src*="clock"], img[src*="pending"], img[src*="yellow"], img[src*="wait"]',
+      );
       let statusIcon = "";
       if (checkImg) statusIcon = "complete";
       else if (clockImg) statusIcon = "pending";
@@ -484,8 +474,12 @@ async function extractProcessingStatus(page) {
           dataRows.forEach((dr) => {
             const cells = dr.querySelectorAll("td");
             if (cells.length >= 2) {
-              const checkImg = dr.querySelector('img[src*="check"], img[src*="complete"], img[src*="green"]');
-              const clockImg = dr.querySelector('img[src*="clock"], img[src*="pending"], img[src*="yellow"]');
+              const checkImg = dr.querySelector(
+                'img[src*="check"], img[src*="complete"], img[src*="green"]',
+              );
+              const clockImg = dr.querySelector(
+                'img[src*="clock"], img[src*="pending"], img[src*="yellow"]',
+              );
               depts.push({
                 name: cells[0].textContent.trim(),
                 status: cells.length > 1 ? cells[1].textContent.trim() : "",
@@ -515,10 +509,11 @@ async function extractProcessingStatus(page) {
 async function extractPlanReview(page) {
   console.log("  📋 Extracting plan review comments...");
 
-  const found = await clickAccelaLink(page, [
-    'a:has-text("Plan Review")',
-    'a[id*="PlanReview"]',
-  ], "Plan Review");
+  const found = await clickAccelaLink(
+    page,
+    ['a:has-text("Plan Review")', 'a[id*="PlanReview"]'],
+    "Plan Review",
+  );
 
   if (!found) {
     return { comments: [], text: "", screenshot: null };
@@ -592,10 +587,11 @@ async function extractPlanReview(page) {
 async function extractRelatedRecords(page) {
   console.log("  📋 Extracting related records...");
 
-  const found = await clickAccelaLink(page, [
-    'a:has-text("Related Records")',
-    'a[id*="RelatedRecord"]',
-  ], "Related Records");
+  const found = await clickAccelaLink(
+    page,
+    ['a:has-text("Related Records")', 'a[id*="RelatedRecord"]'],
+    "Related Records",
+  );
 
   if (!found) {
     return { records: [], screenshot: null };
@@ -641,16 +637,27 @@ async function extractRelatedRecords(page) {
   };
 }
 
-async function extractAttachments(page, session, supabaseProjectId, supabase, uploadFn, sanitizeFn) {
+async function extractAttachments(
+  page,
+  session,
+  supabaseProjectId,
+  supabase,
+  uploadFn,
+  sanitizeFn,
+) {
   console.log("  📋 Extracting attachments...");
 
-  const found = await clickAccelaLink(page, [
-    'a:has-text("Attachments")',
-    'a:has-text("Attachment")',
-    'a[id*="Attachment"]',
-    'a:has-text("Documents")',
-    'a[id*="Document"]',
-  ], "Attachments");
+  const found = await clickAccelaLink(
+    page,
+    [
+      'a:has-text("Attachments")',
+      'a:has-text("Attachment")',
+      'a[id*="Attachment"]',
+      'a:has-text("Documents")',
+      'a[id*="Document"]',
+    ],
+    "Attachments",
+  );
 
   if (!found) {
     return { attachments: [], screenshot: null };
@@ -670,11 +677,12 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
             !name.toLowerCase().includes("file name") &&
             !name.toLowerCase().includes("document name")
           ) {
-            const actionLinks = row.querySelectorAll('a');
+            const actionLinks = row.querySelectorAll("a");
             let hasDownload = false;
             for (const a of actionLinks) {
               const t = a.textContent.trim().toLowerCase();
-              if (t.includes("download") || t.includes("view")) hasDownload = true;
+              if (t.includes("download") || t.includes("view"))
+                hasDownload = true;
             }
             results.push({
               name,
@@ -683,7 +691,8 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
               entity_type: cells.length > 3 ? cells[3].textContent.trim() : "",
               type: cells.length > 4 ? cells[4].textContent.trim() : "",
               size: cells.length > 5 ? cells[5].textContent.trim() : "",
-              latest_update: cells.length > 6 ? cells[6].textContent.trim() : "",
+              latest_update:
+                cells.length > 6 ? cells[6].textContent.trim() : "",
               rowIndex: Array.from(row.parentElement.children).indexOf(row),
               hasDownload,
             });
@@ -693,17 +702,23 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
     return results;
   });
 
-  console.log(`     Found ${attachments.length} attachments, attempting downloads...`);
+  console.log(
+    `     Found ${attachments.length} attachments, attempting downloads...`,
+  );
 
   const DOWNLOADS_DIR = path.join(__dirname, "downloads");
-  if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+  if (!fs.existsSync(DOWNLOADS_DIR))
+    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
   const downloadedHashes = new Map();
 
   for (let ai = 0; ai < attachments.length; ai++) {
     const att = attachments[ai];
-    if (session) session.message = `Attachments → downloading ${ai + 1}/${attachments.length}: ${att.name}`;
-    console.log(`       📥 [${ai + 1}/${attachments.length}] Downloading: ${att.name}`);
+    if (session)
+      session.message = `Attachments → downloading ${ai + 1}/${attachments.length}: ${att.name}`;
+    console.log(
+      `       📥 [${ai + 1}/${attachments.length}] Downloading: ${att.name}`,
+    );
 
     try {
       const rows = await page.$$('[id*="Attachment"] tr, [id*="Document"] tr');
@@ -728,38 +743,59 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
       }
 
       if (!targetRow) {
-        console.log(`       ⚠️ Could not re-locate row for "${att.name}" (index ${att.rowIndex}), skipping download`);
+        console.log(
+          `       ⚠️ Could not re-locate row for "${att.name}" (index ${att.rowIndex}), skipping download`,
+        );
         att.downloadStatus = "failed";
         att.downloadError = "row_not_found";
         continue;
       }
 
-      const actionsLink = await targetRow.$('a:has-text("Actions"), a:has-text("View"), a[id*="Action"]');
+      const actionsLink = await targetRow.$(
+        'a:has-text("Actions"), a:has-text("View"), a[id*="Action"]',
+      );
       if (!actionsLink) {
-        const downloadLink = await targetRow.$('a[href*="Download"], a[href*="download"], a[onclick*="download"]');
+        const downloadLink = await targetRow.$(
+          'a[href*="Download"], a[href*="download"], a[onclick*="download"]',
+        );
         if (downloadLink) {
           try {
             const [download] = await Promise.all([
               page.waitForEvent("download", { timeout: 30000 }),
               downloadLink.click(),
             ]);
-            const safeDlName = (download.suggestedFilename() || att.name).replace(/[^a-zA-Z0-9._-]/g, "_");
+            const safeDlName = (
+              download.suggestedFilename() || att.name
+            ).replace(/[^a-zA-Z0-9._-]/g, "_");
             const filePath = path.join(DOWNLOADS_DIR, safeDlName);
             await download.saveAs(filePath);
 
-            const viewUrl = await tryUploadAccelaFile(filePath, safeDlName, supabaseProjectId, uploadFn, sanitizeFn, downloadedHashes);
+            const viewUrl = await tryUploadAccelaFile(
+              filePath,
+              safeDlName,
+              supabaseProjectId,
+              uploadFn,
+              sanitizeFn,
+              downloadedHashes,
+            );
             att.viewUrl = viewUrl;
             att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
-            console.log(`       ✅ Downloaded: ${att.name} → ${viewUrl || "(local)"}`);
+            console.log(
+              `       ✅ Downloaded: ${att.name} → ${viewUrl || "(local)"}`,
+            );
           } catch (dlErr) {
-            console.log(`       ⚠️ Download failed for ${att.name}: ${dlErr.message}`);
+            console.log(
+              `       ⚠️ Download failed for ${att.name}: ${dlErr.message}`,
+            );
             att.downloadStatus = "failed";
             att.downloadError = dlErr.message;
           }
           continue;
         }
 
-        console.log(`       ⚠️ No Actions/Download link found for "${att.name}"`);
+        console.log(
+          `       ⚠️ No Actions/Download link found for "${att.name}"`,
+        );
         att.downloadStatus = "failed";
         att.downloadError = "no_download_link";
         continue;
@@ -768,15 +804,22 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
       await actionsLink.click().catch(() => {});
       await page.waitForTimeout(1000);
 
-      const viewDetailsLink = await page.$('a:has-text("View Details"), a:has-text("Detail"), [id*="ViewDetail"]');
-      if (viewDetailsLink && await viewDetailsLink.isVisible().catch(() => false)) {
+      const viewDetailsLink = await page.$(
+        'a:has-text("View Details"), a:has-text("Detail"), [id*="ViewDetail"]',
+      );
+      if (
+        viewDetailsLink &&
+        (await viewDetailsLink.isVisible().catch(() => false))
+      ) {
         await viewDetailsLink.click().catch(() => {});
         await waitForAccelaLoad(page);
       }
 
-      const downloadBtn = await page.$('a:has-text("Download"), input[value*="Download"], button:has-text("Download"), a[href*="Download"]');
+      const downloadBtn = await page.$(
+        'a:has-text("Download"), input[value*="Download"], button:has-text("Download"), a[href*="Download"]',
+      );
 
-      if (downloadBtn && await downloadBtn.isVisible().catch(() => false)) {
+      if (downloadBtn && (await downloadBtn.isVisible().catch(() => false))) {
         try {
           const [download] = await Promise.all([
             page.waitForEvent("download", { timeout: 30000 }),
@@ -787,12 +830,23 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
           const filePath = path.join(DOWNLOADS_DIR, safeName);
           await download.saveAs(filePath);
 
-          const viewUrl = await tryUploadAccelaFile(filePath, safeName, supabaseProjectId, uploadFn, sanitizeFn, downloadedHashes);
+          const viewUrl = await tryUploadAccelaFile(
+            filePath,
+            safeName,
+            supabaseProjectId,
+            uploadFn,
+            sanitizeFn,
+            downloadedHashes,
+          );
           att.viewUrl = viewUrl;
           att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
-          console.log(`       ✅ Downloaded: ${safeName} → ${viewUrl || "(local)"}`);
+          console.log(
+            `       ✅ Downloaded: ${safeName} → ${viewUrl || "(local)"}`,
+          );
         } catch (dlErr) {
-          console.log(`       ⚠️ Download failed for ${att.name}: ${dlErr.message}`);
+          console.log(
+            `       ⚠️ Download failed for ${att.name}: ${dlErr.message}`,
+          );
           att.downloadStatus = "failed";
           att.downloadError = dlErr.message;
         }
@@ -802,8 +856,10 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
         att.downloadError = "no_download_button";
       }
 
-      const backLink = await page.$('a:has-text("Back"), a:has-text("Return"), a:has-text("Attachments")');
-      if (backLink && await backLink.isVisible().catch(() => false)) {
+      const backLink = await page.$(
+        'a:has-text("Back"), a:has-text("Return"), a:has-text("Attachments")',
+      );
+      if (backLink && (await backLink.isVisible().catch(() => false))) {
         await backLink.click().catch(() => {});
         await waitForAccelaLoad(page);
       } else {
@@ -811,7 +867,9 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
         await waitForAccelaLoad(page);
       }
     } catch (err) {
-      console.log(`       ❌ Attachment error for "${att.name}": ${err.message}`);
+      console.log(
+        `       ❌ Attachment error for "${att.name}": ${err.message}`,
+      );
       att.downloadStatus = "failed";
       att.downloadError = err.message;
     }
@@ -825,42 +883,65 @@ async function extractAttachments(page, session, supabaseProjectId, supabase, up
   const attScreenshot = await page
     .screenshot({ fullPage: true })
     .catch(() => null);
-  const successCount = attachments.filter(a => a.downloadStatus === "success").length;
-  console.log(`     Attachments: ${attachments.length} found, ${successCount} downloaded`);
+  const successCount = attachments.filter(
+    (a) => a.downloadStatus === "success",
+  ).length;
+  console.log(
+    `     Attachments: ${attachments.length} found, ${successCount} downloaded`,
+  );
   return {
     attachments,
     screenshot: attScreenshot ? attScreenshot.toString("base64") : null,
   };
 }
 
-async function tryUploadAccelaFile(filePath, fileName, projectId, uploadFn, sanitizeFn, downloadedHashes) {
+async function tryUploadAccelaFile(
+  filePath,
+  fileName,
+  projectId,
+  uploadFn,
+  sanitizeFn,
+  downloadedHashes,
+) {
   if (!fs.existsSync(filePath)) return "";
   const fileBuffer = fs.readFileSync(filePath);
   const sizeMB = fileBuffer.length / (1024 * 1024);
 
   if (fileBuffer.length < 1024) {
-    console.log(`       ⚠️ File too small (${fileBuffer.length} bytes), skipping upload`);
-    try { fs.unlinkSync(filePath); } catch (_) {}
+    console.log(
+      `       ⚠️ File too small (${fileBuffer.length} bytes), skipping upload`,
+    );
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {}
     return "";
   }
 
   const contentHash = crypto.createHash("md5").update(fileBuffer).digest("hex");
   const prev = downloadedHashes.get(contentHash);
   if (prev) {
-    console.log(`       ⚠️ DUPLICATE: "${fileName}" same as "${prev.fileName}", aliasing URL`);
-    try { fs.unlinkSync(filePath); } catch (_) {}
+    console.log(
+      `       ⚠️ DUPLICATE: "${fileName}" same as "${prev.fileName}", aliasing URL`,
+    );
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {}
     return prev.viewUrl || "";
   }
 
   if (!projectId || !uploadFn) {
-    try { fs.unlinkSync(filePath); } catch (_) {}
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {}
     downloadedHashes.set(contentHash, { fileName, viewUrl: "" });
     return "";
   }
 
   const storagePath = `drawings/${projectId}/${fileName}`;
   const publicUrl = await uploadFn(filePath, storagePath);
-  try { fs.unlinkSync(filePath); } catch (_) {}
+  try {
+    fs.unlinkSync(filePath);
+  } catch (_) {}
   downloadedHashes.set(contentHash, { fileName, viewUrl: publicUrl || "" });
   return publicUrl || "";
 }
@@ -868,11 +949,15 @@ async function tryUploadAccelaFile(filePath, fileName, projectId, uploadFn, sani
 async function extractInspections(page) {
   console.log("  📋 Extracting inspections...");
 
-  const found = await clickAccelaLink(page, [
-    'a:has-text("Inspections")',
-    'a:has-text("Inspection")',
-    'a[id*="Inspection"]',
-  ], "Inspections");
+  const found = await clickAccelaLink(
+    page,
+    [
+      'a:has-text("Inspections")',
+      'a:has-text("Inspection")',
+      'a[id*="Inspection"]',
+    ],
+    "Inspections",
+  );
 
   if (!found) {
     return { inspections: [], upcoming: [], completed: [], screenshot: null };
@@ -912,18 +997,24 @@ async function extractInspections(page) {
     }
 
     const upcomingSection = document.querySelector(
-      '[id*="Upcoming"], [id*="upcoming"], [id*="Scheduled"], [id*="scheduled"]'
+      '[id*="Upcoming"], [id*="upcoming"], [id*="Scheduled"], [id*="scheduled"]',
     );
     const completedSection = document.querySelector(
-      '[id*="Completed"], [id*="completed"], [id*="History"], [id*="history"]'
+      '[id*="Completed"], [id*="completed"], [id*="History"], [id*="history"]',
     );
 
     if (upcomingSection) {
-      const table = upcomingSection.closest("table") || upcomingSection.querySelector("table") || upcomingSection;
+      const table =
+        upcomingSection.closest("table") ||
+        upcomingSection.querySelector("table") ||
+        upcomingSection;
       parseInspectionTable(table, "upcoming");
     }
     if (completedSection) {
-      const table = completedSection.closest("table") || completedSection.querySelector("table") || completedSection;
+      const table =
+        completedSection.closest("table") ||
+        completedSection.querySelector("table") ||
+        completedSection;
       parseInspectionTable(table, "completed");
     }
 
@@ -939,9 +1030,17 @@ async function extractInspections(page) {
               type.length < 200 &&
               !type.toLowerCase().includes("inspection type")
             ) {
-              const statusText = cells.length > 1 ? cells[1].textContent.trim().toLowerCase() : "";
-              const category = (statusText.includes("pass") || statusText.includes("fail") || statusText.includes("approved") || statusText.includes("completed"))
-                ? "completed" : "upcoming";
+              const statusText =
+                cells.length > 1
+                  ? cells[1].textContent.trim().toLowerCase()
+                  : "";
+              const category =
+                statusText.includes("pass") ||
+                statusText.includes("fail") ||
+                statusText.includes("approved") ||
+                statusText.includes("completed")
+                  ? "completed"
+                  : "upcoming";
               const entry = {
                 type,
                 status: cells.length > 1 ? cells[1].textContent.trim() : "",
@@ -964,7 +1063,9 @@ async function extractInspections(page) {
   const inspScreenshot = await page
     .screenshot({ fullPage: true })
     .catch(() => null);
-  console.log(`     Found ${inspData.all.length} inspections (${inspData.upcoming.length} upcoming, ${inspData.completed.length} completed)`);
+  console.log(
+    `     Found ${inspData.all.length} inspections (${inspData.upcoming.length} upcoming, ${inspData.completed.length} completed)`,
+  );
   return {
     inspections: inspData.all,
     upcoming: inspData.upcoming,
@@ -976,12 +1077,16 @@ async function extractInspections(page) {
 async function extractPayments(page) {
   console.log("  📋 Extracting payments...");
 
-  const found = await clickAccelaLink(page, [
-    'a:has-text("Payments")',
-    'a:has-text("Payment")',
-    'a:has-text("Fees")',
-    'a[id*="Payment"]',
-  ], "Payments");
+  const found = await clickAccelaLink(
+    page,
+    [
+      'a:has-text("Payments")',
+      'a:has-text("Payment")',
+      'a:has-text("Fees")',
+      'a[id*="Payment"]',
+    ],
+    "Payments",
+  );
 
   if (!found) {
     return { payments: [], screenshot: null };
@@ -1075,7 +1180,14 @@ async function scrapeAccelaRecord(
     checkTimeout();
 
     session.message = `${permitNumber} → Attachments`;
-    const attachments = await extractAttachments(page, session, supabaseProjectId, supabase, uploadToSupabaseStorage, sanitizeStorageKey);
+    const attachments = await extractAttachments(
+      page,
+      session,
+      supabaseProjectId,
+      supabase,
+      uploadToSupabaseStorage,
+      sanitizeStorageKey,
+    );
     checkTimeout();
 
     session.message = `${permitNumber} → Inspections`;
@@ -1189,25 +1301,33 @@ async function scrapeAccelaRecord(
         inspections: {
           tables: [
             ...(inspections.upcoming.length > 0
-              ? [{
-                  title: "Upcoming Inspections",
-                  headers: ["Type", "Status", "Date", "Inspector", "Result"],
-                  rows: inspections.upcoming,
-                }]
+              ? [
+                  {
+                    title: "Upcoming Inspections",
+                    headers: ["Type", "Status", "Date", "Inspector", "Result"],
+                    rows: inspections.upcoming,
+                  },
+                ]
               : []),
             ...(inspections.completed.length > 0
-              ? [{
-                  title: "Completed Inspections",
-                  headers: ["Type", "Status", "Date", "Inspector", "Result"],
-                  rows: inspections.completed,
-                }]
+              ? [
+                  {
+                    title: "Completed Inspections",
+                    headers: ["Type", "Status", "Date", "Inspector", "Result"],
+                    rows: inspections.completed,
+                  },
+                ]
               : []),
-            ...(inspections.inspections.length > 0 && inspections.upcoming.length === 0 && inspections.completed.length === 0
-              ? [{
-                  title: "Inspections",
-                  headers: ["Type", "Status", "Date", "Inspector", "Result"],
-                  rows: inspections.inspections,
-                }]
+            ...(inspections.inspections.length > 0 &&
+            inspections.upcoming.length === 0 &&
+            inspections.completed.length === 0
+              ? [
+                  {
+                    title: "Inspections",
+                    headers: ["Type", "Status", "Date", "Inspector", "Result"],
+                    rows: inspections.inspections,
+                  },
+                ]
               : []),
           ],
           keyValues: [],
