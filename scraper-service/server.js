@@ -1266,29 +1266,37 @@ async function scrapeAll(
 
     try {
       console.log(`    🔄 Syncing ${projectNum} to Supabase...`);
+      console.log(`    📌 projectId=${projectId || "(none)"}, userId=${userId}, portalType=${currentData.portalType || "(none)"}`);
 
-      const { data: existingRows } = await supabase
-        .from("projects")
-        .select("id, portal_data_hash, portal_data")
-        .eq("permit_number", projectNum)
-        .eq("user_id", userId);
-
-      const existingRow =
-        existingRows && existingRows.length > 0 ? existingRows[0] : null;
+      let existingRow = null;
+      if (projectId) {
+        const { data: rows } = await supabase
+          .from("projects")
+          .select("id, portal_data_hash, portal_data")
+          .eq("id", projectId);
+        existingRow = rows && rows.length > 0 ? rows[0] : null;
+      }
+      if (!existingRow) {
+        const { data: rows } = await supabase
+          .from("projects")
+          .select("id, portal_data_hash, portal_data")
+          .eq("permit_number", projectNum)
+          .eq("user_id", userId);
+        existingRow = rows && rows.length > 0 ? rows[0] : null;
+      }
 
       if (existingRow && existingRow.portal_data_hash === newHash) {
         actualProjectId = existingRow.id;
         console.log(
-          `    ⏭️  Data unchanged for ${projectNum} (hash match), skipping update`,
+          `    ⏭️  Data unchanged for ${projectNum} (hash match), skipping update for row ${actualProjectId}`,
         );
         await supabase
           .from("projects")
           .update({ last_checked_at: new Date().toISOString() })
           .eq("id", actualProjectId);
-      } else {
+      } else if (existingRow) {
         let mergedData = currentData;
         if (
-          existingRow &&
           existingRow.portal_data &&
           existingRow.portal_data.tabs &&
           currentData.tabs
@@ -1320,6 +1328,7 @@ async function scrapeAll(
           }
         }
         const mergedHash = hashPortalData(mergedData);
+        actualProjectId = existingRow.id;
         const updatePayload = {
           portal_status:
             currentData.dashboardStatus ||
@@ -1331,12 +1340,11 @@ async function scrapeAll(
           permit_number: projectNum,
         };
 
-        let { data, error } = await supabase
+        const { data, error } = await supabase
           .from("projects")
           .update(updatePayload)
-          .eq("permit_number", projectNum)
-          .eq("user_id", userId)
-          .select();
+          .eq("id", actualProjectId)
+          .select("id, portal_data");
 
         if (error) {
           console.error("    ❌ Supabase error:", error.message, error.details);
@@ -1344,72 +1352,51 @@ async function scrapeAll(
         }
 
         if (data && Array.isArray(data) && data.length > 0) {
-          actualProjectId = data[0].id;
+          const writtenType = data[0].portal_data?.portalType || "(none)";
           console.log(
-            "    ✅ Updated existing project (new data):",
-            actualProjectId,
+            `    ✅ Updated project row=${data[0].id}, written portalType=${writtenType}`,
           );
-        } else {
-          const { data: data2, error: err2 } = await supabase
-            .from("projects")
-            .update(updatePayload)
-            .eq("permit_number", projectNum)
-            .select();
-          if (err2) {
-            console.error(
-              "    ❌ Supabase error (permit_number fallback):",
-              err2.message,
-              err2.details,
-            );
-            continue;
-          }
-          if (data2 && Array.isArray(data2) && data2.length > 0) {
-            actualProjectId = data2[0].id;
-            console.log(
-              "    ✅ Updated existing project (permit_number match):",
-              actualProjectId,
-            );
-          } else {
-            if (!userId) {
-              console.error(
-                "    ❌ Cannot create project: userId not provided",
-              );
-              continue;
-            }
-            const { data: created, error: createError } = await supabase
-              .from("projects")
-              .insert({
-                user_id: userId,
-                name: currentData.projectNum || projectNum,
-                permit_number: projectNum,
-                description: currentData.description || "",
-                address: currentData.location || "",
-                jurisdiction: "Washington DC",
-                status: "draft",
-                portal_status: currentData.dashboardStatus || "Unknown",
-                last_checked_at: new Date().toISOString(),
-                portal_data: currentData,
-                portal_data_hash: newHash,
-              })
-              .select();
-            if (createError) {
-              console.error(
-                "    ❌ Supabase create error:",
-                createError.message,
-                createError.details,
-              );
-              continue;
-            }
-            if (created && created.length > 0) {
-              actualProjectId = created[0].id;
-              console.log(
-                "    📝 Created new project:",
-                actualProjectId,
-                "for permit",
-                projectNum,
-              );
-            }
-          }
+        }
+      } else {
+        if (!userId) {
+          console.error("    ❌ Cannot create project: userId not provided");
+          continue;
+        }
+        const { data: created, error: createError } = await supabase
+          .from("projects")
+          .insert({
+            user_id: userId,
+            name: currentData.projectNum || projectNum,
+            permit_number: projectNum,
+            description: currentData.description || "",
+            address: currentData.location || "",
+            jurisdiction: currentData.jurisdiction || "Washington DC",
+            status: "draft",
+            portal_status: currentData.dashboardStatus || "Unknown",
+            last_checked_at: new Date().toISOString(),
+            portal_data: currentData,
+            portal_data_hash: newHash,
+          })
+          .select("id, portal_data");
+        if (createError) {
+          console.error("    ❌ Supabase create error:", createError.message, createError.details);
+          continue;
+        }
+        if (created && created.length > 0) {
+          actualProjectId = created[0].id;
+          const writtenType = created[0].portal_data?.portalType || "(none)";
+          console.log(`    📝 Created new project row=${actualProjectId}, written portalType=${writtenType}`);
+        }
+      }
+
+      if (actualProjectId) {
+        const { data: verify } = await supabase
+          .from("projects")
+          .select("id, permit_number, credential_id, portal_data")
+          .eq("id", actualProjectId)
+          .maybeSingle();
+        if (verify) {
+          console.log(`    🔍 DB verify: row=${verify.id}, permit=${verify.permit_number}, credential=${verify.credential_id || "(none)"}, portalType=${verify.portal_data?.portalType || "(none)"}`);
         }
       }
 
