@@ -1,4 +1,6 @@
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 
 async function findFieldInFrames(page, selectors) {
   for (const sel of selectors) {
@@ -15,6 +17,31 @@ async function findFieldInFrames(page, selectors) {
     }
   }
   return null;
+}
+
+async function waitForAccelaLoad(page, timeoutMs = 30000) {
+  await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
+  await page.waitForSelector(".aca_loading, .ACA_Loading, .loading-mask", { state: "detached", timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+}
+
+async function clickAccelaLink(page, selectors, label) {
+  for (const sel of selectors) {
+    const link = await page.$(sel);
+    if (link && (await link.isVisible().catch(() => false))) {
+      console.log(`     Clicking "${label}"...`);
+      try {
+        await link.click();
+        await waitForAccelaLoad(page);
+        return true;
+      } catch (clickErr) {
+        console.log(`     ⚠️ Click failed for "${label}" (${sel}): ${clickErr.message}, trying next selector...`);
+        continue;
+      }
+    }
+  }
+  console.log(`     "${label}" link not found — skipping`);
+  return false;
 }
 
 async function accelaLogin(page, username, password, portalUrl) {
@@ -297,41 +324,24 @@ async function extractRecordHeader(page) {
 async function extractRecordDetails(page) {
   console.log("  📋 Extracting record details...");
 
-  const recordInfoSelectors = [
+  await clickAccelaLink(page, [
     'a:has-text("Record Info")',
     'a[id*="RecordInfo"]',
     '#ctl00_PlaceHolderMain_TabDataList a:has-text("Record")',
-  ];
-  for (const sel of recordInfoSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(2000);
-      break;
-    }
-  }
+  ], "Record Info");
 
-  const recordDetailSelectors = [
+  await clickAccelaLink(page, [
     'a:has-text("Record Details")',
     'a:has-text("Record Detail")',
     'a[id*="RecordDetail"]',
-  ];
-  for (const sel of recordDetailSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(2000);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      break;
-    }
-  }
+  ], "Record Details");
 
   const moreDetailsBtn = await page.$(
     'a:has-text("More Details"), a:has-text("Show More"), [id*="MoreDetail"]',
   );
   if (moreDetailsBtn && (await moreDetailsBtn.isVisible().catch(() => false))) {
     await moreDetailsBtn.click().catch(() => {});
-    await page.waitForTimeout(2000);
+    await waitForAccelaLoad(page);
   }
 
   const details = await page.evaluate(() => {
@@ -395,19 +405,14 @@ async function extractRecordDetails(page) {
 async function extractProcessingStatus(page) {
   console.log("  📋 Extracting processing status...");
 
-  const statusSelectors = [
+  const found = await clickAccelaLink(page, [
     'a:has-text("Processing Status")',
     'a[id*="ProcessingStatus"]',
     'a:has-text("Workflow")',
-  ];
-  for (const sel of statusSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      break;
-    }
+  ], "Processing Status");
+
+  if (!found) {
+    return { departments: [], screenshot: null };
   }
 
   const expandButtons = await page.$$(
@@ -440,12 +445,19 @@ async function extractProcessingStatus(page) {
       );
 
       const name = nameEl ? nameEl.textContent.trim() : "";
-      const status = statusEl ? statusEl.textContent.trim() : "";
+      const statusText = statusEl ? statusEl.textContent.trim() : "";
+
+      const checkImg = row.querySelector('img[src*="check"], img[src*="complete"], img[src*="green"]');
+      const clockImg = row.querySelector('img[src*="clock"], img[src*="pending"], img[src*="yellow"], img[src*="wait"]');
+      let statusIcon = "";
+      if (checkImg) statusIcon = "complete";
+      else if (clockImg) statusIcon = "pending";
 
       if (name && name.length < 100) {
         depts.push({
           name,
-          status,
+          status: statusText,
+          statusIcon,
           date: dateEl ? dateEl.textContent.trim() : "",
           details: detailEl ? detailEl.textContent.trim() : "",
         });
@@ -472,9 +484,12 @@ async function extractProcessingStatus(page) {
           dataRows.forEach((dr) => {
             const cells = dr.querySelectorAll("td");
             if (cells.length >= 2) {
+              const checkImg = dr.querySelector('img[src*="check"], img[src*="complete"], img[src*="green"]');
+              const clockImg = dr.querySelector('img[src*="clock"], img[src*="pending"], img[src*="yellow"]');
               depts.push({
                 name: cells[0].textContent.trim(),
                 status: cells.length > 1 ? cells[1].textContent.trim() : "",
+                statusIcon: checkImg ? "complete" : clockImg ? "pending" : "",
                 date: cells.length > 2 ? cells[2].textContent.trim() : "",
                 details: cells.length > 3 ? cells[3].textContent.trim() : "",
               });
@@ -500,32 +515,12 @@ async function extractProcessingStatus(page) {
 async function extractPlanReview(page) {
   console.log("  📋 Extracting plan review comments...");
 
-  const planReviewSelectors = [
+  const found = await clickAccelaLink(page, [
     'a:has-text("Plan Review")',
     'a[id*="PlanReview"]',
-    'a:has-text("Review")',
-  ];
-
-  let found = false;
-  for (const sel of planReviewSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      const text = await link.textContent().catch(() => "");
-      if (
-        text.toLowerCase().includes("plan review") ||
-        text.toLowerCase() === "review"
-      ) {
-        await link.click().catch(() => {});
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("networkidle").catch(() => {});
-        found = true;
-        break;
-      }
-    }
-  }
+  ], "Plan Review");
 
   if (!found) {
-    console.log("     Plan Review tab not found — skipping");
     return { comments: [], text: "", screenshot: null };
   }
 
@@ -597,18 +592,13 @@ async function extractPlanReview(page) {
 async function extractRelatedRecords(page) {
   console.log("  📋 Extracting related records...");
 
-  const relatedSelectors = [
+  const found = await clickAccelaLink(page, [
     'a:has-text("Related Records")',
     'a[id*="RelatedRecord"]',
-  ];
-  for (const sel of relatedSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      break;
-    }
+  ], "Related Records");
+
+  if (!found) {
+    return { records: [], screenshot: null };
   }
 
   const viewTree = await page.$(
@@ -616,7 +606,7 @@ async function extractRelatedRecords(page) {
   );
   if (viewTree && (await viewTree.isVisible().catch(() => false))) {
     await viewTree.click().catch(() => {});
-    await page.waitForTimeout(2000);
+    await waitForAccelaLoad(page);
   }
 
   const records = await page.evaluate(() => {
@@ -631,8 +621,9 @@ async function extractRelatedRecords(page) {
             results.push({
               record_number: recordNum,
               record_type: cells.length > 1 ? cells[1].textContent.trim() : "",
-              project_name: cells.length > 2 ? cells[2].textContent.trim() : "",
-              date: cells.length > 3 ? cells[3].textContent.trim() : "",
+              status: cells.length > 2 ? cells[2].textContent.trim() : "",
+              project_name: cells.length > 3 ? cells[3].textContent.trim() : "",
+              date: cells.length > 4 ? cells[4].textContent.trim() : "",
             });
           }
         }
@@ -650,22 +641,19 @@ async function extractRelatedRecords(page) {
   };
 }
 
-async function extractAttachments(page) {
+async function extractAttachments(page, session, supabaseProjectId, supabase, uploadFn, sanitizeFn) {
   console.log("  📋 Extracting attachments...");
 
-  const attachSelectors = [
+  const found = await clickAccelaLink(page, [
     'a:has-text("Attachments")',
     'a:has-text("Attachment")',
     'a[id*="Attachment"]',
-  ];
-  for (const sel of attachSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      break;
-    }
+    'a:has-text("Documents")',
+    'a[id*="Document"]',
+  ], "Attachments");
+
+  if (!found) {
+    return { attachments: [], screenshot: null };
   }
 
   const attachments = await page.evaluate(() => {
@@ -679,8 +667,15 @@ async function extractAttachments(page) {
           if (
             name &&
             name.length < 200 &&
-            !name.toLowerCase().includes("file name")
+            !name.toLowerCase().includes("file name") &&
+            !name.toLowerCase().includes("document name")
           ) {
+            const actionLinks = row.querySelectorAll('a');
+            let hasDownload = false;
+            for (const a of actionLinks) {
+              const t = a.textContent.trim().toLowerCase();
+              if (t.includes("download") || t.includes("view")) hasDownload = true;
+            }
             results.push({
               name,
               record_id: cells.length > 1 ? cells[1].textContent.trim() : "",
@@ -688,8 +683,9 @@ async function extractAttachments(page) {
               entity_type: cells.length > 3 ? cells[3].textContent.trim() : "",
               type: cells.length > 4 ? cells[4].textContent.trim() : "",
               size: cells.length > 5 ? cells[5].textContent.trim() : "",
-              latest_update:
-                cells.length > 6 ? cells[6].textContent.trim() : "",
+              latest_update: cells.length > 6 ? cells[6].textContent.trim() : "",
+              rowIndex: Array.from(row.parentElement.children).indexOf(row),
+              hasDownload,
             });
           }
         }
@@ -697,66 +693,282 @@ async function extractAttachments(page) {
     return results;
   });
 
+  console.log(`     Found ${attachments.length} attachments, attempting downloads...`);
+
+  const DOWNLOADS_DIR = path.join(__dirname, "downloads");
+  if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+
+  const downloadedHashes = new Map();
+
+  for (let ai = 0; ai < attachments.length; ai++) {
+    const att = attachments[ai];
+    if (session) session.message = `Attachments → downloading ${ai + 1}/${attachments.length}: ${att.name}`;
+    console.log(`       📥 [${ai + 1}/${attachments.length}] Downloading: ${att.name}`);
+
+    try {
+      const rows = await page.$$('[id*="Attachment"] tr, [id*="Document"] tr');
+      let targetRow = null;
+      const dataRows = [];
+      for (const row of rows) {
+        const firstCell = await row.$("td");
+        if (firstCell) dataRows.push(row);
+      }
+      if (att.rowIndex !== undefined && att.rowIndex < dataRows.length) {
+        targetRow = dataRows[att.rowIndex];
+      } else {
+        for (const row of dataRows) {
+          const firstCell = await row.$("td");
+          if (!firstCell) continue;
+          const text = (await firstCell.textContent().catch(() => "")).trim();
+          if (text === att.name) {
+            targetRow = row;
+            break;
+          }
+        }
+      }
+
+      if (!targetRow) {
+        console.log(`       ⚠️ Could not re-locate row for "${att.name}" (index ${att.rowIndex}), skipping download`);
+        att.downloadStatus = "failed";
+        att.downloadError = "row_not_found";
+        continue;
+      }
+
+      const actionsLink = await targetRow.$('a:has-text("Actions"), a:has-text("View"), a[id*="Action"]');
+      if (!actionsLink) {
+        const downloadLink = await targetRow.$('a[href*="Download"], a[href*="download"], a[onclick*="download"]');
+        if (downloadLink) {
+          try {
+            const [download] = await Promise.all([
+              page.waitForEvent("download", { timeout: 30000 }),
+              downloadLink.click(),
+            ]);
+            const safeDlName = (download.suggestedFilename() || att.name).replace(/[^a-zA-Z0-9._-]/g, "_");
+            const filePath = path.join(DOWNLOADS_DIR, safeDlName);
+            await download.saveAs(filePath);
+
+            const viewUrl = await tryUploadAccelaFile(filePath, safeDlName, supabaseProjectId, uploadFn, sanitizeFn, downloadedHashes);
+            att.viewUrl = viewUrl;
+            att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
+            console.log(`       ✅ Downloaded: ${att.name} → ${viewUrl || "(local)"}`);
+          } catch (dlErr) {
+            console.log(`       ⚠️ Download failed for ${att.name}: ${dlErr.message}`);
+            att.downloadStatus = "failed";
+            att.downloadError = dlErr.message;
+          }
+          continue;
+        }
+
+        console.log(`       ⚠️ No Actions/Download link found for "${att.name}"`);
+        att.downloadStatus = "failed";
+        att.downloadError = "no_download_link";
+        continue;
+      }
+
+      await actionsLink.click().catch(() => {});
+      await page.waitForTimeout(1000);
+
+      const viewDetailsLink = await page.$('a:has-text("View Details"), a:has-text("Detail"), [id*="ViewDetail"]');
+      if (viewDetailsLink && await viewDetailsLink.isVisible().catch(() => false)) {
+        await viewDetailsLink.click().catch(() => {});
+        await waitForAccelaLoad(page);
+      }
+
+      const downloadBtn = await page.$('a:has-text("Download"), input[value*="Download"], button:has-text("Download"), a[href*="Download"]');
+
+      if (downloadBtn && await downloadBtn.isVisible().catch(() => false)) {
+        try {
+          const [download] = await Promise.all([
+            page.waitForEvent("download", { timeout: 30000 }),
+            downloadBtn.click(),
+          ]);
+          const suggestedName = download.suggestedFilename() || att.name;
+          const safeName = suggestedName.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const filePath = path.join(DOWNLOADS_DIR, safeName);
+          await download.saveAs(filePath);
+
+          const viewUrl = await tryUploadAccelaFile(filePath, safeName, supabaseProjectId, uploadFn, sanitizeFn, downloadedHashes);
+          att.viewUrl = viewUrl;
+          att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
+          console.log(`       ✅ Downloaded: ${safeName} → ${viewUrl || "(local)"}`);
+        } catch (dlErr) {
+          console.log(`       ⚠️ Download failed for ${att.name}: ${dlErr.message}`);
+          att.downloadStatus = "failed";
+          att.downloadError = dlErr.message;
+        }
+      } else {
+        console.log(`       ⚠️ No Download button found for "${att.name}"`);
+        att.downloadStatus = "failed";
+        att.downloadError = "no_download_button";
+      }
+
+      const backLink = await page.$('a:has-text("Back"), a:has-text("Return"), a:has-text("Attachments")');
+      if (backLink && await backLink.isVisible().catch(() => false)) {
+        await backLink.click().catch(() => {});
+        await waitForAccelaLoad(page);
+      } else {
+        await page.goBack().catch(() => {});
+        await waitForAccelaLoad(page);
+      }
+    } catch (err) {
+      console.log(`       ❌ Attachment error for "${att.name}": ${err.message}`);
+      att.downloadStatus = "failed";
+      att.downloadError = err.message;
+    }
+  }
+
+  for (const att of attachments) {
+    delete att.rowIndex;
+    delete att.hasDownload;
+  }
+
   const attScreenshot = await page
     .screenshot({ fullPage: true })
     .catch(() => null);
-  console.log(`     Found ${attachments.length} attachments`);
+  const successCount = attachments.filter(a => a.downloadStatus === "success").length;
+  console.log(`     Attachments: ${attachments.length} found, ${successCount} downloaded`);
   return {
     attachments,
     screenshot: attScreenshot ? attScreenshot.toString("base64") : null,
   };
 }
 
+async function tryUploadAccelaFile(filePath, fileName, projectId, uploadFn, sanitizeFn, downloadedHashes) {
+  if (!fs.existsSync(filePath)) return "";
+  const fileBuffer = fs.readFileSync(filePath);
+  const sizeMB = fileBuffer.length / (1024 * 1024);
+
+  if (fileBuffer.length < 1024) {
+    console.log(`       ⚠️ File too small (${fileBuffer.length} bytes), skipping upload`);
+    try { fs.unlinkSync(filePath); } catch (_) {}
+    return "";
+  }
+
+  const contentHash = crypto.createHash("md5").update(fileBuffer).digest("hex");
+  const prev = downloadedHashes.get(contentHash);
+  if (prev) {
+    console.log(`       ⚠️ DUPLICATE: "${fileName}" same as "${prev.fileName}", aliasing URL`);
+    try { fs.unlinkSync(filePath); } catch (_) {}
+    return prev.viewUrl || "";
+  }
+
+  if (!projectId || !uploadFn) {
+    try { fs.unlinkSync(filePath); } catch (_) {}
+    downloadedHashes.set(contentHash, { fileName, viewUrl: "" });
+    return "";
+  }
+
+  const storagePath = `drawings/${projectId}/${fileName}`;
+  const publicUrl = await uploadFn(filePath, storagePath);
+  try { fs.unlinkSync(filePath); } catch (_) {}
+  downloadedHashes.set(contentHash, { fileName, viewUrl: publicUrl || "" });
+  return publicUrl || "";
+}
+
 async function extractInspections(page) {
   console.log("  📋 Extracting inspections...");
 
-  const inspSelectors = [
+  const found = await clickAccelaLink(page, [
     'a:has-text("Inspections")',
     'a:has-text("Inspection")',
     'a[id*="Inspection"]',
-  ];
-  for (const sel of inspSelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      break;
-    }
+  ], "Inspections");
+
+  if (!found) {
+    return { inspections: [], upcoming: [], completed: [], screenshot: null };
   }
 
-  const inspections = await page.evaluate(() => {
-    const results = [];
-    document
-      .querySelectorAll('[id*="Inspection"] tr, [id*="inspection"] tr')
-      .forEach((row) => {
+  const inspData = await page.evaluate(() => {
+    const upcoming = [];
+    const completed = [];
+    const all = [];
+
+    function parseInspectionTable(container, category) {
+      const rows = container.querySelectorAll("tr");
+      rows.forEach((row) => {
         const cells = row.querySelectorAll("td");
         if (cells.length >= 2) {
           const type = cells[0].textContent.trim();
           if (
             type &&
             type.length < 200 &&
-            !type.toLowerCase().includes("inspection type")
+            !type.toLowerCase().includes("inspection type") &&
+            !type.toLowerCase().includes("type")
           ) {
-            results.push({
+            const entry = {
               type,
               status: cells.length > 1 ? cells[1].textContent.trim() : "",
               date: cells.length > 2 ? cells[2].textContent.trim() : "",
               inspector: cells.length > 3 ? cells[3].textContent.trim() : "",
               result: cells.length > 4 ? cells[4].textContent.trim() : "",
-            });
+              category,
+            };
+            all.push(entry);
+            if (category === "upcoming") upcoming.push(entry);
+            else completed.push(entry);
           }
         }
       });
-    return results;
+    }
+
+    const upcomingSection = document.querySelector(
+      '[id*="Upcoming"], [id*="upcoming"], [id*="Scheduled"], [id*="scheduled"]'
+    );
+    const completedSection = document.querySelector(
+      '[id*="Completed"], [id*="completed"], [id*="History"], [id*="history"]'
+    );
+
+    if (upcomingSection) {
+      const table = upcomingSection.closest("table") || upcomingSection.querySelector("table") || upcomingSection;
+      parseInspectionTable(table, "upcoming");
+    }
+    if (completedSection) {
+      const table = completedSection.closest("table") || completedSection.querySelector("table") || completedSection;
+      parseInspectionTable(table, "completed");
+    }
+
+    if (all.length === 0) {
+      document
+        .querySelectorAll('[id*="Inspection"] tr, [id*="inspection"] tr')
+        .forEach((row) => {
+          const cells = row.querySelectorAll("td");
+          if (cells.length >= 2) {
+            const type = cells[0].textContent.trim();
+            if (
+              type &&
+              type.length < 200 &&
+              !type.toLowerCase().includes("inspection type")
+            ) {
+              const statusText = cells.length > 1 ? cells[1].textContent.trim().toLowerCase() : "";
+              const category = (statusText.includes("pass") || statusText.includes("fail") || statusText.includes("approved") || statusText.includes("completed"))
+                ? "completed" : "upcoming";
+              const entry = {
+                type,
+                status: cells.length > 1 ? cells[1].textContent.trim() : "",
+                date: cells.length > 2 ? cells[2].textContent.trim() : "",
+                inspector: cells.length > 3 ? cells[3].textContent.trim() : "",
+                result: cells.length > 4 ? cells[4].textContent.trim() : "",
+                category,
+              };
+              all.push(entry);
+              if (category === "upcoming") upcoming.push(entry);
+              else completed.push(entry);
+            }
+          }
+        });
+    }
+
+    return { all, upcoming, completed };
   });
 
   const inspScreenshot = await page
     .screenshot({ fullPage: true })
     .catch(() => null);
-  console.log(`     Found ${inspections.length} inspections`);
+  console.log(`     Found ${inspData.all.length} inspections (${inspData.upcoming.length} upcoming, ${inspData.completed.length} completed)`);
   return {
-    inspections,
+    inspections: inspData.all,
+    upcoming: inspData.upcoming,
+    completed: inspData.completed,
     screenshot: inspScreenshot ? inspScreenshot.toString("base64") : null,
   };
 }
@@ -764,20 +976,15 @@ async function extractInspections(page) {
 async function extractPayments(page) {
   console.log("  📋 Extracting payments...");
 
-  const paySelectors = [
+  const found = await clickAccelaLink(page, [
     'a:has-text("Payments")',
     'a:has-text("Payment")',
     'a:has-text("Fees")',
     'a[id*="Payment"]',
-  ];
-  for (const sel of paySelectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      await link.click().catch(() => {});
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      break;
-    }
+  ], "Payments");
+
+  if (!found) {
+    return { payments: [], screenshot: null };
   }
 
   const payments = await page.evaluate(() => {
@@ -822,21 +1029,25 @@ async function scrapeAccelaRecord(
   userId,
   supabase,
   hashPortalData,
+  uploadToSupabaseStorage,
+  sanitizeStorageKey,
 ) {
   const { context, portalUrl } = session;
   const page = await context.newPage();
-  const TIMEOUT = 180000;
+  const TIMEOUT = 600000;
   const startTime = Date.now();
 
   const checkTimeout = () => {
     if (Date.now() - startTime > TIMEOUT)
-      throw new Error("Accela scraping timed out (3 minute limit)");
+      throw new Error("Accela scraping timed out (10 minute limit)");
   };
 
   try {
+    session.message = `${permitNumber} → Searching...`;
     await searchPermit(page, portalUrl, permitNumber);
     checkTimeout();
 
+    session.message = `${permitNumber} → Record Header`;
     const header = await extractRecordHeader(page);
     checkTimeout();
 
@@ -847,24 +1058,31 @@ async function scrapeAccelaRecord(
       ? headerScreenshot.toString("base64")
       : null;
 
+    session.message = `${permitNumber} → Record Details`;
     const details = await extractRecordDetails(page);
     checkTimeout();
 
+    session.message = `${permitNumber} → Processing Status`;
     const processingStatus = await extractProcessingStatus(page);
     checkTimeout();
 
+    session.message = `${permitNumber} → Plan Review`;
     const planReview = await extractPlanReview(page);
     checkTimeout();
 
+    session.message = `${permitNumber} → Related Records`;
     const relatedRecords = await extractRelatedRecords(page);
     checkTimeout();
 
-    const attachments = await extractAttachments(page);
+    session.message = `${permitNumber} → Attachments`;
+    const attachments = await extractAttachments(page, session, supabaseProjectId, supabase, uploadToSupabaseStorage, sanitizeStorageKey);
     checkTimeout();
 
+    session.message = `${permitNumber} → Inspections`;
     const inspections = await extractInspections(page);
     checkTimeout();
 
+    session.message = `${permitNumber} → Payments`;
     const payments = await extractPayments(page);
 
     const portalData = {
@@ -969,16 +1187,29 @@ async function scrapeAccelaRecord(
           screenshot: attachments.screenshot,
         },
         inspections: {
-          tables:
-            inspections.inspections.length > 0
-              ? [
-                  {
-                    title: "Inspections",
-                    headers: ["Type", "Status", "Date", "Inspector", "Result"],
-                    rows: inspections.inspections,
-                  },
-                ]
-              : [],
+          tables: [
+            ...(inspections.upcoming.length > 0
+              ? [{
+                  title: "Upcoming Inspections",
+                  headers: ["Type", "Status", "Date", "Inspector", "Result"],
+                  rows: inspections.upcoming,
+                }]
+              : []),
+            ...(inspections.completed.length > 0
+              ? [{
+                  title: "Completed Inspections",
+                  headers: ["Type", "Status", "Date", "Inspector", "Result"],
+                  rows: inspections.completed,
+                }]
+              : []),
+            ...(inspections.inspections.length > 0 && inspections.upcoming.length === 0 && inspections.completed.length === 0
+              ? [{
+                  title: "Inspections",
+                  headers: ["Type", "Status", "Date", "Inspector", "Result"],
+                  rows: inspections.inspections,
+                }]
+              : []),
+          ],
           keyValues: [],
           screenshot: inspections.screenshot,
         },
@@ -1005,6 +1236,7 @@ async function scrapeAccelaRecord(
                     headers: [
                       "Record Number",
                       "Record Type",
+                      "Status",
                       "Project Name",
                       "Date",
                     ],
@@ -1021,6 +1253,7 @@ async function scrapeAccelaRecord(
     session.data[permitNumber] = portalData;
 
     if (supabase && userId) {
+      session.message = `${permitNumber} → Syncing to database...`;
       console.log(`\n  💾 Syncing ${permitNumber} to Supabase...`);
       const newHash = hashPortalData(portalData);
 

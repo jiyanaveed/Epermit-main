@@ -882,6 +882,8 @@ app.post("/api/scrape", async (req, res) => {
       userId,
       supabase,
       hashPortalData,
+      uploadToSupabaseStorage,
+      sanitizeStorageKey,
     )
       .then(() => {
         if (session._cancelRequested) {
