@@ -137,6 +137,14 @@ interface PortalData {
   };
 }
 
+function detectPortalTypeFromUrl(url: string | null | undefined): string {
+  if (!url) return "projectdox";
+  const lower = url.toLowerCase();
+  if (lower.includes("avolvecloud.com") || lower.includes("projectdox")) return "projectdox";
+  if (lower.includes("accela.com")) return "accela";
+  return "unknown";
+}
+
 export default function PortalDataViewer() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -214,6 +222,35 @@ export default function PortalDataViewer() {
         setResolvedProjectId(project.id);
       } else {
         const pd = (project.portal_data as PortalData) || null;
+
+        if (pd && project.credential_id) {
+          const { data: cred } = await supabase
+            .from("portal_credentials")
+            .select("login_url, jurisdiction")
+            .eq("id", project.credential_id)
+            .maybeSingle();
+
+          if (thisRequestId !== fetchIdRef.current) return;
+
+          if (cred) {
+            const expectedType = detectPortalTypeFromUrl(cred.login_url);
+            const actualType = pd.portalType || "unknown";
+            if (expectedType !== "unknown" && actualType !== "unknown" && expectedType !== actualType) {
+              if (import.meta.env.DEV) console.log(`[PortalDataViewer] MISMATCH: credential expects "${expectedType}" (${cred.jurisdiction}), but portal_data has "${actualType}". Clearing stale data.`);
+              await supabase
+                .from("projects")
+                .update({ portal_data: null, portal_status: null, last_checked_at: null })
+                .eq("id", project.id);
+              if (thisRequestId !== fetchIdRef.current) return;
+              setPortalData(null);
+              setPortalStatus(null);
+              setLastCheckedAt(null);
+              setResolvedProjectId(project.id);
+              return;
+            }
+          }
+        }
+
         setPortalData(pd);
         setPortalStatus((project.portal_status as string) ?? null);
         setLastCheckedAt((project.last_checked_at as string) ?? null);
@@ -242,7 +279,7 @@ export default function PortalDataViewer() {
     try {
       const { data, error } = await supabase
         .from("projects")
-        .select("id, portal_data, portal_status, last_checked_at")
+        .select("id, portal_data, portal_status, last_checked_at, credential_id")
         .eq("id", resolvedProjectId)
         .eq("user_id", user.id)
         .maybeSingle();
@@ -251,6 +288,24 @@ export default function PortalDataViewer() {
         setLastCheckedAt((data.last_checked_at as string) ?? null);
         if (data.portal_data) {
           const pd = data.portal_data as PortalData;
+
+          if (pd && (data as any).credential_id) {
+            const { data: cred } = await supabase
+              .from("portal_credentials")
+              .select("login_url, jurisdiction")
+              .eq("id", (data as any).credential_id)
+              .maybeSingle();
+            if (cred) {
+              const expectedType = detectPortalTypeFromUrl(cred.login_url);
+              const actualType = pd.portalType || "unknown";
+              if (expectedType !== "unknown" && actualType !== "unknown" && expectedType !== actualType) {
+                if (import.meta.env.DEV) console.log(`[PortalDataViewer] silentRefetch MISMATCH: credential expects "${expectedType}" (${cred.jurisdiction}), but portal_data has "${actualType}". Ignoring stale data.`);
+                setPortalData(null);
+                return;
+              }
+            }
+          }
+
           const filesTab = pd.tabs?.files as FilesTabData | undefined;
           if (filesTab?.folders) {
             const urlCount = filesTab.folders.reduce(
