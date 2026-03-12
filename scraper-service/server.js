@@ -1022,6 +1022,7 @@ async function scrapeAll(
       description: project.description || "",
       location: project.location || "",
       dashboardStatus: project.status || "",
+      portalType: session.portalType || "projectdox",
       tabs: {},
     };
 
@@ -1045,8 +1046,39 @@ async function scrapeAll(
         await page.waitForTimeout(2000);
 
         let pUrl = page.url();
-        if (pUrl.includes("SessionEnded") || pUrl.includes("b2clogin")) {
-          // Basic session logic here
+        console.log(`     [DEBUG] ${tab.label} tab page URL: ${pUrl}`);
+        if (pUrl.includes("SessionEnded") || pUrl.includes("b2clogin") || pUrl.includes("Login")) {
+          console.log(`     ⚠️ Session expired on ${tab.label} tab (URL: ${pUrl}). Attempting re-login...`);
+          try {
+            await reinitializeBrowser(session);
+            context = session.context;
+            await page.close().catch(() => {});
+            page = await context.newPage();
+            const retryUrl = `${session.webUiBase}/WebForms/Frame.aspx?tab=${tab.param}&ProjectID=${project.projectId}`;
+            await page.goto(retryUrl, { waitUntil: "networkidle", timeout: 90000 });
+            await page.waitForTimeout(2000);
+            pUrl = page.url();
+            console.log(`     [DEBUG] ${tab.label} tab page URL after re-login: ${pUrl}`);
+            if (pUrl.includes("SessionEnded") || pUrl.includes("b2clogin") || pUrl.includes("Login")) {
+              console.log(`     ❌ Session still expired after re-login for ${tab.label} tab. Skipping extraction.`);
+              const errTab = { error: "session_expired", keyValues: [], tables: [], links: [] };
+              if (tab.key === "reports") errTab.pdfs = [];
+              if (tab.key === "files") errTab.folders = [];
+              session.data[project.id].tabs[tab.key] = errTab;
+              if (page) await page.close().catch(() => {});
+              session.progress++;
+              continue;
+            }
+          } catch (reLoginErr) {
+            console.log(`     ❌ Re-login failed for ${tab.label} tab: ${reLoginErr.message}`);
+            const errTab = { error: "session_expired_relogin_failed", keyValues: [], tables: [], links: [] };
+            if (tab.key === "reports") errTab.pdfs = [];
+            if (tab.key === "files") errTab.folders = [];
+            session.data[project.id].tabs[tab.key] = errTab;
+            if (page) await page.close().catch(() => {});
+            session.progress++;
+            continue;
+          }
         }
 
         // Ensure correct tab content is loaded
@@ -1088,6 +1120,9 @@ async function scrapeAll(
 
         const tabData = await extractPageData(page);
         if (tab.key === "info") {
+          await page.waitForSelector("table tr", { timeout: 15000 }).catch(() => {
+            console.log("     ⚠️ No table rows found on Info tab within 15s — page may be empty after session recovery");
+          });
           const infoKeyValues = await page.evaluate(() => {
             const kvs = [];
             const seen = new Set();
@@ -1791,6 +1826,18 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
       });
 
       console.log(`       ✅ Found ${filesFound.length} files in grid`);
+
+      if (filesFound.length === 0 && fileCount > 0) {
+        const gridPageUrl = page.url();
+        const sessionDead = gridPageUrl.includes("SessionEnded") || gridPageUrl.includes("b2clogin") || gridPageUrl.includes("Login");
+        if (sessionDead) {
+          console.log(`       ⚠️ Grid empty but folder claims ${fileCount} files — session expired (URL: ${gridPageUrl})`);
+          result.folders.push({ name: folderName, fileCount, files: [], folderError: "session_expired" });
+          continue;
+        }
+        console.log(`       ⚠️ Grid empty but folder claims ${fileCount} files — DOM may not have loaded after crash recovery`);
+      }
+
       if (filesFound.length > 0) {
         const sample = filesFound.slice(0, 3).map(f => ({ name: f.name, id: f.id, status: f.status }));
         console.log(`       📋 Sample files:`, JSON.stringify(sample));
@@ -1979,6 +2026,16 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
 
 async function extractPDFsFromPage(page, context) {
   const pdfData = [];
+
+  const reportPageUrl = page.url();
+  if (reportPageUrl.includes("SessionEnded") || reportPageUrl.includes("b2clogin") || reportPageUrl.includes("Login")) {
+    console.log(`      ⚠️ Reports tab: session expired (URL: ${reportPageUrl}). Skipping PDF extraction.`);
+    return pdfData;
+  }
+
+  await page.waitForSelector("table tr", { timeout: 15000 }).catch(() => {
+    console.log("      ⚠️ No table rows found on Reports tab within 15s — page may be empty after session recovery");
+  });
 
   // Get all report names from the visible table first
   const reportNames = await page.evaluate(() => {
