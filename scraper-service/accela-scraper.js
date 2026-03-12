@@ -53,25 +53,40 @@ async function clickAccelaLink(page, selectors, label) {
   return false;
 }
 
+async function dumpPageDiagnostics(page, label) {
+  const url = page.url();
+  const title = await page.title().catch(() => "(unknown)");
+  const loginFormVisible = !!(await findFieldInFrames(page, ['input[type="password"]']));
+  const logoutVisible = !!(await findFieldInFrames(page, [
+    'a:has-text("Logout")', 'a:has-text("Log Out")', 'a:has-text("Sign Out")',
+  ]));
+  const welcomeVisible = !!(await findFieldInFrames(page, [
+    '#ctl00_HeaderNavigation_lblWelcome', '[id*="lblWelcome"]',
+  ]));
+  const frames = page.frames();
+  const frameInfo = frames.map((f, i) => `${i}:${f.name() || "(unnamed)"}@${f.url().substring(0, 80)}`);
+  console.log(`  [DIAG:${label}] url=${url}`);
+  console.log(`  [DIAG:${label}] title=${title}`);
+  console.log(`  [DIAG:${label}] loginFormVisible=${loginFormVisible} logoutVisible=${logoutVisible} welcomeVisible=${welcomeVisible}`);
+  console.log(`  [DIAG:${label}] frames(${frames.length}): ${frameInfo.join(" | ")}`);
+}
+
+async function findAuthLandmark(page) {
+  const selectors = [
+    'a:has-text("Logout")', 'a:has-text("Log Out")', 'a:has-text("Sign Out")',
+    '#ctl00_HeaderNavigation_lblWelcome',
+    'a:has-text("My Account")', 'a:has-text("My Records")',
+    '[id*="lblWelcome"]',
+  ];
+  return !!(await findFieldInFrames(page, selectors));
+}
+
 async function accelaLogin(page, username, password, portalUrl) {
   const cleanUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
   const loginUrl = cleanUrl + "/Login.aspx";
   console.log(`  Navigating to Accela login: ${loginUrl}`);
   await page.goto(loginUrl, { waitUntil: "networkidle", timeout: 45000 });
-  await page.waitForTimeout(3000);
-
-  const allInputs = await page.$$("input");
-  console.log(`  Found ${allInputs.length} input elements on page`);
-  for (const inp of allInputs) {
-    const id = await inp.getAttribute("id").catch(() => "");
-    const name = await inp.getAttribute("name").catch(() => "");
-    const type = await inp.getAttribute("type").catch(() => "");
-    const visible = await inp.isVisible().catch(() => false);
-    if (id || name)
-      console.log(
-        `    input: id="${id}" name="${name}" type="${type}" visible=${visible}`,
-      );
-  }
+  await page.waitForTimeout(2000);
 
   const userSelectors = [
     "#ctl00_PlaceHolderMain_LoginBox_txtUserId",
@@ -126,25 +141,18 @@ async function accelaLogin(page, username, password, portalUrl) {
   ];
 
   let loginBtn = await findFieldInFrames(page, loginBtnSelectors);
-
-  console.log(`  Login button found: ${!!loginBtn}`);
   if (!loginBtn) {
     const allAnchors = await page.$$("a");
     for (const a of allAnchors) {
       const text = (await a.textContent().catch(() => "")).trim().toUpperCase();
       const visible = await a.isVisible().catch(() => false);
-      if (
-        visible &&
-        (text === "SIGN IN" || text === "LOG IN" || text === "LOGIN")
-      ) {
+      if (visible && (text === "SIGN IN" || text === "LOG IN" || text === "LOGIN")) {
         loginBtn = a;
-        console.log(`  Found login anchor by text: "${text}"`);
         break;
       }
     }
   }
 
-  // 1. Trigger the login action
   if (loginBtn) {
     console.log("  Clicking login button...");
     await loginBtn.click();
@@ -153,189 +161,179 @@ async function accelaLogin(page, username, password, portalUrl) {
     await page.keyboard.press("Enter");
   }
 
-  console.log("  ⏳ Waiting for session to 'bake' and Dashboard to load...");
+  console.log("  ⏳ Waiting for authenticated state...");
 
-  // 2. STRATEGIC WAIT: Instead of waiting for navigation, wait for a Logged-In landmark.
-  // This ensures the server has fully processed your session and the UI is ready.
-  await page
-    .waitForSelector(
-      '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout"), .aca_header_top',
-      {
-        timeout: 30000,
-      },
-    )
-    .catch(() => {
-      console.log("  ⚠️ Landmark not found yet, but checking URL...");
-    });
+  const authSelectors = [
+    '#ctl00_HeaderNavigation_lblWelcome',
+    'a:has-text("Logout")',
+    'a:has-text("Log Out")',
+    'a:has-text("My Account")',
+    'a:has-text("My Records")',
+  ].join(", ");
 
-  // 3. COOKIE SYNC: A small pause to let the ASP.NET session state stabilize.
-  // This is the "Magic Fix" for the white screen.
-  await page.waitForTimeout(3000);
+  const landmarkFound = await page.waitForSelector(authSelectors, { timeout: 30000 }).catch(() => null);
 
-  let url = page.url();
-  console.log(`  ✅ Login confirmed. URL: ${url}`);
+  await page.waitForTimeout(2000);
 
-  // If we are stuck on Login.aspx but "confirmed," force move to the home page
-  if (url.includes("Login.aspx")) {
-    console.log("  ⚠️ Stuck on Login.aspx. Forcing breakout to Dashboard...");
-    const homeUrl = url.split("/Login.aspx")[0] + "/Default.aspx";
-    await page.goto(homeUrl, { waitUntil: "networkidle" });
-    await page.waitForTimeout(3000);
-    url = page.url();
-  }
-
-  console.log(`  🚀 Final Portal URL: ${url}`);
-  return url;
-
-  const logoutLink = await page.$(
-    'a[href*="Logout"], a:has-text("Logout"), a:has-text("Log Out"), a:has-text("Sign Out")',
-  );
-  const myAccountLink = await page.$(
-    'a:has-text("My Account"), a:has-text("My Records"), a:has-text("Dashboard")',
-  );
-  const welcomeText = await page.$(
-    '[id*="Welcome"], [class*="welcome"], [id*="loggedIn"]',
-  );
-
-  if (logoutLink || myAccountLink || welcomeText) {
-    console.log(`  Login confirmed (found post-login elements)`);
+  if (landmarkFound) {
+    const url = page.url();
+    console.log(`  ✅ Login confirmed (authenticated landmark found). URL: ${url}`);
     return url;
   }
 
-  if (url.includes("Login.aspx") || url.includes("login")) {
-    const errorEl = await page.$(
-      ".ACA_Error, .error-message, [id*='Error'], [id*='error'], .font11px",
-    );
-    const errorText = errorEl
-      ? await errorEl.textContent().catch(() => "")
-      : "";
-    throw new Error(
-      "Accela login failed" + (errorText ? `: ${errorText.trim()}` : ""),
-    );
+  const loginFormStillVisible = !!(await page.$('input[type="password"]:visible').catch(() => null));
+  if (loginFormStillVisible) {
+    const errorEl = await page.$(".ACA_Error, .error-message, [id*='Error'], [id*='error'], .font11px");
+    const errorText = errorEl ? (await errorEl.textContent().catch(() => "")).trim() : "";
+    await dumpPageDiagnostics(page, "LOGIN_FAILED");
+    await page.screenshot({ path: "login_failed.png", fullPage: true }).catch(() => {});
+    throw new Error("Accela login failed — login form still visible" + (errorText ? `: ${errorText}` : ""));
   }
 
-  console.log(`  After login: ${url}`);
-  return url;
+  const url = page.url();
+  if (url.includes("Login.aspx")) {
+    await dumpPageDiagnostics(page, "STUCK_ON_LOGIN");
+    const authFound = await findAuthLandmark(page);
+    if (authFound) {
+      console.log("  ✅ Login confirmed (landmark found in frames while on Login.aspx URL). URL:", url);
+      return url;
+    }
+    await page.screenshot({ path: "login_stuck.png", fullPage: true }).catch(() => {});
+    throw new Error("Accela login failed — still on Login.aspx with no authenticated landmarks");
+  }
+
+  const authConfirmed = await findAuthLandmark(page);
+  if (authConfirmed) {
+    console.log(`  ✅ Login confirmed (post-redirect landmark found). URL: ${url}`);
+    return url;
+  }
+
+  await dumpPageDiagnostics(page, "LOGIN_FAILED_NO_LANDMARK");
+  await page.screenshot({ path: "login_no_landmark.png", fullPage: true }).catch(() => {});
+  throw new Error("Accela login failed — no authenticated landmarks found after login attempt");
 }
 
-// ==============================================================================
-// 🚀 NEW SIMPLIFIED SEARCH: Uses the "My Records" view from the Permits Tab
-// ==============================================================================
 async function searchPermit(page, portalUrl, permitNumber) {
-  console.log(`  Searching for permit: ${permitNumber} via My Records flow`);
+  console.log(`  Searching for permit: ${permitNumber}`);
 
-  // --- 1. HEADER CHECK: The "Gatekeeper" Logic ---
-  console.log("  Checking authentication state...");
-  // --- START REPLACEMENT BLOCK ---
-  console.log("  ⏳ Waiting for the Records Grid to hydrate...");
-
-  // Wait for the specific container that holds the permit table
-  const gridAppeared = await page
-    .waitForSelector(
-      '.aca_grid_container, [id*="gview_List"], #ctl00_PlaceHolderMain_dgvPermitList',
-      {
-        visible: true,
-        timeout: 20000,
-      },
-    )
-    .catch(() => null);
-
-  if (!gridAppeared) {
-    console.log(
-      "  ⚠️ Grid container not detected. Forcing a refresh to wake up the server...",
-    );
-    await page.reload({ waitUntil: "networkidle" });
-    // Hard wait for the "shell" to fill after refresh
-    await page.waitForTimeout(5000);
+  // Step 1: Verify we are still authenticated
+  const isAuth = await findAuthLandmark(page);
+  if (!isAuth) {
+    await dumpPageDiagnostics(page, "SEARCH_AUTH_CHECK");
+    throw new Error("AUTHENTICATION_LOST: No authenticated landmarks found before permit search.");
   }
+  console.log("  ✅ Authentication verified");
 
-  // Verify authentication didn't drop during the wait
-  const loggedIn = await page.$(
-    '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout")',
-  );
-  if (!loggedIn) {
-    throw new Error(
-      "AUTHENTICATION_LOST: Reached Dashboard but session landmark is missing.",
-    );
-  }
-
-  console.log("  ✅ Grid is visible. Starting visual scan...");
-  // --- END REPLACEMENT BLOCK ---
-
-  if (!loggedInLandmark) {
-    console.log("  🕒 Dashboard still loading, waiting for landmarks...");
-    await page
-      .waitForSelector(
-        '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout")',
-        { timeout: 10000 },
-      )
-      .catch(() => {});
-  }
-  // --- END HEADER CHECK ---
-
-  // 1. DO NOT use page.goto here. We must click our way in to keep the session alive.
-  console.log("  Ensuring we stay in the authenticated session...");
-
-  // 2. Find the Permits and Inspections tab in the current authenticated header
+  // Step 2: Navigate to Permits and Inspections tab
   const permitsTab = await findFieldInFrames(page, [
     "#Tab_Building",
     'a:has-text("Permits and Inspections")',
+    'a:has-text("Permits & Inspections")',
     'a[title*="Permits"]',
     '#header_main_menu a:has-text("Permits")',
   ]);
 
   if (permitsTab) {
-    console.log("  ✅ Found authenticated tab, clicking...");
+    console.log("  Clicking Permits tab...");
     await permitsTab.click();
     await waitForAccelaLoad(page);
+    await page.waitForTimeout(3000);
   } else {
-    // If we land on the public page, we need to log back in or halt
-    const isPublicPage = await page.$('a:has-text("Sign In")');
+    const isPublicPage = await page.$('a:has-text("Sign In"), a:has-text("Create an Account")');
     if (isPublicPage) {
-      throw new Error(
-        "Session dropped! Scraper was redirected to the Public Search page. Re-running login...",
-      );
+      throw new Error("Session dropped — redirected to public page.");
     }
+    console.log("  ⚠️ Permits tab not found, attempting to proceed on current page...");
   }
 
-  // 3. STUBBORN POLLING (Wait for the 'Logged In' grid specifically)
-  console.log("  Scanning authenticated 'My Records' list...");
-  let clicked = false;
+  // Step 3: Wait for the records grid to appear
+  console.log("  ⏳ Waiting for records grid...");
+  const gridAppeared = await page.waitForSelector(
+    'table[id*="PermitList"] tr, table[id*="Record"] tr, .aca_grid_container tr td a, [id*="gview_List"] tr',
+    { visible: true, timeout: 15000 }
+  ).catch(() => null);
 
-  // Try for 15 seconds to find the link in any frame
-  const start = Date.now();
-  while (Date.now() - start < 15000) {
+  if (!gridAppeared) {
+    let gridInFrame = false;
     for (const frame of page.frames()) {
-      const found = await frame.evaluate((target) => {
-        const anchors = Array.from(document.querySelectorAll("a"));
-        // Look specifically for the blue permit link in the grid
-        const match = anchors.find((a) =>
-          a.textContent.trim().includes(target),
-        );
-        if (match) {
-          match.click();
-          return true;
-        }
-        return false;
-      }, permitNumber);
-
-      if (found) {
-        clicked = true;
+      if (frame === page.mainFrame()) continue;
+      const frameGrid = await frame.$('table tr td a, .aca_grid_container').catch(() => null);
+      if (frameGrid) {
+        console.log(`  ✅ Grid found in frame: ${frame.name() || frame.url().substring(0, 60)}`);
+        gridInFrame = true;
         break;
       }
     }
-    if (clicked) break;
-    await page.waitForTimeout(1000);
+    if (!gridInFrame) {
+      await dumpPageDiagnostics(page, "NO_GRID");
+      const anchorCount = await page.evaluate(() => document.querySelectorAll("a").length);
+      console.log(`  [DIAG:NO_GRID] Total anchors on page: ${anchorCount}`);
+    }
   }
 
-  if (!clicked) {
-    await page.screenshot({ path: "grid_not_found.png", fullPage: true });
-    throw new Error(
-      `Permit ${permitNumber} not found. Check if the session was dropped (See grid_not_found.png).`,
-    );
+  // Step 4: Find and click the permit link (3-tier approach)
+  console.log("  Scanning for permit link...");
+
+  // Try 1: Playwright has-text selector
+  const permitLink = await page.$(`a:has-text("${permitNumber}")`);
+  if (permitLink && (await permitLink.isVisible().catch(() => false))) {
+    console.log("  ✅ Found permit via has-text selector");
+    await Promise.all([
+      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+      permitLink.click(),
+    ]);
+    await waitForAccelaLoad(page);
+    return;
   }
 
-  await waitForAccelaLoad(page);
+  // Try 2: Scan all anchors with normalized text (handles whitespace/newlines)
+  const allLinks = await page.$$("a");
+  for (const link of allLinks) {
+    const text = (await link.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    if (text === permitNumber || text.includes(permitNumber)) {
+      const visible = await link.isVisible().catch(() => false);
+      if (visible) {
+        console.log("  ✅ Found permit by scanning anchors:", text);
+        await Promise.all([
+          page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+          link.click(),
+        ]);
+        await waitForAccelaLoad(page);
+        return;
+      }
+    }
+  }
+
+  // Try 3: Frame-aware evaluate scan (searches all frames)
+  for (const frame of page.frames()) {
+    const found = await frame.evaluate((target) => {
+      const anchors = Array.from(document.querySelectorAll("a"));
+      const match = anchors.find((a) => {
+        const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+        return text.includes(target) && a.offsetWidth > 0;
+      });
+      if (match) { match.click(); return true; }
+      return false;
+    }, permitNumber).catch(() => false);
+
+    if (found) {
+      console.log("  ✅ Found permit via frame evaluate");
+      await waitForAccelaLoad(page);
+      return;
+    }
+  }
+
+  // All attempts failed — capture diagnostics
+  const visibleTexts = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll("a"))
+      .filter((a) => a.offsetWidth > 0)
+      .slice(0, 25)
+      .map((a) => a.textContent.replace(/\s+/g, " ").trim().substring(0, 80));
+  });
+  console.log("  Visible anchor texts:", JSON.stringify(visibleTexts.filter(t => t.length > 0)));
+  await dumpPageDiagnostics(page, "PERMIT_NOT_FOUND");
+  await page.screenshot({ path: "grid_not_found.png", fullPage: true }).catch(() => {});
+  throw new Error(`Permit ${permitNumber} not found in the records list.`);
 }
 // ==============================================================================
 
