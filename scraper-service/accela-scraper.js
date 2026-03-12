@@ -226,22 +226,41 @@ async function searchPermit(page, portalUrl, permitNumber) {
 
   // --- 1. HEADER CHECK: The "Gatekeeper" Logic ---
   console.log("  Checking authentication state...");
-  const isLoggedOut = await page.$(
-    'a:has-text("Sign In"), #ctl00_HeaderNavigation_btnLogin',
-  );
-  const loggedInLandmark = await page.$(
+  // --- START REPLACEMENT BLOCK ---
+  console.log("  ⏳ Waiting for the Records Grid to hydrate...");
+
+  // Wait for the specific container that holds the permit table
+  const gridAppeared = await page
+    .waitForSelector(
+      '.aca_grid_container, [id*="gview_List"], #ctl00_PlaceHolderMain_dgvPermitList',
+      {
+        visible: true,
+        timeout: 20000,
+      },
+    )
+    .catch(() => null);
+
+  if (!gridAppeared) {
+    console.log(
+      "  ⚠️ Grid container not detected. Forcing a refresh to wake up the server...",
+    );
+    await page.reload({ waitUntil: "networkidle" });
+    // Hard wait for the "shell" to fill after refresh
+    await page.waitForTimeout(5000);
+  }
+
+  // Verify authentication didn't drop during the wait
+  const loggedIn = await page.$(
     '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout")',
   );
-
-  if (isLoggedOut && !loggedInLandmark) {
-    console.log(
-      "  ❌ Error: Authenticated session lost. We are on the Public page.",
-    );
-    await page.screenshot({ path: "auth_failure.png", fullPage: true });
+  if (!loggedIn) {
     throw new Error(
-      "SESSION_LOST: Not logged in on search page. Check your credentials or breakout logic.",
+      "AUTHENTICATION_LOST: Reached Dashboard but session landmark is missing.",
     );
   }
+
+  console.log("  ✅ Grid is visible. Starting visual scan...");
+  // --- END REPLACEMENT BLOCK ---
 
   if (!loggedInLandmark) {
     console.log("  🕒 Dashboard still loading, waiting for landmarks...");
