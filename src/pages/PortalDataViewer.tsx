@@ -154,6 +154,7 @@ export default function PortalDataViewer() {
   const [expandedFileComments, setExpandedFileComments] = useState<Set<string>>(new Set());
   const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(100);
+  const fetchIdRef = useRef(0);
 
   useEffect(() => {
     if (!lightboxImage) return;
@@ -164,36 +165,37 @@ export default function PortalDataViewer() {
     return () => window.removeEventListener("keydown", handler);
   }, [lightboxImage]);
 
+  useEffect(() => {
+    if (import.meta.env.DEV) console.log("[PortalDataViewer] selectedProjectId changed →", selectedProjectId);
+    setPortalData(null);
+    setPortalStatus(null);
+    setLastCheckedAt(null);
+    setResolvedProjectId(null);
+    setNoPermitConfigured(false);
+  }, [selectedProjectId]);
+
   const fetchData = useCallback(async () => {
     if (!user) return;
+    const thisRequestId = ++fetchIdRef.current;
     setLoading(true);
     setNoPermitConfigured(false);
     try {
-      let project: { id: string; portal_data: unknown; portal_status: string | null; last_checked_at: string | null } | null = null;
+      let project: { id: string; portal_data: unknown; portal_status: string | null; last_checked_at: string | null; permit_number?: string; credential_id?: string } | null = null;
 
       if (selectedProjectId) {
         const { data, error } = await supabase
           .from("projects")
-          .select("id, portal_data, portal_status, last_checked_at")
+          .select("id, portal_data, portal_status, last_checked_at, permit_number, credential_id")
           .eq("id", selectedProjectId)
           .eq("user_id", user.id)
           .maybeSingle();
         if (!error) project = data as typeof project;
+        if (import.meta.env.DEV) console.log("[PortalDataViewer] fetch for selectedProjectId:", selectedProjectId, "→ project:", project?.id ?? "(none)", "permit:", (project as any)?.permit_number ?? "(none)", "credential:", (project as any)?.credential_id ?? "(none)", "hasPortalData:", !!project?.portal_data, "portalType:", (project?.portal_data as any)?.portalType ?? "(none)");
       }
 
-      if (!project?.portal_data) {
-        const { data, error } = await supabase
-          .from("projects")
-          .select("id, portal_data, portal_status, last_checked_at")
-          .eq("user_id", user.id)
-          .not("portal_data", "is", null)
-          .order("last_checked_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!error) project = data as typeof project;
-      }
+      if (thisRequestId !== fetchIdRef.current) return;
 
-      if (!project?.portal_data) {
+      if (!project) {
         const { data: creds } = await supabase
           .from("portal_credentials")
           .select("project_id")
@@ -205,13 +207,18 @@ export default function PortalDataViewer() {
         setPortalStatus(null);
         setLastCheckedAt(null);
         setResolvedProjectId(null);
+      } else if (!project.portal_data) {
+        setPortalData(null);
+        setPortalStatus((project.portal_status as string) ?? null);
+        setLastCheckedAt(null);
+        setResolvedProjectId(project.id);
       } else {
         const pd = (project.portal_data as PortalData) || null;
         setPortalData(pd);
         setPortalStatus((project.portal_status as string) ?? null);
         setLastCheckedAt((project.last_checked_at as string) ?? null);
         setResolvedProjectId(project.id);
-        if (pd?.tabs?.files) {
+        if (import.meta.env.DEV && pd?.tabs?.files) {
           const filesTab = pd.tabs.files as FilesTabData;
           const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
           const withUrl = allFiles.filter((f) => !!f.viewUrl);
@@ -220,14 +227,18 @@ export default function PortalDataViewer() {
       }
     } catch (err) {
       console.error(err);
-      setPortalData(null);
+      if (thisRequestId === fetchIdRef.current) setPortalData(null);
     } finally {
-      setLoading(false);
+      if (thisRequestId === fetchIdRef.current) setLoading(false);
     }
   }, [user, selectedProjectId]);
 
   const silentRefetch = useCallback(async () => {
     if (!user || !resolvedProjectId) return;
+    if (selectedProjectId && resolvedProjectId !== selectedProjectId) {
+      if (import.meta.env.DEV) console.log("[PortalDataViewer] silentRefetch skipped — resolvedProjectId", resolvedProjectId, "≠ selectedProjectId", selectedProjectId);
+      return;
+    }
     try {
       const { data, error } = await supabase
         .from("projects")
@@ -252,7 +263,7 @@ export default function PortalDataViewer() {
         }
       }
     } catch {}
-  }, [user, resolvedProjectId]);
+  }, [user, resolvedProjectId, selectedProjectId]);
 
   const handleManualRefresh = useCallback(async () => {
     setRefreshing(true);
