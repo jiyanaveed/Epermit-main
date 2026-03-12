@@ -1266,14 +1266,14 @@ async function scrapeAll(
 
     try {
       console.log(`    🔄 Syncing ${projectNum} to Supabase...`);
-      console.log(`    📌 projectId=${projectId || "(none)"}, userId=${userId}, portalType=${currentData.portalType || "(none)"}`);
+      console.log(`    📌 projectId=${supabaseProjectId || "(none)"}, userId=${userId}, portalType=${currentData.portalType || "(none)"}`);
 
       let existingRow = null;
-      if (projectId) {
+      if (supabaseProjectId) {
         const { data: rows } = await supabase
           .from("projects")
           .select("id, portal_data_hash, portal_data")
-          .eq("id", projectId);
+          .eq("id", supabaseProjectId);
         existingRow = rows && rows.length > 0 ? rows[0] : null;
       }
       if (!existingRow) {
@@ -1339,6 +1339,8 @@ async function scrapeAll(
           portal_data_hash: mergedHash,
           permit_number: projectNum,
         };
+
+        console.log(`    📝 DB WRITE: supabaseProjectId=${supabaseProjectId || "(none)"}, permit=${projectNum}, portalType=${mergedData.portalType || "(none)"}, targetRow=${actualProjectId}`);
 
         const { data, error } = await supabase
           .from("projects")
