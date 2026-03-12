@@ -144,24 +144,48 @@ async function accelaLogin(page, username, password, portalUrl) {
     }
   }
 
+  // 1. Trigger the login action
   if (loginBtn) {
-    await Promise.all([
-      page
-        .waitForNavigation({ waitUntil: "networkidle", timeout: 30000 })
-        .catch(() => {}),
-      loginBtn.click(),
-    ]);
+    console.log("  Clicking login button...");
+    await loginBtn.click();
   } else {
     console.log("  No login button found, pressing Enter");
     await page.keyboard.press("Enter");
-    await page
-      .waitForNavigation({ waitUntil: "networkidle", timeout: 30000 })
-      .catch(() => {});
   }
+
+  console.log("  ⏳ Waiting for session to 'bake' and Dashboard to load...");
+
+  // 2. STRATEGIC WAIT: Instead of waiting for navigation, wait for a Logged-In landmark.
+  // This ensures the server has fully processed your session and the UI is ready.
+  await page
+    .waitForSelector(
+      '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout"), .aca_header_top',
+      {
+        timeout: 30000,
+      },
+    )
+    .catch(() => {
+      console.log("  ⚠️ Landmark not found yet, but checking URL...");
+    });
+
+  // 3. COOKIE SYNC: A small pause to let the ASP.NET session state stabilize.
+  // This is the "Magic Fix" for the white screen.
   await page.waitForTimeout(3000);
 
-  const url = page.url();
-  console.log(`  After login URL: ${url}`);
+  let url = page.url();
+  console.log(`  ✅ Login confirmed. URL: ${url}`);
+
+  // If we are stuck on Login.aspx but "confirmed," force move to the home page
+  if (url.includes("Login.aspx")) {
+    console.log("  ⚠️ Stuck on Login.aspx. Forcing breakout to Dashboard...");
+    const homeUrl = url.split("/Login.aspx")[0] + "/Default.aspx";
+    await page.goto(homeUrl, { waitUntil: "networkidle" });
+    await page.waitForTimeout(3000);
+    url = page.url();
+  }
+
+  console.log(`  🚀 Final Portal URL: ${url}`);
+  return url;
 
   const logoutLink = await page.$(
     'a[href*="Logout"], a:has-text("Logout"), a:has-text("Log Out"), a:has-text("Sign Out")',
@@ -200,81 +224,99 @@ async function accelaLogin(page, username, password, portalUrl) {
 async function searchPermit(page, portalUrl, permitNumber) {
   console.log(`  Searching for permit: ${permitNumber} via My Records flow`);
 
+  // --- 1. HEADER CHECK: The "Gatekeeper" Logic ---
+  console.log("  Checking authentication state...");
+  const isLoggedOut = await page.$(
+    'a:has-text("Sign In"), #ctl00_HeaderNavigation_btnLogin',
+  );
+  const loggedInLandmark = await page.$(
+    '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout")',
+  );
+
+  if (isLoggedOut && !loggedInLandmark) {
+    console.log(
+      "  ❌ Error: Authenticated session lost. We are on the Public page.",
+    );
+    await page.screenshot({ path: "auth_failure.png", fullPage: true });
+    throw new Error(
+      "SESSION_LOST: Not logged in on search page. Check your credentials or breakout logic.",
+    );
+  }
+
+  if (!loggedInLandmark) {
+    console.log("  🕒 Dashboard still loading, waiting for landmarks...");
+    await page
+      .waitForSelector(
+        '#ctl00_HeaderNavigation_lblWelcome, a:has-text("Logout")',
+        { timeout: 10000 },
+      )
+      .catch(() => {});
+  }
+  // --- END HEADER CHECK ---
+
+  // 1. DO NOT use page.goto here. We must click our way in to keep the session alive.
+  console.log("  Ensuring we stay in the authenticated session...");
+
+  // 2. Find the Permits and Inspections tab in the current authenticated header
   const permitsTab = await findFieldInFrames(page, [
+    "#Tab_Building",
     'a:has-text("Permits and Inspections")',
-    'a:has-text("Permits & Inspections")',
-    'a:has-text("Building")',
+    'a[title*="Permits"]',
+    '#header_main_menu a:has-text("Permits")',
   ]);
 
   if (permitsTab) {
-    const tabText = (await permitsTab.textContent().catch(() => "")).trim();
-    console.log(`  Clicking tab: "${tabText}"`);
+    console.log("  ✅ Found authenticated tab, clicking...");
     await permitsTab.click();
-    await page.waitForTimeout(5000);
+    await waitForAccelaLoad(page);
   } else {
-    throw new Error("Could not find the Permits and Inspections tab");
-  }
-
-  console.log("  Scanning the loaded records list...");
-
-  const permitLink = await page.$(`a:has-text("${permitNumber}")`);
-  if (permitLink && (await permitLink.isVisible().catch(() => false))) {
-    console.log("  Found permit link via has-text selector");
-    await Promise.all([
-      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-      permitLink.click(),
-    ]);
-    await page.waitForTimeout(3000);
-    console.log("  Navigated to:", page.url());
-    return;
-  }
-
-  const allLinks = await page.$$("a");
-  for (const link of allLinks) {
-    const text = (await link.innerText().catch(() => "")).trim();
-    const normalizedText = text.replace(/\s+/g, " ").trim();
-    if (normalizedText === permitNumber || normalizedText.includes(permitNumber)) {
-      console.log("  Found permit link by scanning anchors:", normalizedText);
-      await Promise.all([
-        page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-        link.click(),
-      ]);
-      await page.waitForTimeout(3000);
-      console.log("  Navigated to:", page.url());
-      return;
+    // If we land on the public page, we need to log back in or halt
+    const isPublicPage = await page.$('a:has-text("Sign In")');
+    if (isPublicPage) {
+      throw new Error(
+        "Session dropped! Scraper was redirected to the Public Search page. Re-running login...",
+      );
     }
   }
 
-  const found = await page.evaluate((target) => {
-    const anchors = document.querySelectorAll("a");
-    for (const a of anchors) {
-      const text = a.textContent.replace(/\s+/g, " ").trim();
-      if (text.includes(target)) {
-        a.click();
-        return true;
+  // 3. STUBBORN POLLING (Wait for the 'Logged In' grid specifically)
+  console.log("  Scanning authenticated 'My Records' list...");
+  let clicked = false;
+
+  // Try for 15 seconds to find the link in any frame
+  const start = Date.now();
+  while (Date.now() - start < 15000) {
+    for (const frame of page.frames()) {
+      const found = await frame.evaluate((target) => {
+        const anchors = Array.from(document.querySelectorAll("a"));
+        // Look specifically for the blue permit link in the grid
+        const match = anchors.find((a) =>
+          a.textContent.trim().includes(target),
+        );
+        if (match) {
+          match.click();
+          return true;
+        }
+        return false;
+      }, permitNumber);
+
+      if (found) {
+        clicked = true;
+        break;
       }
     }
-    return false;
-  }, permitNumber);
-
-  if (found) {
-    console.log("  Found and clicked permit via evaluate");
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
-    console.log("  Navigated to:", page.url());
-    return;
+    if (clicked) break;
+    await page.waitForTimeout(1000);
   }
 
-  const visibleTexts = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll("a"))
-      .filter((a) => a.offsetWidth > 0)
-      .slice(0, 20)
-      .map((a) => a.textContent.replace(/\s+/g, " ").trim().substring(0, 60));
-  });
-  console.log("  Visible anchor texts:", JSON.stringify(visibleTexts));
+  if (!clicked) {
+    await page.screenshot({ path: "grid_not_found.png", fullPage: true });
+    throw new Error(
+      `Permit ${permitNumber} not found. Check if the session was dropped (See grid_not_found.png).`,
+    );
+  }
 
-  await page.screenshot({ path: "grid_not_found.png", fullPage: true });
-  throw new Error(`Permit ${permitNumber} not visible in the current list.`);
+  await waitForAccelaLoad(page);
 }
 // ==============================================================================
 
