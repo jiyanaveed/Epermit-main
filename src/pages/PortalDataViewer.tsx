@@ -156,6 +156,7 @@ export default function PortalDataViewer() {
   const [noPermitConfigured, setNoPermitConfigured] = useState(false);
   const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [expectedPortalType, setExpectedPortalType] = useState<string | null>(null);
   const scrape = useScrape();
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -180,6 +181,7 @@ export default function PortalDataViewer() {
     setLastCheckedAt(null);
     setResolvedProjectId(null);
     setNoPermitConfigured(false);
+    setExpectedPortalType(null);
   }, [selectedProjectId]);
 
   const fetchData = useCallback(async () => {
@@ -215,52 +217,57 @@ export default function PortalDataViewer() {
         setPortalStatus(null);
         setLastCheckedAt(null);
         setResolvedProjectId(null);
-      } else if (!project.portal_data) {
-        setPortalData(null);
-        setPortalStatus((project.portal_status as string) ?? null);
-        setLastCheckedAt(null);
-        setResolvedProjectId(project.id);
+        setExpectedPortalType(null);
       } else {
-        const pd = (project.portal_data as PortalData) || null;
-
-        if (pd && project.credential_id) {
+        let credExpectedType: string | null = null;
+        if (project.credential_id) {
           const { data: cred } = await supabase
             .from("portal_credentials")
             .select("login_url, jurisdiction")
             .eq("id", project.credential_id)
             .maybeSingle();
-
           if (thisRequestId !== fetchIdRef.current) return;
-
           if (cred) {
-            const expectedType = detectPortalTypeFromUrl(cred.login_url);
-            const actualType = pd.portalType || "unknown";
-            if (expectedType !== "unknown" && actualType !== "unknown" && expectedType !== actualType) {
-              if (import.meta.env.DEV) console.log(`[PortalDataViewer] MISMATCH: credential expects "${expectedType}" (${cred.jurisdiction}), but portal_data has "${actualType}". Clearing stale data.`);
-              await supabase
-                .from("projects")
-                .update({ portal_data: null, portal_status: null, last_checked_at: null })
-                .eq("id", project.id);
-              if (thisRequestId !== fetchIdRef.current) return;
-              setPortalData(null);
-              setPortalStatus(null);
-              setLastCheckedAt(null);
-              setResolvedProjectId(project.id);
-              return;
+            credExpectedType = detectPortalTypeFromUrl(cred.login_url);
+            if (import.meta.env.DEV) console.log(`[PortalDataViewer] credential=${project.credential_id}, login_url=${cred.login_url}, expectedPortalType=${credExpectedType}`);
+          }
+        }
+        setExpectedPortalType(credExpectedType);
+
+        if (!project.portal_data) {
+          setPortalData(null);
+          setPortalStatus((project.portal_status as string) ?? null);
+          setLastCheckedAt(null);
+          setResolvedProjectId(project.id);
+        } else {
+          const pd = (project.portal_data as PortalData) || null;
+          const actualType = pd?.portalType || "unknown";
+
+          if (pd && credExpectedType && credExpectedType !== "unknown" && actualType !== "unknown" && credExpectedType !== actualType) {
+            if (import.meta.env.DEV) console.log(`[PortalDataViewer] MISMATCH: credential expects "${credExpectedType}", but portal_data has "${actualType}". Clearing stale data.`);
+            await supabase
+              .from("projects")
+              .update({ portal_data: null, portal_status: null, last_checked_at: null })
+              .eq("id", project.id);
+            if (thisRequestId !== fetchIdRef.current) return;
+            setPortalData(null);
+            setPortalStatus(null);
+            setLastCheckedAt(null);
+            setResolvedProjectId(project.id);
+          } else {
+            setPortalData(pd);
+            setPortalStatus((project.portal_status as string) ?? null);
+            setLastCheckedAt((project.last_checked_at as string) ?? null);
+            setResolvedProjectId(project.id);
+            if (import.meta.env.DEV && pd?.tabs?.files) {
+              const filesTab = pd.tabs.files as FilesTabData;
+              const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
+              const withUrl = allFiles.filter((f) => !!f.viewUrl);
+              console.log(`[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`, withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })));
             }
           }
         }
-
-        setPortalData(pd);
-        setPortalStatus((project.portal_status as string) ?? null);
-        setLastCheckedAt((project.last_checked_at as string) ?? null);
-        setResolvedProjectId(project.id);
-        if (import.meta.env.DEV && pd?.tabs?.files) {
-          const filesTab = pd.tabs.files as FilesTabData;
-          const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
-          const withUrl = allFiles.filter((f) => !!f.viewUrl);
-          console.log(`[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`, withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })));
-        }
+        if (import.meta.env.DEV) console.log(`[PortalDataViewer] resolved: expectedPortalType=${credExpectedType}, actualPortalType=${(project.portal_data as any)?.portalType ?? "(none)"}`);
       }
     } catch (err) {
       console.error(err);
@@ -286,24 +293,26 @@ export default function PortalDataViewer() {
       if (!error && data) {
         setPortalStatus((data.portal_status as string) ?? null);
         setLastCheckedAt((data.last_checked_at as string) ?? null);
+
+        let credExpectedType: string | null = null;
+        if ((data as any).credential_id) {
+          const { data: cred } = await supabase
+            .from("portal_credentials")
+            .select("login_url, jurisdiction")
+            .eq("id", (data as any).credential_id)
+            .maybeSingle();
+          if (cred) credExpectedType = detectPortalTypeFromUrl(cred.login_url);
+        }
+        setExpectedPortalType(credExpectedType);
+
         if (data.portal_data) {
           const pd = data.portal_data as PortalData;
+          const actualType = pd.portalType || "unknown";
 
-          if (pd && (data as any).credential_id) {
-            const { data: cred } = await supabase
-              .from("portal_credentials")
-              .select("login_url, jurisdiction")
-              .eq("id", (data as any).credential_id)
-              .maybeSingle();
-            if (cred) {
-              const expectedType = detectPortalTypeFromUrl(cred.login_url);
-              const actualType = pd.portalType || "unknown";
-              if (expectedType !== "unknown" && actualType !== "unknown" && expectedType !== actualType) {
-                if (import.meta.env.DEV) console.log(`[PortalDataViewer] silentRefetch MISMATCH: credential expects "${expectedType}" (${cred.jurisdiction}), but portal_data has "${actualType}". Ignoring stale data.`);
-                setPortalData(null);
-                return;
-              }
-            }
+          if (credExpectedType && credExpectedType !== "unknown" && actualType !== "unknown" && credExpectedType !== actualType) {
+            if (import.meta.env.DEV) console.log(`[PortalDataViewer] silentRefetch MISMATCH: credential expects "${credExpectedType}", but portal_data has "${actualType}". Ignoring stale data.`);
+            setPortalData(null);
+            return;
           }
 
           const filesTab = pd.tabs?.files as FilesTabData | undefined;
@@ -399,12 +408,16 @@ export default function PortalDataViewer() {
   }
 
   if (!portalData) {
+    const emptyLabel = expectedPortalType === "accela" ? "No Accela data yet"
+      : expectedPortalType === "projectdox" ? "No ProjectDox data yet"
+      : "No portal data yet";
+    if (import.meta.env.DEV) console.log(`[PortalDataViewer] rendering empty state: expectedPortalType=${expectedPortalType}, label="${emptyLabel}"`);
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl">
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <FileText className="h-12 w-12 text-muted-foreground mb-4" />
-            <h2 className="text-lg font-semibold mb-2">No portal data yet</h2>
+            <h2 className="text-lg font-semibold mb-2">{emptyLabel}</h2>
             <p className="text-muted-foreground mb-4">
               Click Run Manual Check on the Dashboard to fetch data.
             </p>
@@ -422,17 +435,21 @@ export default function PortalDataViewer() {
     : null;
 
   if (!portalData?.tabs) {
+    const noTabsLabel = expectedPortalType === "accela" ? "No Accela data available."
+      : expectedPortalType === "projectdox" ? "No ProjectDox data available."
+      : "No portal data available.";
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl">
         <div className="p-8 text-center text-gray-400">
-          No portal data available. Run a scrape first.
+          {noTabsLabel} Run a scrape first.
         </div>
       </section>
     );
   }
 
-  const isAccela = portalData.portalType === "accela";
-  if (isAccela) {
+  const renderAccelaUI = expectedPortalType === "accela" || (!expectedPortalType && portalData.portalType === "accela");
+  if (import.meta.env.DEV) console.log(`[PortalDataViewer] rendering UI: expectedPortalType=${expectedPortalType}, portalData.portalType=${portalData.portalType}, renderAccelaUI=${renderAccelaUI}`);
+  if (renderAccelaUI) {
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl" data-testid="portal-data-viewer">
         <div className="flex items-center justify-between mb-4">
