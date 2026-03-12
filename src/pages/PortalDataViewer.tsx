@@ -176,12 +176,9 @@ export default function PortalDataViewer() {
 
   useEffect(() => {
     if (import.meta.env.DEV) console.log("[PortalDataViewer] selectedProjectId changed →", selectedProjectId);
-    setPortalData(null);
-    setPortalStatus(null);
-    setLastCheckedAt(null);
     setResolvedProjectId(null);
     setNoPermitConfigured(false);
-    setExpectedPortalType(null);
+    setLoading(true);
   }, [selectedProjectId]);
 
   const fetchData = useCallback(async () => {
@@ -239,6 +236,7 @@ export default function PortalDataViewer() {
           setPortalStatus((project.portal_status as string) ?? null);
           setLastCheckedAt(null);
           setResolvedProjectId(project.id);
+          if (import.meta.env.DEV) console.log(`[PortalDataViewer] empty state: no saved portal_data for project ${project.id}${!project.credential_id ? " (no credential linked)" : ""}`);
         } else {
           const pd = (project.portal_data as PortalData) || null;
           const actualType = pd?.portalType || "unknown";
@@ -254,20 +252,23 @@ export default function PortalDataViewer() {
             setPortalStatus(null);
             setLastCheckedAt(null);
             setResolvedProjectId(project.id);
+            if (import.meta.env.DEV) console.log(`[PortalDataViewer] empty state: stale data cleared (type mismatch) for project ${project.id}`);
           } else {
             setPortalData(pd);
             setPortalStatus((project.portal_status as string) ?? null);
             setLastCheckedAt((project.last_checked_at as string) ?? null);
             setResolvedProjectId(project.id);
-            if (import.meta.env.DEV && pd?.tabs?.files) {
-              const filesTab = pd.tabs.files as FilesTabData;
-              const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
-              const withUrl = allFiles.filter((f) => !!f.viewUrl);
-              console.log(`[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`, withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })));
+            if (import.meta.env.DEV) {
+              console.log(`[PortalDataViewer] ✅ saved data rendered immediately: project=${project.id}, portalType=${actualType}, expectedType=${credExpectedType ?? "none"}`);
+              if (pd?.tabs?.files) {
+                const filesTab = pd.tabs.files as FilesTabData;
+                const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
+                const withUrl = allFiles.filter((f) => !!f.viewUrl);
+                console.log(`[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`, withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })));
+              }
             }
           }
         }
-        if (import.meta.env.DEV) console.log(`[PortalDataViewer] resolved: expectedPortalType=${credExpectedType}, actualPortalType=${(project.portal_data as any)?.portalType ?? "(none)"}`);
       }
     } catch (err) {
       console.error(err);

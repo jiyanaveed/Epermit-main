@@ -244,14 +244,14 @@ export function AppSidebar() {
   const { projects, loading, updateProject, fetchProjects, createProject } = useProjects();
   const isCollapsed = state === "collapsed";
 
-  const [sidebarCredentials, setSidebarCredentials] = useState<{ id: string; jurisdiction: string; portal_username: string }[]>([]);
+  const [sidebarCredentials, setSidebarCredentials] = useState<{ id: string; jurisdiction: string; portal_username: string; login_url?: string }[]>([]);
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>("");
 
   useEffect(() => {
     if (!user) { setSidebarCredentials([]); return; }
     supabase
       .from("portal_credentials")
-      .select("id, jurisdiction, portal_username")
+      .select("id, jurisdiction, portal_username, login_url")
       .eq("user_id", user.id)
       .order("jurisdiction", { ascending: true })
       .then(({ data }) => setSidebarCredentials(data || []));
@@ -271,18 +271,41 @@ export function AppSidebar() {
     const updated = await updateProject(selectedProject.selectedProjectId, { credential_id: credId });
     if (updated) {
       if (previousValue !== (credId ?? "")) {
-        await supabase
-          .from("projects")
-          .update({ portal_data: null, portal_status: null, last_checked_at: null })
-          .eq("id", selectedProject.selectedProjectId);
-        if (import.meta.env.DEV) console.log("[Sidebar] Credential changed (prev:", previousValue || "none", "→ new:", credId || "none", "), cleared stale portal_data for project", selectedProject.selectedProjectId);
+        let shouldClear = true;
+
+        if (!previousValue && credId) {
+          const { data: proj } = await supabase
+            .from("projects")
+            .select("portal_data")
+            .eq("id", selectedProject.selectedProjectId)
+            .maybeSingle();
+          const existingType = (proj?.portal_data as any)?.portalType;
+          if (existingType) {
+            const newCred = sidebarCredentials.find((c: any) => c.id === credId);
+            const newUrl = newCred?.login_url || "";
+            const expectedType = newUrl.includes("avolvecloud.com") || newUrl.toLowerCase().includes("projectdox")
+              ? "projectdox" : newUrl.includes("accela.com") ? "accela" : "unknown";
+            if (expectedType !== "unknown" && existingType === expectedType) {
+              shouldClear = false;
+              if (import.meta.env.DEV) console.log("[Sidebar] First credential assignment — existing portal_data type", existingType, "matches new credential type", expectedType, ", keeping data for project", selectedProject.selectedProjectId);
+            }
+          }
+        }
+
+        if (shouldClear) {
+          await supabase
+            .from("projects")
+            .update({ portal_data: null, portal_status: null, last_checked_at: null })
+            .eq("id", selectedProject.selectedProjectId);
+          if (import.meta.env.DEV) console.log("[Sidebar] Credential changed (prev:", previousValue || "none", "→ new:", credId || "none", "), cleared stale portal_data for project", selectedProject.selectedProjectId);
+        }
       }
       fetchProjects();
     } else {
       setSelectedCredentialId(previousValue);
       toast.error("Failed to update credential");
     }
-  }, [selectedProject?.selectedProjectId, user, updateProject, fetchProjects, selectedCredentialId]);
+  }, [selectedProject?.selectedProjectId, user, updateProject, fetchProjects, selectedCredentialId, sidebarCredentials]);
 
   // Permit number is the primary input; persisted per user. Never derived from project.
   const [permitNumber, setPermitNumber] = useState("");
