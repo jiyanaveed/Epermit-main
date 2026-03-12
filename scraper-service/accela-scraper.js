@@ -256,6 +256,7 @@ console.log("  Scanning visible records list (Manual-Style)...");
     await page.screenshot({ path: "grid_not_found.png", fullPage: true });
     throw new Error(`Permit ${permitNumber} not visible in the current list.`);
   }
+}
 // ==============================================================================
 
 async function extractRecordHeader(page) {
