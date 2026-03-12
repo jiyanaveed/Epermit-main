@@ -377,7 +377,7 @@ export default function PortalDataViewer() {
     return () => clearInterval(interval);
   }, [scrape.isScraping, resolvedProjectId, silentRefetch]);
 
-  if (authLoading || loading) {
+  if (authLoading || (loading && !portalData)) {
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl">
         <Skeleton className="h-12 w-64 mb-4" />
@@ -454,8 +454,9 @@ export default function PortalDataViewer() {
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl" data-testid="portal-data-viewer">
         <div className="flex items-center justify-between mb-4">
-          <div>
+          <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold text-[#F0F6FF]">Portal Data</h1>
+            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             {lastCheckedStr && (
               <p className="text-xs text-muted-foreground mt-0.5">{lastCheckedStr}</p>
             )}
@@ -1262,7 +1263,10 @@ export default function PortalDataViewer() {
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">{portalData.projectNum}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold">{portalData.projectNum}</h1>
+              {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            </div>
             {portalData.description && (
               <p className="text-muted-foreground mt-1 max-w-2xl">{portalData.description}</p>
             )}
