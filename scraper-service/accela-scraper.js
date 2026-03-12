@@ -81,12 +81,69 @@ async function findAuthLandmark(page) {
   return !!(await findFieldInFrames(page, selectors));
 }
 
+async function findLoginFrame(page) {
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const nameMatch = (frame.name() || "").toLowerCase().includes("login");
+    const urlMatch = frame.url().toLowerCase().includes("login");
+    if (nameMatch || urlMatch) {
+      console.log(`  Found LoginFrame: name="${frame.name()}" url=${frame.url().substring(0, 100)}`);
+      return frame;
+    }
+  }
+  return null;
+}
+
+async function findFieldInContext(context, selectors) {
+  for (const sel of selectors) {
+    try {
+      const el = await context.$(sel);
+      if (el && (await el.isVisible().catch(() => false))) return el;
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function dumpLoginFrameDiagnostics(frame, label) {
+  if (!frame) {
+    console.log(`  [DIAG:${label}] LoginFrame not available`);
+    return;
+  }
+  const url = frame.url();
+  const userStillVisible = !!(await findFieldInContext(frame, [
+    'input[name*="txtUserId"]', 'input[name*="UserName"]', 'input[id*="UserId"]',
+    'input[type="text"][id*="User"]', 'input[type="email"]',
+  ]));
+  const passStillVisible = !!(await findFieldInContext(frame, ['input[type="password"]']));
+  const btnDisabled = await frame.evaluate(() => {
+    const btn = document.querySelector('button[type="submit"], input[type="submit"], a[id*="btnLogin"]');
+    return btn ? btn.disabled || btn.getAttribute("disabled") !== null : "no_btn";
+  }).catch(() => "eval_error");
+  const errorText = await frame.evaluate(() => {
+    const errorSels = ['.ACA_Error', '.error-message', '[id*="Error"]', '[id*="error"]',
+      '.font11px', '.validation-summary-errors', '[class*="alert"]', '[class*="error"]'];
+    for (const sel of errorSels) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetWidth > 0 && el.textContent.trim()) return el.textContent.trim().substring(0, 200);
+    }
+    return "";
+  }).catch(() => "");
+  console.log(`  [DIAG:${label}] LoginFrame url=${url}`);
+  console.log(`  [DIAG:${label}] userFieldVisible=${userStillVisible} passFieldVisible=${passStillVisible} btnDisabled=${btnDisabled}`);
+  if (errorText) console.log(`  [DIAG:${label}] errorText="${errorText}"`);
+}
+
 async function accelaLogin(page, username, password, portalUrl) {
   const cleanUrl = portalUrl.replace(/\/$/, "").replace(/\/Login\.aspx$/i, "");
   const loginUrl = cleanUrl + "/Login.aspx";
   console.log(`  Navigating to Accela login: ${loginUrl}`);
   await page.goto(loginUrl, { waitUntil: "networkidle", timeout: 45000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
+
+  const loginFrame = await findLoginFrame(page);
+
+  const contexts = loginFrame ? [loginFrame, page] : [page];
+  console.log(`  Login context: ${loginFrame ? "LoginFrame (primary)" : "main page (no LoginFrame found)"}`);
 
   const userSelectors = [
     "#ctl00_PlaceHolderMain_LoginBox_txtUserId",
@@ -99,17 +156,30 @@ async function accelaLogin(page, username, password, portalUrl) {
     'input[type="email"]',
   ];
 
-  let userField = await findFieldInFrames(page, userSelectors);
-  if (!userField) {
-    const textInputs = await page.$$('input[type="text"]');
-    for (const inp of textInputs) {
-      if (await inp.isVisible().catch(() => false)) {
-        userField = inp;
-        break;
+  let userField = null;
+  let activeContext = null;
+  for (const ctx of contexts) {
+    userField = await findFieldInContext(ctx, userSelectors);
+    if (!userField) {
+      const textInputs = await ctx.$$('input[type="text"]').catch(() => []);
+      for (const inp of textInputs) {
+        if (await inp.isVisible().catch(() => false)) {
+          userField = inp;
+          break;
+        }
       }
     }
+    if (userField) {
+      activeContext = ctx;
+      break;
+    }
   }
-  if (!userField) throw new Error("Cannot find Accela username field");
+  if (!userField) {
+    await dumpPageDiagnostics(page, "NO_USER_FIELD");
+    await dumpLoginFrameDiagnostics(loginFrame, "NO_USER_FIELD");
+    throw new Error("Cannot find Accela username field in LoginFrame or main page");
+  }
+  console.log(`  Found username field in ${activeContext === loginFrame ? "LoginFrame" : "main page"}`);
   await userField.fill(username);
   console.log("  Filled username");
 
@@ -123,8 +193,11 @@ async function accelaLogin(page, username, password, portalUrl) {
     'input[type="password"]',
   ];
 
-  let passField = await findFieldInFrames(page, passSelectors);
-  if (!passField) throw new Error("Cannot find Accela password field");
+  const passField = await findFieldInContext(activeContext, passSelectors);
+  if (!passField) {
+    await dumpLoginFrameDiagnostics(loginFrame, "NO_PASS_FIELD");
+    throw new Error("Cannot find Accela password field");
+  }
   await passField.fill(password);
   console.log("  Filled password");
 
@@ -140,9 +213,9 @@ async function accelaLogin(page, username, password, portalUrl) {
     'button[type="submit"]',
   ];
 
-  let loginBtn = await findFieldInFrames(page, loginBtnSelectors);
+  let loginBtn = await findFieldInContext(activeContext, loginBtnSelectors);
   if (!loginBtn) {
-    const allAnchors = await page.$$("a");
+    const allAnchors = await activeContext.$$("a").catch(() => []);
     for (const a of allAnchors) {
       const text = (await a.textContent().catch(() => "")).trim().toUpperCase();
       const visible = await a.isVisible().catch(() => false);
@@ -157,60 +230,73 @@ async function accelaLogin(page, username, password, portalUrl) {
     console.log("  Clicking login button...");
     await loginBtn.click();
   } else {
-    console.log("  No login button found, pressing Enter");
-    await page.keyboard.press("Enter");
+    console.log("  No login button found, pressing Enter in active context");
+    if (passField) await passField.press("Enter");
+    else await page.keyboard.press("Enter");
   }
 
-  console.log("  ⏳ Waiting for authenticated state...");
+  console.log("  ⏳ Waiting for login to complete...");
 
-  const authSelectors = [
-    '#ctl00_HeaderNavigation_lblWelcome',
-    'a:has-text("Logout")',
-    'a:has-text("Log Out")',
-    'a:has-text("My Account")',
-    'a:has-text("My Records")',
-  ].join(", ");
+  let loginSucceeded = false;
 
-  const landmarkFound = await page.waitForSelector(authSelectors, { timeout: 30000 }).catch(() => null);
+  for (let elapsed = 0; elapsed < 35000; elapsed += 2000) {
+    await page.waitForTimeout(2000);
 
-  await page.waitForTimeout(2000);
+    if (loginFrame) {
+      const frameStillExists = page.frames().some(f => f === loginFrame);
+      if (!frameStillExists) {
+        console.log("  ✅ LoginFrame detached — login succeeded");
+        loginSucceeded = true;
+        break;
+      }
 
-  if (landmarkFound) {
-    const url = page.url();
-    console.log(`  ✅ Login confirmed (authenticated landmark found). URL: ${url}`);
-    return url;
-  }
+      const loginFormGone = !(await findFieldInContext(loginFrame, ['input[type="password"]']));
+      if (loginFormGone) {
+        console.log("  ✅ Login form disappeared from LoginFrame — login succeeded");
+        loginSucceeded = true;
+        break;
+      }
+    }
 
-  const loginFormStillVisible = !!(await page.$('input[type="password"]:visible').catch(() => null));
-  if (loginFormStillVisible) {
-    const errorEl = await page.$(".ACA_Error, .error-message, [id*='Error'], [id*='error'], .font11px");
-    const errorText = errorEl ? (await errorEl.textContent().catch(() => "")).trim() : "";
-    await dumpPageDiagnostics(page, "LOGIN_FAILED");
-    await page.screenshot({ path: "login_failed.png", fullPage: true }).catch(() => {});
-    throw new Error("Accela login failed — login form still visible" + (errorText ? `: ${errorText}` : ""));
-  }
-
-  const url = page.url();
-  if (url.includes("Login.aspx")) {
-    await dumpPageDiagnostics(page, "STUCK_ON_LOGIN");
     const authFound = await findAuthLandmark(page);
     if (authFound) {
-      console.log("  ✅ Login confirmed (landmark found in frames while on Login.aspx URL). URL:", url);
-      return url;
+      console.log("  ✅ Authenticated landmark found — login succeeded");
+      loginSucceeded = true;
+      break;
     }
-    await page.screenshot({ path: "login_stuck.png", fullPage: true }).catch(() => {});
-    throw new Error("Accela login failed — still on Login.aspx with no authenticated landmarks");
   }
 
-  const authConfirmed = await findAuthLandmark(page);
-  if (authConfirmed) {
-    console.log(`  ✅ Login confirmed (post-redirect landmark found). URL: ${url}`);
+  if (loginSucceeded) {
+    await page.waitForTimeout(2000);
+    const url = page.url();
+    console.log(`  ✅ Login confirmed. URL: ${url}`);
     return url;
   }
 
-  await dumpPageDiagnostics(page, "LOGIN_FAILED_NO_LANDMARK");
-  await page.screenshot({ path: "login_no_landmark.png", fullPage: true }).catch(() => {});
-  throw new Error("Accela login failed — no authenticated landmarks found after login attempt");
+  if (loginFrame) {
+    const errorText = await loginFrame.evaluate(() => {
+      const errorSels = ['.ACA_Error', '.error-message', '[id*="Error"]', '[id*="error"]',
+        '.font11px', '.validation-summary-errors', '[class*="alert"]', '[class*="error"]'];
+      for (const sel of errorSels) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetWidth > 0 && el.textContent.trim()) return el.textContent.trim().substring(0, 300);
+      }
+      return "";
+    }).catch(() => "");
+
+    if (errorText) {
+      console.log(`  ❌ LoginFrame error: "${errorText}"`);
+      await dumpLoginFrameDiagnostics(loginFrame, "LOGIN_ERROR");
+      await dumpPageDiagnostics(page, "LOGIN_ERROR");
+      await page.screenshot({ path: "login_failed.png", fullPage: true }).catch(() => {});
+      throw new Error(`Accela login failed — portal error: ${errorText}`);
+    }
+  }
+
+  await dumpLoginFrameDiagnostics(loginFrame, "LOGIN_TIMEOUT");
+  await dumpPageDiagnostics(page, "LOGIN_TIMEOUT");
+  await page.screenshot({ path: "login_failed.png", fullPage: true }).catch(() => {});
+  throw new Error("Accela login failed — timed out waiting for authenticated state (login form persisted in LoginFrame)");
 }
 
 async function searchPermit(page, portalUrl, permitNumber) {
