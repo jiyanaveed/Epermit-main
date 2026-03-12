@@ -200,14 +200,6 @@ async function accelaLogin(page, username, password, portalUrl) {
 async function searchPermit(page, portalUrl, permitNumber) {
   console.log(`  Searching for permit: ${permitNumber} via My Records flow`);
 
-  // 1. Establish session if opening a new blank tab
-  if (page.url() === "about:blank") {
-    console.log(`  Loading base portal to establish session: ${portalUrl}`);
-    await page.goto(portalUrl, { waitUntil: "networkidle", timeout: 45000 });
-    await page.waitForTimeout(2000);
-  }
-
-  // 2. Click the Permits and Inspections tab to view My Records
   const permitsTab = await findFieldInFrames(page, [
     'a:has-text("Permits and Inspections")',
     'a:has-text("Permits & Inspections")',
@@ -218,44 +210,71 @@ async function searchPermit(page, portalUrl, permitNumber) {
     const tabText = (await permitsTab.textContent().catch(() => "")).trim();
     console.log(`  Clicking tab: "${tabText}"`);
     await permitsTab.click();
-    await page.waitForTimeout(5000); // Give the Accela list time to load the grid
+    await page.waitForTimeout(5000);
   } else {
     throw new Error("Could not find the Permits and Inspections tab");
   }
 
   console.log("  Scanning the loaded records list...");
 
-// 3. SKIP THE FILTER BOX - Go straight to scanning the list
-console.log("  Scanning visible records list (Manual-Style)...");
+  const permitLink = await page.$(`a:has-text("${permitNumber}")`);
+  if (permitLink && (await permitLink.isVisible().catch(() => false))) {
+    console.log("  Found permit link via has-text selector");
+    await Promise.all([
+      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+      permitLink.click(),
+    ]);
+    await page.waitForTimeout(3000);
+    console.log("  Navigated to:", page.url());
+    return;
+  }
 
-  // 4. Find the specific permit link by scanning all clickable elements
-  const permitFound = await page.evaluate((targetPermit) => {
-    // Broad search: look for links, spans, or table cells containing the number
-    const elements = Array.from(document.querySelectorAll('a, span, td'));
+  const allLinks = await page.$$("a");
+  for (const link of allLinks) {
+    const text = (await link.innerText().catch(() => "")).trim();
+    const normalizedText = text.replace(/\s+/g, " ").trim();
+    if (normalizedText === permitNumber || normalizedText.includes(permitNumber)) {
+      console.log("  Found permit link by scanning anchors:", normalizedText);
+      await Promise.all([
+        page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+        link.click(),
+      ]);
+      await page.waitForTimeout(3000);
+      console.log("  Navigated to:", page.url());
+      return;
+    }
+  }
 
-    // Find the first visible element that exactly matches or contains the permit
-    const match = elements.find(el => {
-      const text = el.textContent.trim();
-      const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
-      return isVisible && text.includes(targetPermit);
-    });
-
-    if (match) {
-      // Force a click on the element (or its closest anchor parent)
-      const clickable = match.tagName === 'A' ? match : match.closest('a') || match;
-      clickable.click();
-      return true;
+  const found = await page.evaluate((target) => {
+    const anchors = document.querySelectorAll("a");
+    for (const a of anchors) {
+      const text = a.textContent.replace(/\s+/g, " ").trim();
+      if (text.includes(target)) {
+        a.click();
+        return true;
+      }
     }
     return false;
   }, permitNumber);
 
-  if (permitFound) {
-    console.log(`  ✅ Found and clicked permit: ${permitNumber}`);
-    await waitForAccelaLoad(page);
-  } else {
-    await page.screenshot({ path: "grid_not_found.png", fullPage: true });
-    throw new Error(`Permit ${permitNumber} not visible in the current list.`);
+  if (found) {
+    console.log("  Found and clicked permit via evaluate");
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+    console.log("  Navigated to:", page.url());
+    return;
   }
+
+  const visibleTexts = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll("a"))
+      .filter((a) => a.offsetWidth > 0)
+      .slice(0, 20)
+      .map((a) => a.textContent.replace(/\s+/g, " ").trim().substring(0, 60));
+  });
+  console.log("  Visible anchor texts:", JSON.stringify(visibleTexts));
+
+  await page.screenshot({ path: "grid_not_found.png", fullPage: true });
+  throw new Error(`Permit ${permitNumber} not visible in the current list.`);
 }
 // ==============================================================================
 
