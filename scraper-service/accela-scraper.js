@@ -218,9 +218,9 @@ async function searchPermit(page, portalUrl, permitNumber) {
 
   // 3. Optional: If the list is long, Accela usually provides a filter box above the grid
   const filterBox = await findFieldInFrames(page, [
-    'input[id*="txtFilter"]',
-    'input[title*="Search"]',
-    'input[id*="PermitNumber"]',
+    'input[type="text"][id*="txtSearchCondition"]', // Specific to Baltimore Search
+    'input[type="text"][id*="txtFilter"]',         // Specific to Grid Filters
+    'input[type="text"][title*="Search"]',         // Fallback with type enforcement
   ]);
 
   if (filterBox) {

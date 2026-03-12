@@ -24,6 +24,7 @@ import { useScrape } from "@/contexts/ScrapeContext";
 import { supabase } from "@/lib/supabase";
 import { formatDistanceToNow } from "date-fns";
 import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare, ArrowLeft, Loader2 } from "lucide-react";
+import AccelaProjectView from "@/components/portal/AccelaProjectView";
 
 class TabErrorBoundary extends React.Component<
   { tabName: string; children: React.ReactNode },
@@ -116,6 +117,7 @@ interface TabData {
 }
 
 interface PortalData {
+  portalType?: string;
   name: string;
   projectNum: string;
   description: string;
@@ -127,6 +129,10 @@ interface PortalData {
     files?: FilesTabData;
     status?: TabData;
     tasks?: TabData;
+    attachments?: TabData;
+    inspections?: TabData;
+    payments?: TabData;
+    relatedRecords?: TabData;
     [key: string]: TabData | FilesTabData | undefined;
   };
 }
@@ -353,6 +359,34 @@ export default function PortalDataViewer() {
         <div className="p-8 text-center text-gray-400">
           No portal data available. Run a scrape first.
         </div>
+      </section>
+    );
+  }
+
+  const isAccela = portalData.portalType === "accela";
+  if (isAccela) {
+    return (
+      <section className="py-6 px-4 sm:px-6 max-w-5xl" data-testid="portal-data-viewer">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-xl font-semibold text-[#F0F6FF]">Portal Data</h1>
+            {lastCheckedStr && (
+              <p className="text-xs text-muted-foreground mt-0.5">{lastCheckedStr}</p>
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleManualRefresh}
+            disabled={refreshing}
+            className="gap-1.5"
+            data-testid="button-refresh"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+        <AccelaProjectView portalData={portalData as any} />
       </section>
     );
   }

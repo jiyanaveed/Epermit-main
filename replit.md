@@ -66,6 +66,14 @@ Preferred communication style: Simple, everyday language.
 -   **Strategy:** Utilizes explicit column selection in `useProjects` and other data hooks to avoid fetching large `portal_data` JSONB by default, enhancing performance.
 -   **Database Indexes:** Implemented for `agent_runs`, `shadow_predictions`, and `parsed_comments` to improve query performance.
 
+### AccelaProjectView (March 2026)
+- **Component**: `src/components/portal/AccelaProjectView.tsx` — dedicated UI for Accela portal records (Baltimore, DC DOB, Fairfax).
+- **Detection**: `PortalDataViewer.tsx` checks `portalData.portalType === "accela"` and renders `AccelaProjectView` instead of the generic tab viewer.
+- **Layout**: Top bar with record status + expiration date color-coded badges, left sidebar with processing status timeline (green check/grey clock icons), main tabbed content area.
+- **Tabs**: Files (with Supabase viewUrl links, failed download badges), Inspections (upcoming/completed sections, empty state), Links (related records with status), Plan Review (key/value display), Payments (fee table).
+- **Data mapping**: Reads from `tabs.status.departments`, `tabs.attachments.tables`, `tabs.inspections.tables`, `tabs.relatedRecords.tables`, `tabs.payments.tables`, `tabs.reports.pdfs`.
+- **Status badge colors**: Amber for expired, green for approved/issued, grey for closed, blue for pending/in-review, red for denied.
+
 ## External Dependencies
 
 -   **Supabase:** Primary backend for database, authentication, edge functions, and storage.
