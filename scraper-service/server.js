@@ -2264,14 +2264,19 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   }
 
   function isDuplicate(contentHash) {
-    if (!contentHash || !session?._downloadedHashes) return false;
-    const prevFile = session._downloadedHashes.get(contentHash);
-    if (prevFile) {
-      console.log(`      ⚠️ DUPLICATE DETECTED: ${fileName} has same content (md5: ${contentHash}) as previously downloaded "${prevFile}". Skipping upload.`);
-      return true;
+    if (!contentHash || !session?._downloadedHashes) return { dup: false };
+    const prev = session._downloadedHashes.get(contentHash);
+    if (prev) {
+      console.log(`      ⚠️ DUPLICATE DETECTED: ${fileName} has same content (md5: ${contentHash}) as previously downloaded "${prev.fileName}". Aliasing viewUrl.`);
+      return { dup: true, aliasUrl: prev.viewUrl || "" };
     }
-    session._downloadedHashes.set(contentHash, fileName);
-    return false;
+    return { dup: false };
+  }
+
+  function registerHash(contentHash, viewUrl) {
+    if (contentHash && session?._downloadedHashes) {
+      session._downloadedHashes.set(contentHash, { fileName, viewUrl: viewUrl || "" });
+    }
   }
 
   const JUNK_URL_PATTERNS = /pdfnet\.res|spinner\.gif|PDFNetCWasm|webviewer\.min|chunks\/|core\/.*\.js|ui\/.*\.css/i;
@@ -2281,12 +2286,14 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
   }
 
   const tryUploadAndClean = async (filePath, sizeMB, contentHash) => {
-    if (isDuplicate(contentHash)) {
+    const dupCheck = isDuplicate(contentHash);
+    if (dupCheck.dup) {
       try { fs.unlinkSync(filePath); } catch (_) {}
-      return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash, skippedDuplicate: true };
+      return { success: true, path: filePath, sizeMB, viewUrl: dupCheck.aliasUrl, contentHash, skippedDuplicate: true };
     }
     if (!projectId) {
       console.log(`      ⚠️ No projectId — keeping file locally: ${fileName}`);
+      registerHash(contentHash, "");
       return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash };
     }
     const storagePath = `drawings/${projectId}/${fileName}`;
@@ -2294,9 +2301,11 @@ async function downloadProjectDoxFile(page, context, fileId, fileName, webUiBase
     if (publicUrl) {
       console.log(`      ☁️  Uploaded to Supabase Storage: ${storagePath}`);
       try { fs.unlinkSync(filePath); } catch (_) {}
+      registerHash(contentHash, publicUrl);
       return { success: true, path: filePath, sizeMB, viewUrl: publicUrl, contentHash };
     }
     console.log(`      ⚠️ Supabase upload failed — keeping local copy: ${fileName}`);
+    registerHash(contentHash, "");
     return { success: true, path: filePath, sizeMB, viewUrl: "", contentHash };
   };
 
