@@ -423,40 +423,102 @@ async function searchPermit(page, portalUrl, permitNumber) {
 }
 // ==============================================================================
 
+async function waitForRecordDetail(page) {
+  const containerSelectors = [
+    '#ctl00_PlaceHolderMain_PermitDetailList',
+    '#ctl00_PlaceHolderMain_CAPDetail',
+    '[id*="PlaceHolderMain"][id*="Detail"]',
+    '[id*="PlaceHolderMain"][id*="Permit"]',
+    '[id*="PlaceHolderMain"][id*="Record"]',
+    '[id*="PlaceHolderMain"][id*="Cap"]',
+    '#ctl00_PlaceHolderMain_TabDataList',
+    '#ctl00_PlaceHolderMain_pnlContent',
+    '#ctl00_PlaceHolderMain',
+  ];
+
+  for (const sel of containerSelectors) {
+    const el = await page.waitForSelector(sel, { timeout: 8000 }).catch(() => null);
+    if (el) {
+      const text = await el.evaluate(e => e.textContent.substring(0, 120)).catch(() => "");
+      console.log(`  [DIAG:RECORD_CONTAINER] matched="${sel}" preview="${text.replace(/\s+/g, ' ').trim().substring(0, 100)}"`);
+      return sel;
+    }
+  }
+
+  console.log("  ⚠️ No record detail container found, will attempt extraction on full page");
+  return null;
+}
+
 async function extractRecordHeader(page) {
   console.log("  📋 Extracting record header...");
+
+  await waitForRecordDetail(page);
+
   const header = await page.evaluate(() => {
+    const _cSels = [
+      '#ctl00_PlaceHolderMain_PermitDetailList',
+      '#ctl00_PlaceHolderMain_CAPDetail',
+      '[id*="PlaceHolderMain"][id*="Detail"]',
+      '[id*="PlaceHolderMain"][id*="Permit"]',
+      '[id*="PlaceHolderMain"][id*="Record"]',
+      '[id*="PlaceHolderMain"][id*="Cap"]',
+      '#ctl00_PlaceHolderMain_TabDataList',
+      '#ctl00_PlaceHolderMain_pnlContent',
+      '#ctl00_PlaceHolderMain',
+    ];
+    let container = document.body;
+    for (const s of _cSels) {
+      const e = document.querySelector(s);
+      if (e && e.textContent.trim().length > 10) { container = e; break; }
+    }
+
     const fields = {};
+    const diag = { containerSelector: container === document.body ? "body" : (container.id || container.className || container.tagName) };
 
-    const capNumEl = document.querySelector(
-      '[id*="lblPermitNumber"], [id*="capNumber"], .aca_page_title, h1',
+    const capNumEl = container.querySelector(
+      '[id*="lblPermitNumber"], [id*="capNumber"], [id*="PermitNumber"], [id*="recordNumber"], .aca_page_title'
     );
-    if (capNumEl) fields.record_number = capNumEl.textContent.trim();
+    if (capNumEl) {
+      fields.record_number = capNumEl.textContent.trim();
+      diag.record_number_sel = capNumEl.id || capNumEl.className || capNumEl.tagName;
+    }
 
-    const typeEl = document.querySelector(
-      '[id*="lblPermitType"], [id*="lblCapType"]',
+    const typeEl = container.querySelector(
+      '[id*="lblPermitType"], [id*="lblCapType"], [id*="RecordType"]'
     );
-    if (typeEl) fields.record_type = typeEl.textContent.trim();
+    if (typeEl) {
+      fields.record_type = typeEl.textContent.trim();
+      diag.record_type_sel = typeEl.id || typeEl.className;
+    }
 
-    const statusEl = document.querySelector(
-      '[id*="lblPermitStatus"], [id*="lblCapStatus"], [id*="Status"]',
+    const statusEl = container.querySelector(
+      '[id*="lblPermitStatus"], [id*="lblCapStatus"], [id*="PermitStatus"], [id*="RecordStatus"]'
     );
-    if (statusEl) fields.record_status = statusEl.textContent.trim();
+    if (statusEl) {
+      fields.record_status = statusEl.textContent.trim();
+      diag.record_status_sel = statusEl.id || statusEl.className;
+    }
 
-    const allSpans = document.querySelectorAll("span, td");
-    for (const el of allSpans) {
+    const spans = container.querySelectorAll("span, td");
+    for (const el of spans) {
       const text = el.textContent.trim();
       if (text.includes("Expiration") || text.includes("Expire")) {
         const next = el.nextElementSibling;
-        if (next) fields.expiration_date = next.textContent.trim();
+        if (next) {
+          const val = next.textContent.trim();
+          if (val && val.length < 30) fields.expiration_date = val;
+        }
       }
     }
 
+    fields._diag = diag;
     return fields;
   });
-  console.log(
-    `     Record: ${header.record_number || "unknown"} | Status: ${header.record_status || "unknown"}`,
-  );
+
+  const diag = header._diag || {};
+  delete header._diag;
+  console.log(`     Record: ${header.record_number || "unknown"} | Status: ${header.record_status || "unknown"}`);
+  console.log(`     [DIAG:HEADER] container=${diag.containerSelector} number=${diag.record_number_sel || "none"} type=${diag.record_type_sel || "none"} status=${diag.record_status_sel || "none"}`);
   return header;
 }
 
@@ -492,10 +554,14 @@ async function extractRecordDetails(page) {
   }
 
   const details = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let container = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+
     const tables = [];
     const fields = {};
 
-    document
+    container
       .querySelectorAll(
         "table.ACA_TBody tr, table[id*='Detail'] tr, .aca_table_row, div.ACA_TabRow",
       )
@@ -512,7 +578,7 @@ async function extractRecordDetails(page) {
         }
       });
 
-    document
+    container
       .querySelectorAll("span.ACA_Label, label, td.ACA_AlignLeftOrRightTop")
       .forEach((labelEl) => {
         const label = labelEl.textContent.trim().replace(/:$/, "").trim();
@@ -576,8 +642,12 @@ async function extractProcessingStatus(page) {
   await page.waitForTimeout(2000);
 
   const departments = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let container = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+
     const depts = [];
-    const rows = document.querySelectorAll(
+    const rows = container.querySelectorAll(
       '[id*="WorkflowTask"], [id*="ProcessStatus"] tr, .workflow-task, li[id*="task"]',
     );
 
@@ -620,7 +690,7 @@ async function extractProcessingStatus(page) {
     });
 
     if (depts.length === 0) {
-      const allTables = document.querySelectorAll("table");
+      const allTables = container.querySelectorAll("table");
       for (const table of allTables) {
         const headerRow = table.querySelector("tr");
         if (!headerRow) continue;
@@ -685,9 +755,13 @@ async function extractPlanReview(page) {
   }
 
   const comments = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let container = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+
     const results = [];
 
-    document
+    container
       .querySelectorAll(
         '[id*="ReviewComment"] tr, [id*="PlanReview"] tr, table[id*="Comment"] tr',
       )
@@ -712,11 +786,11 @@ async function extractPlanReview(page) {
       });
 
     if (results.length === 0) {
-      const container = document.querySelector(
+      const fallback = container.querySelector(
         '[id*="ReviewComment"], [id*="PlanReview"], [id*="Comment"]',
       );
-      if (container) {
-        const text = container.textContent.trim();
+      if (fallback) {
+        const text = fallback.textContent.trim();
         if (text.length > 20) {
           results.push({
             reviewer: "",
@@ -771,8 +845,12 @@ async function extractRelatedRecords(page) {
   }
 
   const records = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let container = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+
     const results = [];
-    document
+    container
       .querySelectorAll('[id*="RelatedRecord"] tr, [id*="Related"] table tr')
       .forEach((row) => {
         const cells = row.querySelectorAll("td");
@@ -829,8 +907,12 @@ async function extractAttachments(
   }
 
   const attachments = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let container = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+
     const results = [];
-    document
+    container
       .querySelectorAll('[id*="Attachment"] tr, [id*="Document"] tr')
       .forEach((row) => {
         const cells = row.querySelectorAll("td");
@@ -1129,6 +1211,10 @@ async function extractInspections(page) {
   }
 
   const inspData = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let mainContainer = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { mainContainer = e; break; } }
+
     const upcoming = [];
     const completed = [];
     const all = [];
@@ -1161,10 +1247,10 @@ async function extractInspections(page) {
       });
     }
 
-    const upcomingSection = document.querySelector(
+    const upcomingSection = mainContainer.querySelector(
       '[id*="Upcoming"], [id*="upcoming"], [id*="Scheduled"], [id*="scheduled"]',
     );
-    const completedSection = document.querySelector(
+    const completedSection = mainContainer.querySelector(
       '[id*="Completed"], [id*="completed"], [id*="History"], [id*="history"]',
     );
 
@@ -1184,7 +1270,7 @@ async function extractInspections(page) {
     }
 
     if (all.length === 0) {
-      document
+      mainContainer
         .querySelectorAll('[id*="Inspection"] tr, [id*="inspection"] tr')
         .forEach((row) => {
           const cells = row.querySelectorAll("td");
@@ -1258,8 +1344,12 @@ async function extractPayments(page) {
   }
 
   const payments = await page.evaluate(() => {
+    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    let container = document.body;
+    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+
     const results = [];
-    document
+    container
       .querySelectorAll('[id*="Payment"] tr, [id*="Fee"] tr')
       .forEach((row) => {
         const cells = row.querySelectorAll("td");
