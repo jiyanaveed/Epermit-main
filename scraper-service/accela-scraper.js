@@ -1302,8 +1302,16 @@ async function scrapeAccelaRecord(
   uploadToSupabaseStorage,
   sanitizeStorageKey,
 ) {
-  const { context, portalUrl } = session;
-  const page = await context.newPage();
+  const { portalUrl } = session;
+  const page = session.page || (session.context ? session.context.pages()[0] : null);
+  if (!page) {
+    throw new Error("No authenticated page found in session — cannot start Accela scrape");
+  }
+  const currentUrl = page.url();
+  console.log(`  [GUARD] Starting scrape on existing page. URL: ${currentUrl}`);
+  if (currentUrl === "about:blank" || !currentUrl || currentUrl === "") {
+    throw new Error(`Authenticated page is blank (url=${currentUrl}) — session may be corrupt`);
+  }
   const TIMEOUT = 600000;
   const startTime = Date.now();
 
@@ -1605,8 +1613,8 @@ async function scrapeAccelaRecord(
 
     console.log(`  ✅ Accela scrape complete for ${permitNumber}`);
     return portalData;
-  } finally {
-    await page.close().catch(() => {});
+  } catch (err) {
+    throw err;
   }
 }
 
