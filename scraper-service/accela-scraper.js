@@ -19,17 +19,21 @@ async function findFieldInFrames(page, selectors) {
   return null;
 }
 
-async function waitForAccelaLoad(page, timeoutMs = 30000) {
-  await page
-    .waitForLoadState("networkidle", { timeout: timeoutMs })
-    .catch(() => {});
-  await page
+async function waitForAccelaLoad(pageOrFrame, timeoutMs = 30000) {
+  if (typeof pageOrFrame.waitForLoadState === "function") {
+    await pageOrFrame.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
+  }
+  await pageOrFrame
     .waitForSelector(".aca_loading, .ACA_Loading, .loading-mask", {
       state: "detached",
       timeout: 10000,
     })
     .catch(() => {});
-  await page.waitForTimeout(1500);
+  if (typeof pageOrFrame.waitForTimeout === "function") {
+    await pageOrFrame.waitForTimeout(1500);
+  } else {
+    await new Promise(r => setTimeout(r, 1500));
+  }
 }
 
 async function clickAccelaLink(page, selectors, label) {
@@ -357,104 +361,204 @@ async function searchPermit(page, portalUrl, permitNumber) {
     }
   }
 
-  // Step 4: Find and click the permit link (3-tier approach)
+  // Step 4: Find the permit link (3-tier approach) — collect info before clicking
   console.log("  Scanning for permit link...");
 
-  // Try 1: Playwright has-text selector
+  let foundLink = null;
+  let foundFrame = null;
+  let foundInfo = {};
+
+  // Try 1: Playwright has-text selector on main page
   const permitLink = await page.$(`a:has-text("${permitNumber}")`);
   if (permitLink && (await permitLink.isVisible().catch(() => false))) {
-    console.log("  ✅ Found permit via has-text selector");
-    await Promise.all([
-      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-      permitLink.click(),
-    ]);
-    await waitForAccelaLoad(page);
-    return;
+    foundLink = permitLink;
+    foundFrame = page;
+    const href = await permitLink.getAttribute("href").catch(() => "") || "";
+    const text = (await permitLink.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    foundInfo = { method: "has-text", text, href, frameName: "main", frameUrl: page.url() };
   }
 
-  // Try 2: Scan all anchors with normalized text (handles whitespace/newlines)
-  const allLinks = await page.$$("a");
-  for (const link of allLinks) {
-    const text = (await link.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-    if (text === permitNumber || text.includes(permitNumber)) {
-      const visible = await link.isVisible().catch(() => false);
-      if (visible) {
-        console.log("  ✅ Found permit by scanning anchors:", text);
-        await Promise.all([
-          page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
-          link.click(),
-        ]);
-        await waitForAccelaLoad(page);
-        return;
+  // Try 2: Scan all anchors with normalized text
+  if (!foundLink) {
+    const allLinks = await page.$$("a");
+    for (const link of allLinks) {
+      const text = (await link.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      if (text === permitNumber || text.includes(permitNumber)) {
+        const visible = await link.isVisible().catch(() => false);
+        if (visible) {
+          const href = await link.getAttribute("href").catch(() => "") || "";
+          foundLink = link;
+          foundFrame = page;
+          foundInfo = { method: "anchor-scan", text, href, frameName: "main", frameUrl: page.url() };
+          break;
+        }
       }
     }
   }
 
-  // Try 3: Frame-aware evaluate scan (searches all frames)
-  for (const frame of page.frames()) {
-    const found = await frame.evaluate((target) => {
+  // Try 3: Frame-aware scan
+  if (!foundLink) {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const linkData = await frame.evaluate((target) => {
+        const anchors = Array.from(document.querySelectorAll("a"));
+        const match = anchors.find((a) => {
+          const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+          return text.includes(target) && a.offsetWidth > 0;
+        });
+        if (match) {
+          return { text: match.textContent.replace(/\s+/g, " ").trim(), href: match.href || "" };
+        }
+        return null;
+      }, permitNumber).catch(() => null);
+
+      if (linkData) {
+        foundFrame = frame;
+        foundInfo = { method: "frame-evaluate", text: linkData.text, href: linkData.href, frameName: frame.name() || "(unnamed)", frameUrl: frame.url().substring(0, 100) };
+        break;
+      }
+    }
+  }
+
+  if (!foundLink && !foundInfo.method) {
+    const visibleTexts = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("a"))
+        .filter((a) => a.offsetWidth > 0)
+        .slice(0, 25)
+        .map((a) => (a.textContent || "").replace(/\s+/g, " ").trim().substring(0, 80));
+    });
+    console.log("  Visible anchor texts:", JSON.stringify(visibleTexts.filter(t => t.length > 0)));
+    await dumpPageDiagnostics(page, "PERMIT_NOT_FOUND");
+    await page.screenshot({ path: "grid_not_found.png", fullPage: true }).catch(() => {});
+    throw new Error(`Permit ${permitNumber} not found in the records list.`);
+  }
+
+  // Step 5: Click the permit link with diagnostics
+  console.log(`  ✅ Found permit link: method=${foundInfo.method} text="${foundInfo.text}" href="${(foundInfo.href || "").substring(0, 100)}" frame=${foundInfo.frameName}`);
+
+  const urlBefore = page.url();
+
+  if (foundLink) {
+    await Promise.all([
+      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {}),
+      foundLink.click(),
+    ]);
+  } else if (foundFrame && foundInfo.method === "frame-evaluate") {
+    await foundFrame.evaluate((target) => {
       const anchors = Array.from(document.querySelectorAll("a"));
       const match = anchors.find((a) => {
         const text = (a.textContent || "").replace(/\s+/g, " ").trim();
         return text.includes(target) && a.offsetWidth > 0;
       });
-      if (match) { match.click(); return true; }
-      return false;
-    }, permitNumber).catch(() => false);
+      if (match) match.click();
+    }, permitNumber).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+  }
 
-    if (found) {
-      console.log("  ✅ Found permit via frame evaluate");
-      await waitForAccelaLoad(page);
-      return;
+  await waitForAccelaLoad(page);
+
+  // Step 6: Verify the record detail actually loaded
+  console.log("  ⏳ Verifying record detail loaded...");
+  const urlAfter = page.url();
+  console.log(`  [DIAG:POST_CLICK] urlBefore=${urlBefore.substring(0, 100)}`);
+  console.log(`  [DIAG:POST_CLICK] urlAfter=${urlAfter.substring(0, 100)}`);
+
+  // Dump all frame content to find where the real record lives
+  const allFrames = page.frames();
+  let recordFrame = null;
+  for (let i = 0; i < allFrames.length; i++) {
+    const f = allFrames[i];
+    const fUrl = f.url();
+    const fName = f.name() || "(unnamed)";
+    const preview = await f.evaluate(() => {
+      return document.body ? document.body.innerText.substring(0, 300).replace(/\s+/g, " ").trim() : "";
+    }).catch(() => "(inaccessible)");
+    console.log(`  [DIAG:FRAME ${i}] name="${fName}" url=${fUrl.substring(0, 120)}`);
+    console.log(`  [DIAG:FRAME ${i}] preview="${preview.substring(0, 200)}"`);
+
+    if (fUrl.includes("Cap/CapDetail") || fUrl.includes("capDetail") || fUrl.includes("Record") || fUrl.includes("permit")) {
+      recordFrame = f;
+      console.log(`  ✅ Record detail frame identified: ${fName}`);
     }
   }
 
-  // All attempts failed — capture diagnostics
-  const visibleTexts = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll("a"))
-      .filter((a) => a.offsetWidth > 0)
-      .slice(0, 25)
-      .map((a) => a.textContent.replace(/\s+/g, " ").trim().substring(0, 80));
-  });
-  console.log("  Visible anchor texts:", JSON.stringify(visibleTexts.filter(t => t.length > 0)));
-  await dumpPageDiagnostics(page, "PERMIT_NOT_FOUND");
-  await page.screenshot({ path: "grid_not_found.png", fullPage: true }).catch(() => {});
-  throw new Error(`Permit ${permitNumber} not found in the records list.`);
+  // Also check if the permit number appears in any frame's text
+  if (!recordFrame) {
+    for (const f of allFrames) {
+      const hasPermit = await f.evaluate((pn) => {
+        return document.body ? document.body.innerText.includes(pn) : false;
+      }, permitNumber).catch(() => false);
+      if (hasPermit && f !== page.mainFrame()) {
+        recordFrame = f;
+        console.log(`  ✅ Record frame found by permit number match: ${f.name() || f.url().substring(0, 80)}`);
+        break;
+      }
+      if (hasPermit && f === page.mainFrame()) {
+        console.log(`  ✅ Permit number found in main frame`);
+      }
+    }
+  }
+
+  // Wait for real record detail content with strong signals
+  await waitForRecordDetailStrong(page, recordFrame, permitNumber);
+
+  // Store the record frame on page for extraction functions to use
+  page._recordFrame = recordFrame;
 }
 // ==============================================================================
 
-async function waitForRecordDetail(page) {
-  const containerSelectors = [
-    '#ctl00_PlaceHolderMain_PermitDetailList',
-    '#ctl00_PlaceHolderMain_CAPDetail',
-    '[id*="PlaceHolderMain"][id*="Detail"]',
-    '[id*="PlaceHolderMain"][id*="Permit"]',
-    '[id*="PlaceHolderMain"][id*="Record"]',
-    '[id*="PlaceHolderMain"][id*="Cap"]',
-    '#ctl00_PlaceHolderMain_TabDataList',
-    '#ctl00_PlaceHolderMain_pnlContent',
-    '#ctl00_PlaceHolderMain',
+async function waitForRecordDetailStrong(page, recordFrame, permitNumber) {
+  const contexts = recordFrame ? [recordFrame, page] : [page];
+  const detailSignals = [
+    '[id*="lblPermitNumber"]', '[id*="capNumber"]', '[id*="PermitNumber"]',
+    '[id*="lblPermitType"]', '[id*="lblCapType"]',
+    '[id*="lblPermitStatus"]', '[id*="lblCapStatus"]',
+    '[id*="PermitDetailList"]', '[id*="CAPDetail"]',
+    '.aca_page_title',
+    '[id*="TabDataList"]',
   ];
 
-  for (const sel of containerSelectors) {
-    const el = await page.waitForSelector(sel, { timeout: 8000 }).catch(() => null);
-    if (el) {
-      const text = await el.evaluate(e => e.textContent.substring(0, 120)).catch(() => "");
-      console.log(`  [DIAG:RECORD_CONTAINER] matched="${sel}" preview="${text.replace(/\s+/g, ' ').trim().substring(0, 100)}"`);
-      return sel;
+  for (let elapsed = 0; elapsed < 20000; elapsed += 2000) {
+    for (const ctx of contexts) {
+      for (const sel of detailSignals) {
+        const el = await ctx.$(sel).catch(() => null);
+        if (el) {
+          const text = await el.evaluate(e => (e.textContent || "").trim().substring(0, 80)).catch(() => "");
+          const ctxName = ctx === page ? "main" : (ctx.name ? ctx.name() || "frame" : "frame");
+          console.log(`  ✅ Record detail signal found: sel="${sel}" text="${text}" in ${ctxName}`);
+          return ctx;
+        }
+      }
+      // Also check if permit number appears in context body text
+      const hasPermitText = await ctx.evaluate((pn) => {
+        return document.body ? document.body.innerText.includes(pn) : false;
+      }, permitNumber).catch(() => false);
+      if (hasPermitText) {
+        const ctxName = ctx === page ? "main" : (ctx.name ? ctx.name() || "frame" : "frame");
+        console.log(`  ✅ Permit number "${permitNumber}" found in ${ctxName} body text`);
+        return ctx;
+      }
     }
+    await page.waitForTimeout(2000);
   }
 
-  console.log("  ⚠️ No record detail container found, will attempt extraction on full page");
-  return null;
+  console.log("  ⚠️ No strong record detail signals found after 20s, proceeding with best-effort extraction");
+  await page.screenshot({ path: "record_not_loaded.png", fullPage: true }).catch(() => {});
+  return contexts[0];
+}
+
+function getExtractionContext(page) {
+  return page._recordFrame || page;
 }
 
 async function extractRecordHeader(page) {
   console.log("  📋 Extracting record header...");
 
-  await waitForRecordDetail(page);
+  const ctx = getExtractionContext(page);
+  const ctxLabel = ctx === page ? "main page" : "record frame";
+  console.log(`  Extracting header from: ${ctxLabel}`);
 
-  const header = await page.evaluate(() => {
+  const header = await ctx.evaluate(() => {
     const _cSels = [
       '#ctl00_PlaceHolderMain_PermitDetailList',
       '#ctl00_PlaceHolderMain_CAPDetail',
@@ -524,9 +628,10 @@ async function extractRecordHeader(page) {
 
 async function extractRecordDetails(page) {
   console.log("  📋 Extracting record details...");
+  const ctx = getExtractionContext(page);
 
   await clickAccelaLink(
-    page,
+    ctx,
     [
       'a:has-text("Record Info")',
       'a[id*="RecordInfo"]',
@@ -536,7 +641,7 @@ async function extractRecordDetails(page) {
   );
 
   await clickAccelaLink(
-    page,
+    ctx,
     [
       'a:has-text("Record Details")',
       'a:has-text("Record Detail")',
@@ -545,7 +650,7 @@ async function extractRecordDetails(page) {
     "Record Details",
   );
 
-  const moreDetailsBtn = await page.$(
+  const moreDetailsBtn = await ctx.$(
     'a:has-text("More Details"), a:has-text("Show More"), [id*="MoreDetail"]',
   );
   if (moreDetailsBtn && (await moreDetailsBtn.isVisible().catch(() => false))) {
@@ -553,7 +658,7 @@ async function extractRecordDetails(page) {
     await waitForAccelaLoad(page);
   }
 
-  const details = await page.evaluate(() => {
+  const details = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let container = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
@@ -617,9 +722,10 @@ async function extractRecordDetails(page) {
 
 async function extractProcessingStatus(page) {
   console.log("  📋 Extracting processing status...");
+  const ctx = getExtractionContext(page);
 
   const found = await clickAccelaLink(
-    page,
+    ctx,
     [
       'a:has-text("Processing Status")',
       'a[id*="ProcessingStatus"]',
@@ -632,16 +738,16 @@ async function extractProcessingStatus(page) {
     return { departments: [], screenshot: null };
   }
 
-  const expandButtons = await page.$$(
+  const expandButtons = await ctx.$$(
     '[id*="expand"], .collapse-icon, a[onclick*="expand"], img[src*="expand"], .aca_expand',
-  );
+  ).catch(() => []);
   for (const btn of expandButtons) {
     await btn.click().catch(() => {});
     await page.waitForTimeout(500);
   }
   await page.waitForTimeout(2000);
 
-  const departments = await page.evaluate(() => {
+  const departments = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let container = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
@@ -743,9 +849,10 @@ async function extractProcessingStatus(page) {
 
 async function extractPlanReview(page) {
   console.log("  📋 Extracting plan review comments...");
+  const ctx = getExtractionContext(page);
 
   const found = await clickAccelaLink(
-    page,
+    ctx,
     ['a:has-text("Plan Review")', 'a[id*="PlanReview"]'],
     "Plan Review",
   );
@@ -754,7 +861,7 @@ async function extractPlanReview(page) {
     return { comments: [], text: "", screenshot: null };
   }
 
-  const comments = await page.evaluate(() => {
+  const comments = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let container = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
@@ -805,7 +912,7 @@ async function extractPlanReview(page) {
     return results;
   });
 
-  const pageText = await page.evaluate(() => {
+  const pageText = await ctx.evaluate(() => {
     const container = document.querySelector(
       '[id*="ReviewComment"], [id*="PlanReview"], main, #mainContent',
     );
@@ -825,9 +932,10 @@ async function extractPlanReview(page) {
 
 async function extractRelatedRecords(page) {
   console.log("  📋 Extracting related records...");
+  const ctx = getExtractionContext(page);
 
   const found = await clickAccelaLink(
-    page,
+    ctx,
     ['a:has-text("Related Records")', 'a[id*="RelatedRecord"]'],
     "Related Records",
   );
@@ -836,7 +944,7 @@ async function extractRelatedRecords(page) {
     return { records: [], screenshot: null };
   }
 
-  const viewTree = await page.$(
+  const viewTree = await ctx.$(
     'a:has-text("View Entire Tree"), a:has-text("Entire Tree")',
   );
   if (viewTree && (await viewTree.isVisible().catch(() => false))) {
@@ -844,7 +952,7 @@ async function extractRelatedRecords(page) {
     await waitForAccelaLoad(page);
   }
 
-  const records = await page.evaluate(() => {
+  const records = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let container = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
@@ -889,9 +997,10 @@ async function extractAttachments(
   sanitizeFn,
 ) {
   console.log("  📋 Extracting attachments...");
+  const ctx = getExtractionContext(page);
 
   const found = await clickAccelaLink(
-    page,
+    ctx,
     [
       'a:has-text("Attachments")',
       'a:has-text("Attachment")',
@@ -906,7 +1015,7 @@ async function extractAttachments(
     return { attachments: [], screenshot: null };
   }
 
-  const attachments = await page.evaluate(() => {
+  const attachments = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let container = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
@@ -1195,9 +1304,10 @@ async function tryUploadAccelaFile(
 
 async function extractInspections(page) {
   console.log("  📋 Extracting inspections...");
+  const ctx = getExtractionContext(page);
 
   const found = await clickAccelaLink(
-    page,
+    ctx,
     [
       'a:has-text("Inspections")',
       'a:has-text("Inspection")',
@@ -1210,7 +1320,7 @@ async function extractInspections(page) {
     return { inspections: [], upcoming: [], completed: [], screenshot: null };
   }
 
-  const inspData = await page.evaluate(() => {
+  const inspData = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let mainContainer = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { mainContainer = e; break; } }
@@ -1327,9 +1437,10 @@ async function extractInspections(page) {
 
 async function extractPayments(page) {
   console.log("  📋 Extracting payments...");
+  const ctx = getExtractionContext(page);
 
   const found = await clickAccelaLink(
-    page,
+    ctx,
     [
       'a:has-text("Payments")',
       'a:has-text("Payment")',
@@ -1343,7 +1454,7 @@ async function extractPayments(page) {
     return { payments: [], screenshot: null };
   }
 
-  const payments = await page.evaluate(() => {
+  const payments = await ctx.evaluate(() => {
     const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
     let container = document.body;
     for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
