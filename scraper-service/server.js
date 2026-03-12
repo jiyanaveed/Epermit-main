@@ -1836,6 +1836,8 @@ async function extractFilesTab(_page, _context, session, commentsOnly = false, s
           continue;
         }
         console.log(`       ⚠️ Grid empty but folder claims ${fileCount} files — DOM may not have loaded after crash recovery`);
+        result.folders.push({ name: folderName, fileCount, files: [], folderError: "browser_crashed" });
+        continue;
       }
 
       if (filesFound.length > 0) {
