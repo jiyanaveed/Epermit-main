@@ -21,7 +21,9 @@ async function findFieldInFrames(page, selectors) {
 
 async function waitForAccelaLoad(pageOrFrame, timeoutMs = 30000) {
   if (typeof pageOrFrame.waitForLoadState === "function") {
-    await pageOrFrame.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
+    await pageOrFrame
+      .waitForLoadState("networkidle", { timeout: timeoutMs })
+      .catch(() => {});
   }
   await pageOrFrame
     .waitForSelector(".aca_loading, .ACA_Loading, .loading-mask", {
@@ -32,27 +34,32 @@ async function waitForAccelaLoad(pageOrFrame, timeoutMs = 30000) {
   if (typeof pageOrFrame.waitForTimeout === "function") {
     await pageOrFrame.waitForTimeout(1500);
   } else {
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 1500));
   }
 }
 
-async function clickAccelaLink(page, selectors, label) {
+async function clickAccelaLink(pageOrFrame, selectors, label) {
   for (const sel of selectors) {
-    const link = await page.$(sel);
-    if (link && (await link.isVisible().catch(() => false))) {
-      console.log(`     Clicking "${label}"...`);
-      try {
-        await link.click();
-        await waitForAccelaLoad(page);
+    try {
+      const link = await pageOrFrame.$(sel);
+      if (link && (await link.isVisible().catch(() => false))) {
+        console.log(`     Clicking "${label}" via ${sel}...`);
+        await link.click({ force: true }).catch(async () => {
+          await pageOrFrame.evaluate((selector) => {
+            const el = document.querySelector(selector);
+            if (el) el.click();
+          }, sel);
+        });
+        await waitForAccelaLoad(pageOrFrame);
         return true;
-      } catch (clickErr) {
-        console.log(
-          `     ⚠️ Click failed for "${label}" (${sel}): ${clickErr.message}, trying next selector...`,
-        );
-        continue;
       }
+    } catch (clickErr) {
+      console.log(
+        `     ⚠️ Click failed for "${label}" (${sel}): ${clickErr.message}`,
+      );
     }
   }
+
   console.log(`     "${label}" link not found — skipping`);
   return false;
 }
@@ -60,26 +67,40 @@ async function clickAccelaLink(page, selectors, label) {
 async function dumpPageDiagnostics(page, label) {
   const url = page.url();
   const title = await page.title().catch(() => "(unknown)");
-  const loginFormVisible = !!(await findFieldInFrames(page, ['input[type="password"]']));
+  const loginFormVisible = !!(await findFieldInFrames(page, [
+    'input[type="password"]',
+  ]));
   const logoutVisible = !!(await findFieldInFrames(page, [
-    'a:has-text("Logout")', 'a:has-text("Log Out")', 'a:has-text("Sign Out")',
+    'a:has-text("Logout")',
+    'a:has-text("Log Out")',
+    'a:has-text("Sign Out")',
   ]));
   const welcomeVisible = !!(await findFieldInFrames(page, [
-    '#ctl00_HeaderNavigation_lblWelcome', '[id*="lblWelcome"]',
+    "#ctl00_HeaderNavigation_lblWelcome",
+    '[id*="lblWelcome"]',
   ]));
   const frames = page.frames();
-  const frameInfo = frames.map((f, i) => `${i}:${f.name() || "(unnamed)"}@${f.url().substring(0, 80)}`);
+  const frameInfo = frames.map(
+    (f, i) => `${i}:${f.name() || "(unnamed)"}@${f.url().substring(0, 80)}`,
+  );
   console.log(`  [DIAG:${label}] url=${url}`);
   console.log(`  [DIAG:${label}] title=${title}`);
-  console.log(`  [DIAG:${label}] loginFormVisible=${loginFormVisible} logoutVisible=${logoutVisible} welcomeVisible=${welcomeVisible}`);
-  console.log(`  [DIAG:${label}] frames(${frames.length}): ${frameInfo.join(" | ")}`);
+  console.log(
+    `  [DIAG:${label}] loginFormVisible=${loginFormVisible} logoutVisible=${logoutVisible} welcomeVisible=${welcomeVisible}`,
+  );
+  console.log(
+    `  [DIAG:${label}] frames(${frames.length}): ${frameInfo.join(" | ")}`,
+  );
 }
 
 async function findAuthLandmark(page) {
   const selectors = [
-    'a:has-text("Logout")', 'a:has-text("Log Out")', 'a:has-text("Sign Out")',
-    '#ctl00_HeaderNavigation_lblWelcome',
-    'a:has-text("My Account")', 'a:has-text("My Records")',
+    'a:has-text("Logout")',
+    'a:has-text("Log Out")',
+    'a:has-text("Sign Out")',
+    "#ctl00_HeaderNavigation_lblWelcome",
+    'a:has-text("My Account")',
+    'a:has-text("My Records")',
     '[id*="lblWelcome"]',
   ];
   return !!(await findFieldInFrames(page, selectors));
@@ -91,7 +112,9 @@ async function findLoginFrame(page) {
     const nameMatch = (frame.name() || "").toLowerCase().includes("login");
     const urlMatch = frame.url().toLowerCase().includes("login");
     if (nameMatch || urlMatch) {
-      console.log(`  Found LoginFrame: name="${frame.name()}" url=${frame.url().substring(0, 100)}`);
+      console.log(
+        `  Found LoginFrame: name="${frame.name()}" url=${frame.url().substring(0, 100)}`,
+      );
       return frame;
     }
   }
@@ -115,25 +138,49 @@ async function dumpLoginFrameDiagnostics(frame, label) {
   }
   const url = frame.url();
   const userStillVisible = !!(await findFieldInContext(frame, [
-    'input[name*="txtUserId"]', 'input[name*="UserName"]', 'input[id*="UserId"]',
-    'input[type="text"][id*="User"]', 'input[type="email"]',
+    'input[name*="txtUserId"]',
+    'input[name*="UserName"]',
+    'input[id*="UserId"]',
+    'input[type="text"][id*="User"]',
+    'input[type="email"]',
   ]));
-  const passStillVisible = !!(await findFieldInContext(frame, ['input[type="password"]']));
-  const btnDisabled = await frame.evaluate(() => {
-    const btn = document.querySelector('button[type="submit"], input[type="submit"], a[id*="btnLogin"]');
-    return btn ? btn.disabled || btn.getAttribute("disabled") !== null : "no_btn";
-  }).catch(() => "eval_error");
-  const errorText = await frame.evaluate(() => {
-    const errorSels = ['.ACA_Error', '.error-message', '[id*="Error"]', '[id*="error"]',
-      '.font11px', '.validation-summary-errors', '[class*="alert"]', '[class*="error"]'];
-    for (const sel of errorSels) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetWidth > 0 && el.textContent.trim()) return el.textContent.trim().substring(0, 200);
-    }
-    return "";
-  }).catch(() => "");
+  const passStillVisible = !!(await findFieldInContext(frame, [
+    'input[type="password"]',
+  ]));
+  const btnDisabled = await frame
+    .evaluate(() => {
+      const btn = document.querySelector(
+        'button[type="submit"], input[type="submit"], a[id*="btnLogin"]',
+      );
+      return btn
+        ? btn.disabled || btn.getAttribute("disabled") !== null
+        : "no_btn";
+    })
+    .catch(() => "eval_error");
+  const errorText = await frame
+    .evaluate(() => {
+      const errorSels = [
+        ".ACA_Error",
+        ".error-message",
+        '[id*="Error"]',
+        '[id*="error"]',
+        ".font11px",
+        ".validation-summary-errors",
+        '[class*="alert"]',
+        '[class*="error"]',
+      ];
+      for (const sel of errorSels) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetWidth > 0 && el.textContent.trim())
+          return el.textContent.trim().substring(0, 200);
+      }
+      return "";
+    })
+    .catch(() => "");
   console.log(`  [DIAG:${label}] LoginFrame url=${url}`);
-  console.log(`  [DIAG:${label}] userFieldVisible=${userStillVisible} passFieldVisible=${passStillVisible} btnDisabled=${btnDisabled}`);
+  console.log(
+    `  [DIAG:${label}] userFieldVisible=${userStillVisible} passFieldVisible=${passStillVisible} btnDisabled=${btnDisabled}`,
+  );
   if (errorText) console.log(`  [DIAG:${label}] errorText="${errorText}"`);
 }
 
@@ -147,7 +194,9 @@ async function accelaLogin(page, username, password, portalUrl) {
   const loginFrame = await findLoginFrame(page);
 
   const contexts = loginFrame ? [loginFrame, page] : [page];
-  console.log(`  Login context: ${loginFrame ? "LoginFrame (primary)" : "main page (no LoginFrame found)"}`);
+  console.log(
+    `  Login context: ${loginFrame ? "LoginFrame (primary)" : "main page (no LoginFrame found)"}`,
+  );
 
   const userSelectors = [
     "#ctl00_PlaceHolderMain_LoginBox_txtUserId",
@@ -181,9 +230,13 @@ async function accelaLogin(page, username, password, portalUrl) {
   if (!userField) {
     await dumpPageDiagnostics(page, "NO_USER_FIELD");
     await dumpLoginFrameDiagnostics(loginFrame, "NO_USER_FIELD");
-    throw new Error("Cannot find Accela username field in LoginFrame or main page");
+    throw new Error(
+      "Cannot find Accela username field in LoginFrame or main page",
+    );
   }
-  console.log(`  Found username field in ${activeContext === loginFrame ? "LoginFrame" : "main page"}`);
+  console.log(
+    `  Found username field in ${activeContext === loginFrame ? "LoginFrame" : "main page"}`,
+  );
   await userField.fill(username);
   console.log("  Filled username");
 
@@ -223,7 +276,10 @@ async function accelaLogin(page, username, password, portalUrl) {
     for (const a of allAnchors) {
       const text = (await a.textContent().catch(() => "")).trim().toUpperCase();
       const visible = await a.isVisible().catch(() => false);
-      if (visible && (text === "SIGN IN" || text === "LOG IN" || text === "LOGIN")) {
+      if (
+        visible &&
+        (text === "SIGN IN" || text === "LOG IN" || text === "LOGIN")
+      ) {
         loginBtn = a;
         break;
       }
@@ -247,16 +303,20 @@ async function accelaLogin(page, username, password, portalUrl) {
     await page.waitForTimeout(2000);
 
     if (loginFrame) {
-      const frameStillExists = page.frames().some(f => f === loginFrame);
+      const frameStillExists = page.frames().some((f) => f === loginFrame);
       if (!frameStillExists) {
         console.log("  ✅ LoginFrame detached — login succeeded");
         loginSucceeded = true;
         break;
       }
 
-      const loginFormGone = !(await findFieldInContext(loginFrame, ['input[type="password"]']));
+      const loginFormGone = !(await findFieldInContext(loginFrame, [
+        'input[type="password"]',
+      ]));
       if (loginFormGone) {
-        console.log("  ✅ Login form disappeared from LoginFrame — login succeeded");
+        console.log(
+          "  ✅ Login form disappeared from LoginFrame — login succeeded",
+        );
         loginSucceeded = true;
         break;
       }
@@ -278,43 +338,60 @@ async function accelaLogin(page, username, password, portalUrl) {
   }
 
   if (loginFrame) {
-    const errorText = await loginFrame.evaluate(() => {
-      const errorSels = ['.ACA_Error', '.error-message', '[id*="Error"]', '[id*="error"]',
-        '.font11px', '.validation-summary-errors', '[class*="alert"]', '[class*="error"]'];
-      for (const sel of errorSels) {
-        const el = document.querySelector(sel);
-        if (el && el.offsetWidth > 0 && el.textContent.trim()) return el.textContent.trim().substring(0, 300);
-      }
-      return "";
-    }).catch(() => "");
+    const errorText = await loginFrame
+      .evaluate(() => {
+        const errorSels = [
+          ".ACA_Error",
+          ".error-message",
+          '[id*="Error"]',
+          '[id*="error"]',
+          ".font11px",
+          ".validation-summary-errors",
+          '[class*="alert"]',
+          '[class*="error"]',
+        ];
+        for (const sel of errorSels) {
+          const el = document.querySelector(sel);
+          if (el && el.offsetWidth > 0 && el.textContent.trim())
+            return el.textContent.trim().substring(0, 300);
+        }
+        return "";
+      })
+      .catch(() => "");
 
     if (errorText) {
       console.log(`  ❌ LoginFrame error: "${errorText}"`);
       await dumpLoginFrameDiagnostics(loginFrame, "LOGIN_ERROR");
       await dumpPageDiagnostics(page, "LOGIN_ERROR");
-      await page.screenshot({ path: "login_failed.png", fullPage: true }).catch(() => {});
+      await page
+        .screenshot({ path: "login_failed.png", fullPage: true })
+        .catch(() => {});
       throw new Error(`Accela login failed — portal error: ${errorText}`);
     }
   }
 
   await dumpLoginFrameDiagnostics(loginFrame, "LOGIN_TIMEOUT");
   await dumpPageDiagnostics(page, "LOGIN_TIMEOUT");
-  await page.screenshot({ path: "login_failed.png", fullPage: true }).catch(() => {});
-  throw new Error("Accela login failed — timed out waiting for authenticated state (login form persisted in LoginFrame)");
+  await page
+    .screenshot({ path: "login_failed.png", fullPage: true })
+    .catch(() => {});
+  throw new Error(
+    "Accela login failed — timed out waiting for authenticated state (login form persisted in LoginFrame)",
+  );
 }
 
 async function searchPermit(page, portalUrl, permitNumber) {
   console.log(`  Searching for permit: ${permitNumber}`);
 
-  // Step 1: Verify we are still authenticated
   const isAuth = await findAuthLandmark(page);
   if (!isAuth) {
     await dumpPageDiagnostics(page, "SEARCH_AUTH_CHECK");
-    throw new Error("AUTHENTICATION_LOST: No authenticated landmarks found before permit search.");
+    throw new Error(
+      "AUTHENTICATION_LOST: No authenticated landmarks found before permit search.",
+    );
   }
   console.log("  ✅ Authentication verified");
 
-  // Step 2: Navigate to Permits and Inspections tab
   const permitsTab = await findFieldInFrames(page, [
     "#Tab_Building",
     'a:has-text("Permits and Inspections")',
@@ -329,92 +406,126 @@ async function searchPermit(page, portalUrl, permitNumber) {
     await waitForAccelaLoad(page);
     await page.waitForTimeout(3000);
   } else {
-    const isPublicPage = await page.$('a:has-text("Sign In"), a:has-text("Create an Account")');
+    const isPublicPage = await page.$(
+      'a:has-text("Sign In"), a:has-text("Create an Account")',
+    );
     if (isPublicPage) {
       throw new Error("Session dropped — redirected to public page.");
     }
-    console.log("  ⚠️ Permits tab not found, attempting to proceed on current page...");
+    console.log(
+      "  ⚠️ Permits tab not found, attempting to proceed on current page...",
+    );
   }
 
-  // Step 3: Wait for the records grid to appear
   console.log("  ⏳ Waiting for records grid...");
-  const gridAppeared = await page.waitForSelector(
-    'table[id*="PermitList"] tr, table[id*="Record"] tr, .aca_grid_container tr td a, [id*="gview_List"] tr',
-    { visible: true, timeout: 15000 }
-  ).catch(() => null);
+  const gridAppeared = await page
+    .waitForSelector(
+      'table[id*="PermitList"] tr, table[id*="Record"] tr, .aca_grid_container tr td a, [id*="gview_List"] tr',
+      { visible: true, timeout: 15000 },
+    )
+    .catch(() => null);
 
   if (!gridAppeared) {
     let gridInFrame = false;
     for (const frame of page.frames()) {
       if (frame === page.mainFrame()) continue;
-      const frameGrid = await frame.$('table tr td a, .aca_grid_container').catch(() => null);
+      const frameGrid = await frame
+        .$("table tr td a, .aca_grid_container")
+        .catch(() => null);
       if (frameGrid) {
-        console.log(`  ✅ Grid found in frame: ${frame.name() || frame.url().substring(0, 60)}`);
+        console.log(
+          `  ✅ Grid found in frame: ${frame.name() || frame.url().substring(0, 60)}`,
+        );
         gridInFrame = true;
         break;
       }
     }
     if (!gridInFrame) {
       await dumpPageDiagnostics(page, "NO_GRID");
-      const anchorCount = await page.evaluate(() => document.querySelectorAll("a").length);
+      const anchorCount = await page.evaluate(
+        () => document.querySelectorAll("a").length,
+      );
       console.log(`  [DIAG:NO_GRID] Total anchors on page: ${anchorCount}`);
     }
   }
 
-  // Step 4: Find the permit link (3-tier approach) — collect info before clicking
   console.log("  Scanning for permit link...");
 
   let foundLink = null;
   let foundFrame = null;
   let foundInfo = {};
 
-  // Try 1: Playwright has-text selector on main page
   const permitLink = await page.$(`a:has-text("${permitNumber}")`);
   if (permitLink && (await permitLink.isVisible().catch(() => false))) {
     foundLink = permitLink;
     foundFrame = page;
-    const href = await permitLink.getAttribute("href").catch(() => "") || "";
-    const text = (await permitLink.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-    foundInfo = { method: "has-text", text, href, frameName: "main", frameUrl: page.url() };
+    const href = (await permitLink.getAttribute("href").catch(() => "")) || "";
+    const text = (await permitLink.innerText().catch(() => ""))
+      .replace(/\s+/g, " ")
+      .trim();
+    foundInfo = {
+      method: "has-text",
+      text,
+      href,
+      frameName: "main",
+      frameUrl: page.url(),
+    };
   }
 
-  // Try 2: Scan all anchors with normalized text
   if (!foundLink) {
     const allLinks = await page.$$("a");
     for (const link of allLinks) {
-      const text = (await link.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      const text = (await link.innerText().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .trim();
       if (text === permitNumber || text.includes(permitNumber)) {
         const visible = await link.isVisible().catch(() => false);
         if (visible) {
-          const href = await link.getAttribute("href").catch(() => "") || "";
+          const href = (await link.getAttribute("href").catch(() => "")) || "";
           foundLink = link;
           foundFrame = page;
-          foundInfo = { method: "anchor-scan", text, href, frameName: "main", frameUrl: page.url() };
+          foundInfo = {
+            method: "anchor-scan",
+            text,
+            href,
+            frameName: "main",
+            frameUrl: page.url(),
+          };
           break;
         }
       }
     }
   }
 
-  // Try 3: Frame-aware scan
   if (!foundLink) {
     for (const frame of page.frames()) {
       if (frame === page.mainFrame()) continue;
-      const linkData = await frame.evaluate((target) => {
-        const anchors = Array.from(document.querySelectorAll("a"));
-        const match = anchors.find((a) => {
-          const text = (a.textContent || "").replace(/\s+/g, " ").trim();
-          return text.includes(target) && a.offsetWidth > 0;
-        });
-        if (match) {
-          return { text: match.textContent.replace(/\s+/g, " ").trim(), href: match.href || "" };
-        }
-        return null;
-      }, permitNumber).catch(() => null);
+      const linkData = await frame
+        .evaluate((target) => {
+          const anchors = Array.from(document.querySelectorAll("a"));
+          const match = anchors.find((a) => {
+            const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+            return text.includes(target) && a.offsetWidth > 0;
+          });
+          if (match) {
+            return {
+              text: match.textContent.replace(/\s+/g, " ").trim(),
+              href: match.href || "",
+            };
+          }
+          return null;
+        }, permitNumber)
+        .catch(() => null);
 
       if (linkData) {
         foundFrame = frame;
-        foundInfo = { method: "frame-evaluate", text: linkData.text, href: linkData.href, frameName: frame.name() || "(unnamed)", frameUrl: frame.url().substring(0, 100) };
+        foundInfo = {
+          method: "frame-evaluate",
+          text: linkData.text,
+          href: linkData.href,
+          frameName: frame.name() || "(unnamed)",
+          frameUrl: frame.url().substring(0, 100),
+        };
         break;
       }
     }
@@ -425,16 +536,24 @@ async function searchPermit(page, portalUrl, permitNumber) {
       return Array.from(document.querySelectorAll("a"))
         .filter((a) => a.offsetWidth > 0)
         .slice(0, 25)
-        .map((a) => (a.textContent || "").replace(/\s+/g, " ").trim().substring(0, 80));
+        .map((a) =>
+          (a.textContent || "").replace(/\s+/g, " ").trim().substring(0, 80),
+        );
     });
-    console.log("  Visible anchor texts:", JSON.stringify(visibleTexts.filter(t => t.length > 0)));
+    console.log(
+      "  Visible anchor texts:",
+      JSON.stringify(visibleTexts.filter((t) => t.length > 0)),
+    );
     await dumpPageDiagnostics(page, "PERMIT_NOT_FOUND");
-    await page.screenshot({ path: "grid_not_found.png", fullPage: true }).catch(() => {});
+    await page
+      .screenshot({ path: "grid_not_found.png", fullPage: true })
+      .catch(() => {});
     throw new Error(`Permit ${permitNumber} not found in the records list.`);
   }
 
-  // Step 5: Click the permit link with diagnostics
-  console.log(`  ✅ Found permit link: method=${foundInfo.method} text="${foundInfo.text}" href="${(foundInfo.href || "").substring(0, 100)}" frame=${foundInfo.frameName}`);
+  console.log(
+    `  ✅ Found permit link: method=${foundInfo.method} text="${foundInfo.text}" href="${(foundInfo.href || "").substring(0, 100)}" frame=${foundInfo.frameName}`,
+  );
 
   const urlBefore = page.url();
 
@@ -444,53 +563,72 @@ async function searchPermit(page, portalUrl, permitNumber) {
       foundLink.click(),
     ]);
   } else if (foundFrame && foundInfo.method === "frame-evaluate") {
-    await foundFrame.evaluate((target) => {
-      const anchors = Array.from(document.querySelectorAll("a"));
-      const match = anchors.find((a) => {
-        const text = (a.textContent || "").replace(/\s+/g, " ").trim();
-        return text.includes(target) && a.offsetWidth > 0;
-      });
-      if (match) match.click();
-    }, permitNumber).catch(() => {});
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    await foundFrame
+      .evaluate((target) => {
+        const anchors = Array.from(document.querySelectorAll("a"));
+        const match = anchors.find((a) => {
+          const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+          return text.includes(target) && a.offsetWidth > 0;
+        });
+        if (match) match.click();
+      }, permitNumber)
+      .catch(() => {});
+    await page
+      .waitForLoadState("networkidle", { timeout: 30000 })
+      .catch(() => {});
   }
 
   await waitForAccelaLoad(page);
 
-  // Step 6: Verify the record detail actually loaded
   console.log("  ⏳ Verifying record detail loaded...");
   const urlAfter = page.url();
   console.log(`  [DIAG:POST_CLICK] urlBefore=${urlBefore.substring(0, 100)}`);
   console.log(`  [DIAG:POST_CLICK] urlAfter=${urlAfter.substring(0, 100)}`);
 
-  // Dump all frame content to find where the real record lives
   const allFrames = page.frames();
   let recordFrame = null;
   for (let i = 0; i < allFrames.length; i++) {
     const f = allFrames[i];
     const fUrl = f.url();
     const fName = f.name() || "(unnamed)";
-    const preview = await f.evaluate(() => {
-      return document.body ? document.body.innerText.substring(0, 300).replace(/\s+/g, " ").trim() : "";
-    }).catch(() => "(inaccessible)");
-    console.log(`  [DIAG:FRAME ${i}] name="${fName}" url=${fUrl.substring(0, 120)}`);
+    const preview = await f
+      .evaluate(() => {
+        return document.body
+          ? document.body.innerText
+              .substring(0, 300)
+              .replace(/\s+/g, " ")
+              .trim()
+          : "";
+      })
+      .catch(() => "(inaccessible)");
+    console.log(
+      `  [DIAG:FRAME ${i}] name="${fName}" url=${fUrl.substring(0, 120)}`,
+    );
     console.log(`  [DIAG:FRAME ${i}] preview="${preview.substring(0, 200)}"`);
 
-    if (fUrl.includes("Cap/CapDetail") || fUrl.includes("capDetail") || fUrl.includes("Record") || fUrl.includes("permit")) {
+    if (
+      fUrl.includes("Cap/CapDetail") ||
+      fUrl.includes("capDetail") ||
+      fUrl.includes("Record") ||
+      fUrl.includes("permit")
+    ) {
       recordFrame = f;
       console.log(`  ✅ Record detail frame identified: ${fName}`);
     }
   }
 
-  // Also check if the permit number appears in any frame's text
   if (!recordFrame) {
     for (const f of allFrames) {
-      const hasPermit = await f.evaluate((pn) => {
-        return document.body ? document.body.innerText.includes(pn) : false;
-      }, permitNumber).catch(() => false);
+      const hasPermit = await f
+        .evaluate((pn) => {
+          return document.body ? document.body.innerText.includes(pn) : false;
+        }, permitNumber)
+        .catch(() => false);
       if (hasPermit && f !== page.mainFrame()) {
         recordFrame = f;
-        console.log(`  ✅ Record frame found by permit number match: ${f.name() || f.url().substring(0, 80)}`);
+        console.log(
+          `  ✅ Record frame found by permit number match: ${f.name() || f.url().substring(0, 80)}`,
+        );
         break;
       }
       if (hasPermit && f === page.mainFrame()) {
@@ -499,22 +637,23 @@ async function searchPermit(page, portalUrl, permitNumber) {
     }
   }
 
-  // Wait for real record detail content with strong signals
   await waitForRecordDetailStrong(page, recordFrame, permitNumber);
-
-  // Store the record frame on page for extraction functions to use
   page._recordFrame = recordFrame;
 }
-// ==============================================================================
 
 async function waitForRecordDetailStrong(page, recordFrame, permitNumber) {
   const contexts = recordFrame ? [recordFrame, page] : [page];
   const detailSignals = [
-    '[id*="lblPermitNumber"]', '[id*="capNumber"]', '[id*="PermitNumber"]',
-    '[id*="lblPermitType"]', '[id*="lblCapType"]',
-    '[id*="lblPermitStatus"]', '[id*="lblCapStatus"]',
-    '[id*="PermitDetailList"]', '[id*="CAPDetail"]',
-    '.aca_page_title',
+    '[id*="lblPermitNumber"]',
+    '[id*="capNumber"]',
+    '[id*="PermitNumber"]',
+    '[id*="lblPermitType"]',
+    '[id*="lblCapType"]',
+    '[id*="lblPermitStatus"]',
+    '[id*="lblCapStatus"]',
+    '[id*="PermitDetailList"]',
+    '[id*="CAPDetail"]',
+    ".aca_page_title",
     '[id*="TabDataList"]',
   ];
 
@@ -523,27 +662,40 @@ async function waitForRecordDetailStrong(page, recordFrame, permitNumber) {
       for (const sel of detailSignals) {
         const el = await ctx.$(sel).catch(() => null);
         if (el) {
-          const text = await el.evaluate(e => (e.textContent || "").trim().substring(0, 80)).catch(() => "");
-          const ctxName = ctx === page ? "main" : (ctx.name ? ctx.name() || "frame" : "frame");
-          console.log(`  ✅ Record detail signal found: sel="${sel}" text="${text}" in ${ctxName}`);
+          const text = await el
+            .evaluate((e) => (e.textContent || "").trim().substring(0, 80))
+            .catch(() => "");
+          const ctxName =
+            ctx === page ? "main" : ctx.name ? ctx.name() || "frame" : "frame";
+          console.log(
+            `  ✅ Record detail signal found: sel="${sel}" text="${text}" in ${ctxName}`,
+          );
           return ctx;
         }
       }
-      // Also check if permit number appears in context body text
-      const hasPermitText = await ctx.evaluate((pn) => {
-        return document.body ? document.body.innerText.includes(pn) : false;
-      }, permitNumber).catch(() => false);
+      const hasPermitText = await ctx
+        .evaluate((pn) => {
+          return document.body ? document.body.innerText.includes(pn) : false;
+        }, permitNumber)
+        .catch(() => false);
       if (hasPermitText) {
-        const ctxName = ctx === page ? "main" : (ctx.name ? ctx.name() || "frame" : "frame");
-        console.log(`  ✅ Permit number "${permitNumber}" found in ${ctxName} body text`);
+        const ctxName =
+          ctx === page ? "main" : ctx.name ? ctx.name() || "frame" : "frame";
+        console.log(
+          `  ✅ Permit number "${permitNumber}" found in ${ctxName} body text`,
+        );
         return ctx;
       }
     }
     await page.waitForTimeout(2000);
   }
 
-  console.log("  ⚠️ No strong record detail signals found after 20s, proceeding with best-effort extraction");
-  await page.screenshot({ path: "record_not_loaded.png", fullPage: true }).catch(() => {});
+  console.log(
+    "  ⚠️ No strong record detail signals found after 20s, proceeding with best-effort extraction",
+  );
+  await page
+    .screenshot({ path: "record_not_loaded.png", fullPage: true })
+    .catch(() => {});
   return contexts[0];
 }
 
@@ -559,70 +711,67 @@ async function extractRecordHeader(page) {
   console.log(`  Extracting header from: ${ctxLabel}`);
 
   const header = await ctx.evaluate(() => {
-    const _cSels = [
-      '#ctl00_PlaceHolderMain_PermitDetailList',
-      '#ctl00_PlaceHolderMain_CAPDetail',
-      '[id*="PlaceHolderMain"][id*="Detail"]',
-      '[id*="PlaceHolderMain"][id*="Permit"]',
-      '[id*="PlaceHolderMain"][id*="Record"]',
-      '[id*="PlaceHolderMain"][id*="Cap"]',
-      '#ctl00_PlaceHolderMain_TabDataList',
-      '#ctl00_PlaceHolderMain_pnlContent',
-      '#ctl00_PlaceHolderMain',
-    ];
-    let container = document.body;
-    for (const s of _cSels) {
-      const e = document.querySelector(s);
-      if (e && e.textContent.trim().length > 10) { container = e; break; }
+    const result = {
+      record_number: "",
+      record_type: "",
+      record_status: "",
+      expiration_date: "",
+      _diag: {},
+    };
+
+    const root =
+      document.querySelector(".rec-left") ||
+      document.querySelector('[id*="PlaceHolderMain"]') ||
+      document.body;
+
+    const preview = (root.innerText || "").replace(/\s+/g, " ").trim();
+    result._diag.container =
+      root.id || root.className || root.tagName || "unknown";
+    result._diag.preview = preview.slice(0, 300);
+
+    const permitEl =
+      root.querySelector('[id*="lblPermitNumber"]') ||
+      root.querySelector('[id*="PermitNumber"]');
+
+    if (permitEl) {
+      result.record_number = (permitEl.textContent || "").trim();
+      result._diag.permit =
+        permitEl.id || permitEl.className || permitEl.tagName;
     }
 
-    const fields = {};
-    const diag = { containerSelector: container === document.body ? "body" : (container.id || container.className || container.tagName) };
-
-    const capNumEl = container.querySelector(
-      '[id*="lblPermitNumber"], [id*="capNumber"], [id*="PermitNumber"], [id*="recordNumber"], .aca_page_title'
+    const typeMatch = preview.match(
+      /Record\s+[A-Z0-9-]+:\s*(.*?)\s+Record Status:/i,
     );
-    if (capNumEl) {
-      fields.record_number = capNumEl.textContent.trim();
-      diag.record_number_sel = capNumEl.id || capNumEl.className || capNumEl.tagName;
+    if (typeMatch) {
+      result.record_type = typeMatch[1].trim();
     }
 
-    const typeEl = container.querySelector(
-      '[id*="lblPermitType"], [id*="lblCapType"], [id*="RecordType"]'
+    const statusMatch = preview.match(
+      /Record Status:\s*(.*?)\s+Expiration Date:/i,
     );
-    if (typeEl) {
-      fields.record_type = typeEl.textContent.trim();
-      diag.record_type_sel = typeEl.id || typeEl.className;
+    if (statusMatch) {
+      result.record_status = statusMatch[1].trim();
     }
 
-    const statusEl = container.querySelector(
-      '[id*="lblPermitStatus"], [id*="lblCapStatus"], [id*="PermitStatus"], [id*="RecordStatus"]'
-    );
-    if (statusEl) {
-      fields.record_status = statusEl.textContent.trim();
-      diag.record_status_sel = statusEl.id || statusEl.className;
+    const expMatch = preview.match(/Expiration Date:\s*([0-9/]+)/i);
+    if (expMatch) {
+      result.expiration_date = expMatch[1].trim();
     }
 
-    const spans = container.querySelectorAll("span, td");
-    for (const el of spans) {
-      const text = el.textContent.trim();
-      if (text.includes("Expiration") || text.includes("Expire")) {
-        const next = el.nextElementSibling;
-        if (next) {
-          const val = next.textContent.trim();
-          if (val && val.length < 30) fields.expiration_date = val;
-        }
-      }
-    }
-
-    fields._diag = diag;
-    return fields;
+    return result;
   });
 
   const diag = header._diag || {};
   delete header._diag;
-  console.log(`     Record: ${header.record_number || "unknown"} | Status: ${header.record_status || "unknown"}`);
-  console.log(`     [DIAG:HEADER] container=${diag.containerSelector} number=${diag.record_number_sel || "none"} type=${diag.record_type_sel || "none"} status=${diag.record_status_sel || "none"}`);
+
+  console.log(
+    `     Record: ${header.record_number || "unknown"} | Status: ${header.record_status || "unknown"}`,
+  );
+  console.log(
+    `     [DIAG:HEADER] permit=${diag.permit || "none"} container=${diag.container || "none"}`,
+  );
+  console.log(`     [DIAG:HEADER] preview="${diag.preview || ""}"`);
+
   return header;
 }
 
@@ -650,61 +799,81 @@ async function extractRecordDetails(page) {
     "Record Details",
   );
 
-  const moreDetailsBtn = await ctx.$(
-    'a:has-text("More Details"), a:has-text("Show More"), [id*="MoreDetail"]',
-  );
-  if (moreDetailsBtn && (await moreDetailsBtn.isVisible().catch(() => false))) {
-    await moreDetailsBtn.click().catch(() => {});
-    await waitForAccelaLoad(page);
-  }
+  await page.waitForTimeout(1500);
 
   const details = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
-    let container = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
-
-    const tables = [];
     const fields = {};
 
-    container
-      .querySelectorAll(
-        "table.ACA_TBody tr, table[id*='Detail'] tr, .aca_table_row, div.ACA_TabRow",
-      )
-      .forEach((row) => {
-        const cells = row.querySelectorAll(
-          "td, th, span.ACA_Label, span.ACA_Value",
-        );
-        if (cells.length >= 2) {
-          const label = cells[0].textContent.trim().replace(/:$/, "").trim();
-          const value = cells[1].textContent.trim();
-          if (label && value && label.length < 60) {
-            fields[label] = value;
-          }
-        }
-      });
+    const badLabels = new Set([
+      "add",
+      "cancel",
+      "*name",
+      "name",
+      "name:",
+      "description:",
+      "record status:",
+      "expiration date:",
+    ]);
 
-    container
-      .querySelectorAll("span.ACA_Label, label, td.ACA_AlignLeftOrRightTop")
-      .forEach((labelEl) => {
-        const label = labelEl.textContent.trim().replace(/:$/, "").trim();
-        if (!label || label.length > 60) return;
-        const next = labelEl.nextElementSibling;
-        if (next) {
-          const val = next.textContent.trim();
-          if (val && !fields[label]) fields[label] = val;
-        }
-      });
+    const candidateTables = Array.from(
+      document.querySelectorAll("table"),
+    ).filter((table) => {
+      const text = (table.innerText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      return (
+        text.includes("application name") ||
+        text.includes("work location") ||
+        text.includes("address") ||
+        text.includes("parcel") ||
+        text.includes("description") ||
+        text.includes("job value")
+      );
+    });
 
-    const rows = Object.entries(fields).map(([key, value]) => ({ key, value }));
-    if (rows.length > 0) {
-      tables.push({
-        title: "Record Details",
-        headers: ["Field", "Value"],
-        rows,
+    const target = candidateTables[0] || null;
+
+    if (target) {
+      const rows = target.querySelectorAll("tr");
+      rows.forEach((row) => {
+        const cells = Array.from(row.querySelectorAll("td"))
+          .map((c) => (c.textContent || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+
+        if (cells.length < 2) return;
+
+        const label = cells[0].replace(/:$/, "").trim();
+        const value = cells[1].trim();
+
+        if (!label || !value) return;
+        if (label.length > 60) return;
+        if (value.length > 300) return;
+        if (badLabels.has(label.toLowerCase())) return;
+        if (value.toLowerCase() === label.toLowerCase()) return;
+        if (/^(add|cancel)$/i.test(value)) return;
+
+        fields[label] = value;
       });
     }
 
-    return { tables, fields };
+    const rowsOut = Object.entries(fields).map(([key, value]) => ({
+      key,
+      value,
+    }));
+
+    return {
+      tables: rowsOut.length
+        ? [
+            {
+              title: "Record Details",
+              headers: ["Field", "Value"],
+              rows: rowsOut,
+            },
+          ]
+        : [],
+      fields,
+    };
   });
 
   const detailScreenshot = await page
@@ -738,9 +907,11 @@ async function extractProcessingStatus(page) {
     return { departments: [], screenshot: null };
   }
 
-  const expandButtons = await ctx.$$(
-    '[id*="expand"], .collapse-icon, a[onclick*="expand"], img[src*="expand"], .aca_expand',
-  ).catch(() => []);
+  const expandButtons = await ctx
+    .$$(
+      '[id*="expand"], .collapse-icon, a[onclick*="expand"], img[src*="expand"], .aca_expand',
+    )
+    .catch(() => []);
   for (const btn of expandButtons) {
     await btn.click().catch(() => {});
     await page.waitForTimeout(500);
@@ -748,9 +919,25 @@ async function extractProcessingStatus(page) {
   await page.waitForTimeout(2000);
 
   const departments = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    const _cSels = [
+      "#ctl00_PlaceHolderMain_PermitDetailList",
+      "#ctl00_PlaceHolderMain_CAPDetail",
+      '[id*="PlaceHolderMain"][id*="Detail"]',
+      '[id*="PlaceHolderMain"][id*="Permit"]',
+      '[id*="PlaceHolderMain"][id*="Record"]',
+      '[id*="PlaceHolderMain"][id*="Cap"]',
+      "#ctl00_PlaceHolderMain_TabDataList",
+      "#ctl00_PlaceHolderMain_pnlContent",
+      "#ctl00_PlaceHolderMain",
+    ];
     let container = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+    for (const s of _cSels) {
+      const e = document.querySelector(s);
+      if (e && e.textContent.trim().length > 10) {
+        container = e;
+        break;
+      }
+    }
 
     const depts = [];
     const rows = container.querySelectorAll(
@@ -861,64 +1048,64 @@ async function extractPlanReview(page) {
     return { comments: [], text: "", screenshot: null };
   }
 
-  const comments = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
-    let container = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+  await page.waitForTimeout(1500);
 
-    const results = [];
+  const data = await ctx.evaluate(() => {
+    const comments = [];
 
-    container
-      .querySelectorAll(
-        '[id*="ReviewComment"] tr, [id*="PlanReview"] tr, table[id*="Comment"] tr',
-      )
-      .forEach((row) => {
-        const cells = row.querySelectorAll("td");
-        if (cells.length >= 2) {
-          const commentText = Array.from(cells)
-            .map((c) => c.textContent.trim())
-            .join(" | ");
-          if (commentText.length > 20) {
-            results.push({
-              reviewer: cells.length > 0 ? cells[0].textContent.trim() : "",
-              department: cells.length > 1 ? cells[1].textContent.trim() : "",
-              comment:
-                cells.length > 2
-                  ? cells[2].textContent.trim()
-                  : cells[1].textContent.trim(),
-              date: cells.length > 3 ? cells[3].textContent.trim() : "",
-            });
-          }
-        }
-      });
-
-    if (results.length === 0) {
-      const fallback = container.querySelector(
-        '[id*="ReviewComment"], [id*="PlanReview"], [id*="Comment"]',
+    const candidateTables = Array.from(
+      document.querySelectorAll("table"),
+    ).filter((table) => {
+      const text = (table.innerText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      return (
+        text.includes("reviewer") ||
+        text.includes("department") ||
+        text.includes("comment") ||
+        text.includes("review status")
       );
-      if (fallback) {
-        const text = fallback.textContent.trim();
-        if (text.length > 20) {
-          results.push({
-            reviewer: "",
-            department: "",
-            comment: text.slice(0, 5000),
-            date: "",
-          });
-        }
-      }
+    });
+
+    const root = candidateTables[0] || null;
+
+    if (!root) {
+      return { comments: [], text: "" };
     }
 
-    return results;
-  });
+    const rows = root.querySelectorAll("tr");
+    rows.forEach((row) => {
+      const cells = Array.from(row.querySelectorAll("td"))
+        .map((c) => (c.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean);
 
-  const pageText = await ctx.evaluate(() => {
-    const container = document.querySelector(
-      '[id*="ReviewComment"], [id*="PlanReview"], main, #mainContent',
-    );
-    return container
-      ? container.textContent.trim().slice(0, 50000)
-      : document.body.innerText.slice(0, 50000);
+      if (cells.length >= 3) {
+        comments.push({
+          reviewer: cells[0] || "",
+          department: cells[1] || "",
+          comment: cells[2] || "",
+          date: cells[3] || "",
+        });
+      }
+    });
+
+    const text = comments.length
+      ? comments
+          .map((c) =>
+            [
+              c.reviewer ? `Reviewer: ${c.reviewer}` : "",
+              c.department ? `Department: ${c.department}` : "",
+              c.comment ? `Comment: ${c.comment}` : "",
+              c.date ? `Date: ${c.date}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          )
+          .join("\n\n")
+      : "";
+
+    return { comments, text };
   });
 
   const screenshot = await page
@@ -926,8 +1113,12 @@ async function extractPlanReview(page) {
     .catch(() => null);
   const screenshotBase64 = screenshot ? screenshot.toString("base64") : null;
 
-  console.log(`     Found ${comments.length} review comments`);
-  return { comments, text: pageText, screenshot: screenshotBase64 };
+  console.log(`     Found ${data.comments.length} review comments`);
+  return {
+    comments: data.comments,
+    text: data.text,
+    screenshot: screenshotBase64,
+  };
 }
 
 async function extractRelatedRecords(page) {
@@ -953,9 +1144,25 @@ async function extractRelatedRecords(page) {
   }
 
   const records = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    const _cSels = [
+      "#ctl00_PlaceHolderMain_PermitDetailList",
+      "#ctl00_PlaceHolderMain_CAPDetail",
+      '[id*="PlaceHolderMain"][id*="Detail"]',
+      '[id*="PlaceHolderMain"][id*="Permit"]',
+      '[id*="PlaceHolderMain"][id*="Record"]',
+      '[id*="PlaceHolderMain"][id*="Cap"]',
+      "#ctl00_PlaceHolderMain_TabDataList",
+      "#ctl00_PlaceHolderMain_pnlContent",
+      "#ctl00_PlaceHolderMain",
+    ];
     let container = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+    for (const s of _cSels) {
+      const e = document.querySelector(s);
+      if (e && e.textContent.trim().length > 10) {
+        container = e;
+        break;
+      }
+    }
 
     const results = [];
     container
@@ -1016,9 +1223,25 @@ async function extractAttachments(
   }
 
   const attachments = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    const _cSels = [
+      "#ctl00_PlaceHolderMain_PermitDetailList",
+      "#ctl00_PlaceHolderMain_CAPDetail",
+      '[id*="PlaceHolderMain"][id*="Detail"]',
+      '[id*="PlaceHolderMain"][id*="Permit"]',
+      '[id*="PlaceHolderMain"][id*="Record"]',
+      '[id*="PlaceHolderMain"][id*="Cap"]',
+      "#ctl00_PlaceHolderMain_TabDataList",
+      "#ctl00_PlaceHolderMain_pnlContent",
+      "#ctl00_PlaceHolderMain",
+    ];
     let container = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+    for (const s of _cSels) {
+      const e = document.querySelector(s);
+      if (e && e.textContent.trim().length > 10) {
+        container = e;
+        break;
+      }
+    }
 
     const results = [];
     container
@@ -1261,7 +1484,6 @@ async function tryUploadAccelaFile(
 ) {
   if (!fs.existsSync(filePath)) return "";
   const fileBuffer = fs.readFileSync(filePath);
-  const sizeMB = fileBuffer.length / (1024 * 1024);
 
   if (fileBuffer.length < 1024) {
     console.log(
@@ -1321,9 +1543,25 @@ async function extractInspections(page) {
   }
 
   const inspData = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    const _cSels = [
+      "#ctl00_PlaceHolderMain_PermitDetailList",
+      "#ctl00_PlaceHolderMain_CAPDetail",
+      '[id*="PlaceHolderMain"][id*="Detail"]',
+      '[id*="PlaceHolderMain"][id*="Permit"]',
+      '[id*="PlaceHolderMain"][id*="Record"]',
+      '[id*="PlaceHolderMain"][id*="Cap"]',
+      "#ctl00_PlaceHolderMain_TabDataList",
+      "#ctl00_PlaceHolderMain_pnlContent",
+      "#ctl00_PlaceHolderMain",
+    ];
     let mainContainer = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { mainContainer = e; break; } }
+    for (const s of _cSels) {
+      const e = document.querySelector(s);
+      if (e && e.textContent.trim().length > 10) {
+        mainContainer = e;
+        break;
+      }
+    }
 
     const upcoming = [];
     const completed = [];
@@ -1455,9 +1693,25 @@ async function extractPayments(page) {
   }
 
   const payments = await ctx.evaluate(() => {
-    const _cSels = ['#ctl00_PlaceHolderMain_PermitDetailList','#ctl00_PlaceHolderMain_CAPDetail','[id*="PlaceHolderMain"][id*="Detail"]','[id*="PlaceHolderMain"][id*="Permit"]','[id*="PlaceHolderMain"][id*="Record"]','[id*="PlaceHolderMain"][id*="Cap"]','#ctl00_PlaceHolderMain_TabDataList','#ctl00_PlaceHolderMain_pnlContent','#ctl00_PlaceHolderMain'];
+    const _cSels = [
+      "#ctl00_PlaceHolderMain_PermitDetailList",
+      "#ctl00_PlaceHolderMain_CAPDetail",
+      '[id*="PlaceHolderMain"][id*="Detail"]',
+      '[id*="PlaceHolderMain"][id*="Permit"]',
+      '[id*="PlaceHolderMain"][id*="Record"]',
+      '[id*="PlaceHolderMain"][id*="Cap"]',
+      "#ctl00_PlaceHolderMain_TabDataList",
+      "#ctl00_PlaceHolderMain_pnlContent",
+      "#ctl00_PlaceHolderMain",
+    ];
     let container = document.body;
-    for (const s of _cSels) { const e = document.querySelector(s); if (e && e.textContent.trim().length > 10) { container = e; break; } }
+    for (const s of _cSels) {
+      const e = document.querySelector(s);
+      if (e && e.textContent.trim().length > 10) {
+        container = e;
+        break;
+      }
+    }
 
     const results = [];
     container
@@ -1504,14 +1758,19 @@ async function scrapeAccelaRecord(
   sanitizeStorageKey,
 ) {
   const { portalUrl } = session;
-  const page = session.page || (session.context ? session.context.pages()[0] : null);
+  const page =
+    session.page || (session.context ? session.context.pages()[0] : null);
   if (!page) {
-    throw new Error("No authenticated page found in session — cannot start Accela scrape");
+    throw new Error(
+      "No authenticated page found in session — cannot start Accela scrape",
+    );
   }
   const currentUrl = page.url();
   console.log(`  [GUARD] Starting scrape on existing page. URL: ${currentUrl}`);
   if (currentUrl === "about:blank" || !currentUrl || currentUrl === "") {
-    throw new Error(`Authenticated page is blank (url=${currentUrl}) — session may be corrupt`);
+    throw new Error(
+      `Authenticated page is blank (url=${currentUrl}) — session may be corrupt`,
+    );
   }
   const TIMEOUT = 600000;
   const startTime = Date.now();
@@ -1586,10 +1845,24 @@ async function scrapeAccelaRecord(
         info: {
           tables: details.tables,
           fields: header,
-          keyValues: Object.entries(details.fields).map(([key, value]) => ({
-            key,
-            value,
-          })),
+          keyValues: [
+            ...(header.record_number
+              ? [{ key: "Record Number", value: header.record_number }]
+              : []),
+            ...(header.record_type
+              ? [{ key: "Record Type", value: header.record_type }]
+              : []),
+            ...(header.record_status
+              ? [{ key: "Record Status", value: header.record_status }]
+              : []),
+            ...(header.expiration_date
+              ? [{ key: "Expiration Date", value: header.expiration_date }]
+              : []),
+            ...Object.entries(details.fields).map(([key, value]) => ({
+              key,
+              value,
+            })),
+          ],
           screenshot: details.screenshot,
         },
         status: {
@@ -1749,7 +2022,9 @@ async function scrapeAccelaRecord(
     if (supabase && userId) {
       session.message = `${permitNumber} → Syncing to database...`;
       console.log(`\n  💾 Syncing ${permitNumber} to Supabase...`);
-      console.log(`  📌 supabaseProjectId=${supabaseProjectId || "(none)"}, userId=${userId}, portalType=${portalData.portalType}`);
+      console.log(
+        `  📌 supabaseProjectId=${supabaseProjectId || "(none)"}, userId=${userId}, portalType=${portalData.portalType}`,
+      );
       const newHash = hashPortalData(portalData);
 
       let existingRow = null;
@@ -1770,7 +2045,9 @@ async function scrapeAccelaRecord(
       }
 
       if (existingRow && existingRow.portal_data_hash === newHash) {
-        console.log(`  ⏭️ Data unchanged (hash match), skipping update for row ${existingRow.id}`);
+        console.log(
+          `  ⏭️ Data unchanged (hash match), skipping update for row ${existingRow.id}`,
+        );
         await supabase
           .from("projects")
           .update({ last_checked_at: new Date().toISOString() })
@@ -1794,7 +2071,9 @@ async function scrapeAccelaRecord(
           console.error("  ❌ Supabase error:", error.message);
         } else if (data && data.length > 0) {
           const writtenType = data[0].portal_data?.portalType || "(none)";
-          console.log(`  ✅ Updated project row=${data[0].id}, written portalType=${writtenType}`);
+          console.log(
+            `  ✅ Updated project row=${data[0].id}, written portalType=${writtenType}`,
+          );
         }
       } else {
         const { data: created, error: createError } = await supabase
@@ -1817,7 +2096,9 @@ async function scrapeAccelaRecord(
           console.error("  ❌ Supabase create error:", createError.message);
         } else if (created && created.length > 0) {
           const writtenType = created[0].portal_data?.portalType || "(none)";
-          console.log(`  📝 Created new project row=${created[0].id}, written portalType=${writtenType}`);
+          console.log(
+            `  📝 Created new project row=${created[0].id}, written portalType=${writtenType}`,
+          );
         }
       }
 
@@ -1829,7 +2110,9 @@ async function scrapeAccelaRecord(
           .eq("id", verifyId)
           .maybeSingle();
         if (verify) {
-          console.log(`  🔍 DB verify: row=${verify.id}, permit=${verify.permit_number}, credential=${verify.credential_id || "(none)"}, portalType=${verify.portal_data?.portalType || "(none)"}`);
+          console.log(
+            `  🔍 DB verify: row=${verify.id}, permit=${verify.permit_number}, credential=${verify.credential_id || "(none)"}, portalType=${verify.portal_data?.portalType || "(none)"}`,
+          );
         }
       }
     }

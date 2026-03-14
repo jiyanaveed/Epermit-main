@@ -1,12 +1,12 @@
 import { Link, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
-import { 
-  Home, 
-  Shield, 
-  BookOpen, 
-  PlayCircle, 
-  DollarSign, 
-  LogIn, 
+import {
+  Home,
+  Shield,
+  BookOpen,
+  PlayCircle,
+  DollarSign,
+  LogIn,
   LayoutDashboard,
   Map,
   Calculator,
@@ -29,7 +29,7 @@ import {
   Rocket,
   FileSearch,
   Tags,
-  Layers
+  Layers,
 } from "lucide-react";
 import { useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
@@ -79,16 +79,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 const PERMIT_NUMBER_STORAGE_KEY_PREFIX = "epermit:permitNumber";
 
 const mainNavigation = [
-  { 
-    title: "Home", 
-    href: "/", 
-    icon: Home 
+  {
+    title: "Home",
+    href: "/",
+    icon: Home,
   },
-  { 
-    title: "Dashboard", 
-    href: "/dashboard", 
+  {
+    title: "Dashboard",
+    href: "/dashboard",
     icon: LayoutDashboard,
-    requiresAuth: true
+    requiresAuth: true,
   },
 ];
 
@@ -98,35 +98,35 @@ const intakeNavigation = [
     href: "/permit-wizard-filing",
     icon: Rocket,
     description: "Multi-municipality filing pipeline",
-    requiresAuth: true
+    requiresAuth: true,
   },
   {
     title: "Portal Harvest",
     href: "/portal-data",
     icon: Globe,
     description: "Gather (Scrape) & View Portal Data",
-    requiresAuth: true
+    requiresAuth: true,
   },
   {
     title: "Comment Review",
     href: "/comment-review",
     icon: FileSearch,
     description: "Review scraped & uploaded comments",
-    requiresAuth: true
+    requiresAuth: true,
   },
   {
     title: "Classified Comments",
     href: "/classified-comments",
     icon: Tags,
     description: "AI-classified discipline comments",
-    requiresAuth: true
+    requiresAuth: true,
   },
   {
     title: "AI Compliance",
     href: "/code-compliance",
     icon: Shield,
     description: "Check code compliance",
-    requiresAuth: true
+    requiresAuth: true,
   },
 ];
 
@@ -136,7 +136,7 @@ const responseNavigation = [
     href: "/response-matrix",
     icon: Table2,
     description: "Manage comment responses",
-    requiresAuth: true
+    requiresAuth: true,
   },
 ];
 
@@ -145,7 +145,7 @@ const trackingNavigation = [
     title: "Projects",
     href: "/projects",
     icon: Building2,
-    requiresAuth: true
+    requiresAuth: true,
   },
 ];
 
@@ -154,13 +154,13 @@ const intelligenceNavigation = [
     title: "Permit Intelligence",
     href: "/permit-intelligence",
     icon: Search,
-    description: "Search permit data"
+    description: "Search permit data",
   },
   {
     title: "Code Library",
     href: "/code-reference",
     icon: BookOpen,
-    description: "Reference materials"
+    description: "Reference materials",
   },
 ];
 
@@ -169,48 +169,48 @@ const resourcesNavigation = [
     title: "ROI Calculator",
     href: "/roi-calculator",
     icon: Calculator,
-    description: "Calculate savings"
+    description: "Calculate savings",
   },
   {
     title: "Tool Consolidation",
     href: "/consolidation-calculator",
     icon: Layers,
-    description: "Compare tool costs"
+    description: "Compare tool costs",
   },
   {
     title: "Analytics & Reporting",
     href: "/analytics",
     icon: BarChart3,
-    description: "Reports & metrics"
+    description: "Reports & metrics",
   },
   {
     title: "Jurisdiction Map",
     href: "/jurisdictions/map",
     icon: Map,
-    description: "Interactive coverage map"
+    description: "Interactive coverage map",
   },
   {
     title: "Compare Jurisdictions",
     href: "/jurisdictions/compare",
     icon: Scale,
-    description: "Side-by-side comparison"
+    description: "Side-by-side comparison",
   },
   {
     title: "Checklists",
     href: "/checklist-history",
     icon: FileText,
     description: "View saved checklists",
-    requiresAuth: true
+    requiresAuth: true,
   },
   {
     title: "Demos",
     href: "/demos",
-    icon: PlayCircle
+    icon: PlayCircle,
   },
   {
     title: "Pricing",
     href: "/pricing",
-    icon: DollarSign
+    icon: DollarSign,
   },
 ];
 
@@ -219,19 +219,19 @@ const helpNavigation = [
     title: "Documentation",
     href: "/api-docs",
     icon: FileQuestion,
-    description: "API docs & guides"
+    description: "API docs & guides",
   },
   {
     title: "FAQ",
     href: "/faq",
     icon: HelpCircle,
-    description: "Common questions"
+    description: "Common questions",
   },
   {
     title: "Contact Support",
     href: "/contact",
     icon: MessageSquare,
-    description: "Get help from our team"
+    description: "Get help from our team",
   },
 ];
 
@@ -239,16 +239,28 @@ export function AppSidebar() {
   const location = useLocation();
   const { user } = useAuth();
   const { state } = useSidebar();
-  const { recentPages, favorites, toggleFavorite, isFavorite, clearRecent } = useNavigationHistory();
+  const { recentPages, favorites, toggleFavorite, isFavorite, clearRecent } =
+    useNavigationHistory();
   const selectedProject = useSelectedProjectOptional();
-  const { projects, loading, updateProject, fetchProjects, createProject } = useProjects();
+  const { projects, loading, updateProject, fetchProjects, createProject } =
+    useProjects();
   const isCollapsed = state === "collapsed";
 
-  const [sidebarCredentials, setSidebarCredentials] = useState<{ id: string; jurisdiction: string; portal_username: string; login_url?: string }[]>([]);
+  const [sidebarCredentials, setSidebarCredentials] = useState<
+    {
+      id: string;
+      jurisdiction: string;
+      portal_username: string;
+      login_url?: string;
+    }[]
+  >([]);
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>("");
 
   useEffect(() => {
-    if (!user) { setSidebarCredentials([]); return; }
+    if (!user) {
+      setSidebarCredentials([]);
+      return;
+    }
     supabase
       .from("portal_credentials")
       .select("id, jurisdiction, portal_username, login_url")
@@ -258,54 +270,107 @@ export function AppSidebar() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!selectedProject?.selectedProjectId || loading || projects.length === 0) return;
-    const p = projects.find((pr) => pr.id === selectedProject.selectedProjectId);
+    if (!selectedProject?.selectedProjectId || loading || projects.length === 0)
+      return;
+    const p = projects.find(
+      (pr) => pr.id === selectedProject.selectedProjectId,
+    );
     setSelectedCredentialId((p as any)?.credential_id ?? "");
   }, [selectedProject?.selectedProjectId, projects, loading]);
 
-  const handleCredentialChange = useCallback(async (value: string) => {
-    const credId = value === "__none__" ? null : value;
-    const previousValue = selectedCredentialId;
-    setSelectedCredentialId(credId ?? "");
-    if (!selectedProject?.selectedProjectId || !user) return;
-    const updated = await updateProject(selectedProject.selectedProjectId, { credential_id: credId });
-    if (updated) {
-      if (previousValue !== (credId ?? "")) {
-        let shouldClear = true;
+  const detectPortalTypeFromUrl = (
+    url?: string | null,
+  ): "accela" | "projectdox" | "unknown" => {
+    const lower = (url || "").toLowerCase();
+    if (lower.includes("avolvecloud.com") || lower.includes("projectdox"))
+      return "projectdox";
+    if (lower.includes("accela.com")) return "accela";
+    return "unknown";
+  };
 
-        if (!previousValue && credId) {
-          const { data: proj } = await supabase
-            .from("projects")
-            .select("portal_data")
-            .eq("id", selectedProject.selectedProjectId)
-            .maybeSingle();
-          const existingType = (proj?.portal_data as any)?.portalType;
-          if (existingType) {
-            const newCred = sidebarCredentials.find((c: any) => c.id === credId);
-            const newUrl = newCred?.login_url || "";
-            const expectedType = newUrl.includes("avolvecloud.com") || newUrl.toLowerCase().includes("projectdox")
-              ? "projectdox" : newUrl.includes("accela.com") ? "accela" : "unknown";
-            if (expectedType !== "unknown" && existingType === expectedType) {
-              shouldClear = false;
-              if (import.meta.env.DEV) console.log("[Sidebar] First credential assignment — existing portal_data type", existingType, "matches new credential type", expectedType, ", keeping data for project", selectedProject.selectedProjectId);
-            }
-          }
+  const handleCredentialChange = useCallback(
+    async (value: string) => {
+      const credId = value === "__none__" ? null : value;
+      const previousValue = selectedCredentialId;
+      setSelectedCredentialId(credId ?? "");
+
+      if (!selectedProject?.selectedProjectId || !user) return;
+
+      const updated = await updateProject(selectedProject.selectedProjectId, {
+        credential_id: credId,
+      });
+
+      if (!updated) {
+        setSelectedCredentialId(previousValue);
+        toast.error("Failed to update credential");
+        return;
+      }
+
+      // Read existing saved portal_data on this project
+      const { data: proj } = await supabase
+        .from("projects")
+        .select("portal_data, portal_status, last_checked_at")
+        .eq("id", selectedProject.selectedProjectId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      const existingType = (proj?.portal_data as any)?.portalType || "unknown";
+
+      const newCred = sidebarCredentials.find((c: any) => c.id === credId);
+      const expectedType = detectPortalTypeFromUrl(newCred?.login_url);
+
+      // Only clear if we are confident the saved data belongs to a different portal type
+      const shouldClear =
+        !!proj?.portal_data &&
+        expectedType !== "unknown" &&
+        existingType !== "unknown" &&
+        existingType !== expectedType;
+
+      if (import.meta.env.DEV) {
+        console.log("[Sidebar] credential change:", {
+          projectId: selectedProject.selectedProjectId,
+          previousCredentialId: previousValue || null,
+          nextCredentialId: credId,
+          existingPortalType: existingType,
+          expectedPortalType: expectedType,
+          shouldClear,
+        });
+      }
+
+      if (shouldClear) {
+        await supabase
+          .from("projects")
+          .update({
+            portal_data: null,
+            portal_status: null,
+            last_checked_at: null,
+          })
+          .eq("id", selectedProject.selectedProjectId);
+
+        if (import.meta.env.DEV) {
+          console.log(
+            "[Sidebar] Cleared saved portal data because portal type mismatched new credential",
+          );
         }
-
-        if (shouldClear) {
-          await supabase
-            .from("projects")
-            .update({ portal_data: null, portal_status: null, last_checked_at: null })
-            .eq("id", selectedProject.selectedProjectId);
-          if (import.meta.env.DEV) console.log("[Sidebar] Credential changed (prev:", previousValue || "none", "→ new:", credId || "none", "), cleared stale portal_data for project", selectedProject.selectedProjectId);
+      } else {
+        if (import.meta.env.DEV) {
+          console.log(
+            "[Sidebar] Preserved saved portal data on credential change",
+          );
         }
       }
+
       fetchProjects();
-    } else {
-      setSelectedCredentialId(previousValue);
-      toast.error("Failed to update credential");
-    }
-  }, [selectedProject?.selectedProjectId, user, updateProject, fetchProjects, selectedCredentialId, sidebarCredentials]);
+    },
+    [
+      selectedProject?.selectedProjectId,
+      user,
+      updateProject,
+      fetchProjects,
+      selectedCredentialId,
+      sidebarCredentials,
+    ],
+  );
 
   // Permit number is the primary input; persisted per user. Never derived from project.
   const [permitNumber, setPermitNumber] = useState("");
@@ -355,31 +420,16 @@ export function AppSidebar() {
         // ignore
       }
     },
-    [user?.id]
+    [user?.id],
   );
 
   // When user selects an existing project: set project's permit_number to current permit and persist selection (already done by setSelectedProjectId)
   const handleLinkProject = useCallback(
-    async (projectId: string) => {
-      const trimmed = permitNumber.trim();
-      if (!trimmed || !selectedProject || !user) return;
-      setSavingLink(true);
-      try {
-        const updated = await updateProject(projectId, { permit_number: trimmed });
-        if (updated) {
-          selectedProject.setSelectedProjectId(projectId);
-          fetchProjects();
-          toast.success("Project linked");
-        } else {
-          toast.error("Failed to link project");
-        }
-      } catch {
-        toast.error("Failed to link project");
-      } finally {
-        setSavingLink(false);
-      }
+    (projectId: string) => {
+      if (!selectedProject) return;
+      selectedProject.setSelectedProjectId(projectId);
     },
-    [permitNumber, selectedProject, user, updateProject, fetchProjects]
+    [selectedProject],
   );
 
   const handleSelectValueChange = useCallback(
@@ -390,12 +440,8 @@ export function AppSidebar() {
         return;
       }
       selectedProject.setSelectedProjectId(v);
-      const trimmed = permitNumber.trim();
-      if (trimmed) {
-        handleLinkProject(v);
-      }
     },
-    [selectedProject, permitNumber, handleLinkProject]
+    [selectedProject],
   );
 
   const handleCreateNewProject = useCallback(async () => {
@@ -425,26 +471,25 @@ export function AppSidebar() {
     } finally {
       setCreatingProject(false);
     }
-  }, [permitNumber, newProjectName, newProjectJurisdiction, newProjectAddress, selectedProject, user, createProject, fetchProjects]);
+  }, [
+    permitNumber,
+    newProjectName,
+    newProjectJurisdiction,
+    newProjectAddress,
+    selectedProject,
+    user,
+    createProject,
+    fetchProjects,
+  ]);
 
   // When permit number input blurs: persist to localStorage and sync to linked project if one is selected
-  const handlePermitBlur = useCallback(async () => {
+  const handlePermitBlur = useCallback(() => {
     persistPermitNumber(permitNumber);
-    const trimmed = permitNumber.trim();
-    if (trimmed && selectedProject?.selectedProjectId && !savingLink) {
-      setSavingLink(true);
-      try {
-        await updateProject(selectedProject.selectedProjectId, { permit_number: trimmed });
-        fetchProjects();
-      } finally {
-        setSavingLink(false);
-      }
-    }
-  }, [permitNumber, persistPermitNumber, selectedProject?.selectedProjectId, updateProject, fetchProjects, savingLink]);
-
+  }, [permitNumber, persistPermitNumber]);
   // Prefill new project name when permit changes and create form is open
   useEffect(() => {
-    if (createNewProject && permitNumber.trim()) setNewProjectName(permitNumber.trim());
+    if (createNewProject && permitNumber.trim())
+      setNewProjectName(permitNumber.trim());
   }, [createNewProject, permitNumber]);
 
   const [projectsLoadedOnce, setProjectsLoadedOnce] = useState(false);
@@ -453,19 +498,39 @@ export function AppSidebar() {
   }, [loading, projects.length]);
 
   useEffect(() => {
-    if (!selectedProject?.selectedProjectId || loading || !projectsLoadedOnce) return;
+    if (!selectedProject?.selectedProjectId || loading || !projectsLoadedOnce)
+      return;
     if (projects.length === 0) return;
-    const exists = projects.some((p) => p.id === selectedProject.selectedProjectId);
+    const exists = projects.some(
+      (p) => p.id === selectedProject.selectedProjectId,
+    );
     if (!exists) {
       selectedProject.setSelectedProjectId(null);
     }
-  }, [selectedProject?.selectedProjectId, projects, loading, projectsLoadedOnce]);
+  }, [
+    selectedProject?.selectedProjectId,
+    projects,
+    loading,
+    projectsLoadedOnce,
+  ]);
 
   const isActive = (href: string) => location.pathname === href;
 
-  const NavItem = ({ item, showFavorite = false }: { item: { title: string; href: string; icon: React.ElementType; description?: string; requiresAuth?: boolean }; showFavorite?: boolean }) => {
+  const NavItem = ({
+    item,
+    showFavorite = false,
+  }: {
+    item: {
+      title: string;
+      href: string;
+      icon: React.ElementType;
+      description?: string;
+      requiresAuth?: boolean;
+    };
+    showFavorite?: boolean;
+  }) => {
     if (item.requiresAuth && !user) return null;
-    
+
     return (
       <SidebarMenuItem>
         <SidebarMenuButton
@@ -494,7 +559,9 @@ export function AppSidebar() {
                 </span>
               </TooltipTrigger>
               <TooltipContent side="right">
-                {isFavorite(item.href) ? "Remove from favorites" : "Add to favorites"}
+                {isFavorite(item.href)
+                  ? "Remove from favorites"
+                  : "Add to favorites"}
               </TooltipContent>
             </Tooltip>
           </SidebarMenuAction>
@@ -516,7 +583,9 @@ export function AppSidebar() {
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
                   <span className="font-semibold">Insight|DesignCheck</span>
-                  <span className="text-xs text-muted-foreground">Permit Intelligence</span>
+                  <span className="text-xs text-muted-foreground">
+                    Permit Intelligence
+                  </span>
                 </div>
               </Link>
             </SidebarMenuButton>
@@ -542,7 +611,10 @@ export function AppSidebar() {
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {favorites.map((page) => (
-                      <SidebarMenuItem key={page.href} className="group/menu-item">
+                      <SidebarMenuItem
+                        key={page.href}
+                        className="group/menu-item"
+                      >
                         <SidebarMenuButton
                           asChild
                           isActive={isActive(page.href)}
@@ -564,7 +636,9 @@ export function AppSidebar() {
                                   <X className="h-3.5 w-3.5" />
                                 </span>
                               </TooltipTrigger>
-                              <TooltipContent side="right">Remove</TooltipContent>
+                              <TooltipContent side="right">
+                                Remove
+                              </TooltipContent>
                             </Tooltip>
                           </SidebarMenuAction>
                         )}
@@ -594,7 +668,10 @@ export function AppSidebar() {
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {recentPages.slice(1).map((page) => (
-                      <SidebarMenuItem key={page.href} className="group/menu-item">
+                      <SidebarMenuItem
+                        key={page.href}
+                        className="group/menu-item"
+                      >
                         <SidebarMenuButton
                           asChild
                           isActive={isActive(page.href)}
@@ -607,7 +684,9 @@ export function AppSidebar() {
                         </SidebarMenuButton>
                         {!isCollapsed && (
                           <SidebarMenuAction
-                            onClick={() => toggleFavorite(page.href, page.title)}
+                            onClick={() =>
+                              toggleFavorite(page.href, page.title)
+                            }
                             className="opacity-0 group-hover/menu-item:opacity-100 transition-opacity"
                           >
                             <Tooltip>
@@ -621,7 +700,9 @@ export function AppSidebar() {
                                 </span>
                               </TooltipTrigger>
                               <TooltipContent side="right">
-                                {isFavorite(page.href) ? "Remove from favorites" : "Add to favorites"}
+                                {isFavorite(page.href)
+                                  ? "Remove from favorites"
+                                  : "Add to favorites"}
                               </TooltipContent>
                             </Tooltip>
                           </SidebarMenuAction>
@@ -657,20 +738,33 @@ export function AppSidebar() {
                   <TooltipTrigger asChild>
                     <SidebarMenuButton
                       size="lg"
-                      tooltip={permitNumber.trim() ? (selectedProjectData ? `${selectedProjectData.name} · ${permitNumber.trim()}` : `Permit ${permitNumber.trim()} – Select a project`) : "Enter permit number first"}
+                      tooltip={
+                        permitNumber.trim()
+                          ? selectedProjectData
+                            ? `${selectedProjectData.name} · ${permitNumber.trim()}`
+                            : `Permit ${permitNumber.trim()} – Select a project`
+                          : "Enter permit number first"
+                      }
                     >
                       <Building2 className="h-4 w-4" />
                       <span>{permitNumber.trim() || "—"}</span>
                     </SidebarMenuButton>
                   </TooltipTrigger>
                   <TooltipContent side="right">
-                    {permitNumber.trim() ? (selectedProjectData ? `${selectedProjectData.name} · Permit ${permitNumber.trim()}` : "Select a project below") : "Enter permit number first"}
+                    {permitNumber.trim()
+                      ? selectedProjectData
+                        ? `${selectedProjectData.name} · Permit ${permitNumber.trim()}`
+                        : "Select a project below"
+                      : "Enter permit number first"}
                   </TooltipContent>
                 </Tooltip>
               ) : (
                 <div className="px-2 space-y-2">
                   <div className="space-y-1">
-                    <Label htmlFor="sidebar-permit-number" className="text-xs text-muted-foreground">
+                    <Label
+                      htmlFor="sidebar-permit-number"
+                      className="text-xs text-muted-foreground"
+                    >
                       Permit # <span className="text-destructive">*</span>
                     </Label>
                     <Input
@@ -683,17 +777,24 @@ export function AppSidebar() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Active Project</Label>
+                    <Label className="text-xs text-muted-foreground">
+                      Active Project
+                    </Label>
                     <Select
                       value={selectedProject.selectedProjectId ?? "__none__"}
                       onValueChange={handleSelectValueChange}
                       disabled={!permitNumber.trim() || savingLink}
                     >
-                      <SelectTrigger className="h-9 w-full" data-sidebar="select">
+                      <SelectTrigger
+                        className="h-9 w-full"
+                        data-sidebar="select"
+                      >
                         <SelectValue placeholder="Select a project" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__none__">Select a project</SelectItem>
+                        <SelectItem value="__none__">
+                          Select a project
+                        </SelectItem>
                         {projects.map((p) => (
                           <SelectItem key={p.id} value={p.id}>
                             {p.name}
@@ -713,23 +814,34 @@ export function AppSidebar() {
                         value={selectedCredentialId || "__none__"}
                         onValueChange={handleCredentialChange}
                       >
-                        <SelectTrigger className="h-9 w-full" data-testid="select-sidebar-credential">
+                        <SelectTrigger
+                          className="h-9 w-full"
+                          data-testid="select-sidebar-credential"
+                        >
                           <SelectValue placeholder="Select credential" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">None (select a credential)</SelectItem>
+                          <SelectItem value="__none__">
+                            None (select a credential)
+                          </SelectItem>
                           {sidebarCredentials.map((cred) => (
                             <SelectItem key={cred.id} value={cred.id}>
-                              {cred.jurisdiction}{cred.portal_username ? ` — ${cred.portal_username}` : ""}
+                              {cred.jurisdiction}
+                              {cred.portal_username
+                                ? ` — ${cred.portal_username}`
+                                : ""}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                   )}
-                  {!selectedProject.selectedProjectId && permitNumber.trim() && (
-                    <p className="text-xs text-muted-foreground">Select a project above or create one below.</p>
-                  )}
+                  {!selectedProject.selectedProjectId &&
+                    permitNumber.trim() && (
+                      <p className="text-xs text-muted-foreground">
+                        Select a project above or create one below.
+                      </p>
+                    )}
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       id="sidebar-create-new-project"
@@ -737,7 +849,10 @@ export function AppSidebar() {
                       onCheckedChange={(c) => setCreateNewProject(!!c)}
                       disabled={!permitNumber.trim()}
                     />
-                    <Label htmlFor="sidebar-create-new-project" className="text-xs font-normal cursor-pointer">
+                    <Label
+                      htmlFor="sidebar-create-new-project"
+                      className="text-xs font-normal cursor-pointer"
+                    >
                       Or create a new project for this permit
                     </Label>
                   </div>
@@ -752,7 +867,9 @@ export function AppSidebar() {
                       <Input
                         placeholder="Jurisdiction (optional)"
                         value={newProjectJurisdiction}
-                        onChange={(e) => setNewProjectJurisdiction(e.target.value)}
+                        onChange={(e) =>
+                          setNewProjectJurisdiction(e.target.value)
+                        }
                         className="h-9"
                       />
                       <Input
@@ -901,7 +1018,6 @@ export function AppSidebar() {
       {/* Footer */}
       <SidebarFooter className="border-t border-border/50">
         <SidebarMenu>
-
           {/* Auth Section */}
           {user ? (
             <>
@@ -920,7 +1036,9 @@ export function AppSidebar() {
               <SidebarMenuItem>
                 <div className="flex items-center px-2 py-1">
                   <ThemeToggle />
-                  <span className="ml-2 text-xs text-muted-foreground">Theme</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    Theme
+                  </span>
                 </div>
               </SidebarMenuItem>
             </>
@@ -935,10 +1053,12 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <Button asChild size="sm" className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
-                  <Link to="/roi-calculator">
-                    Get Started
-                  </Link>
+                <Button
+                  asChild
+                  size="sm"
+                  className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
+                >
+                  <Link to="/roi-calculator">Get Started</Link>
                 </Button>
               </SidebarMenuItem>
             </>

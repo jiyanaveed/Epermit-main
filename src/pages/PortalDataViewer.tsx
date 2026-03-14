@@ -23,7 +23,21 @@ import { useSelectedProject } from "@/contexts/SelectedProjectContext";
 import { useScrape } from "@/contexts/ScrapeContext";
 import { supabase } from "@/lib/supabase";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, ChevronDown, ChevronRight, FileText, AlertCircle, ListChecks, X, ZoomIn, ZoomOut, FolderOpen, MessageSquare, ArrowLeft, Loader2 } from "lucide-react";
+import {
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  AlertCircle,
+  ListChecks,
+  X,
+  ZoomIn,
+  ZoomOut,
+  FolderOpen,
+  MessageSquare,
+  ArrowLeft,
+  Loader2,
+} from "lucide-react";
 import AccelaProjectView from "@/components/portal/AccelaProjectView";
 
 class TabErrorBoundary extends React.Component<
@@ -38,14 +52,21 @@ class TabErrorBoundary extends React.Component<
     return { hasError: true, error };
   }
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error(`[PortalDataViewer] ${this.props.tabName} tab render error:`, error, info);
+    console.error(
+      `[PortalDataViewer] ${this.props.tabName} tab render error:`,
+      error,
+      info,
+    );
   }
   render() {
     if (this.state.hasError) {
       return (
         <div className="p-4 text-destructive flex items-center gap-2">
           <AlertCircle className="h-4 w-4" />
-          <span>Failed to render {this.props.tabName} tab. The data format may be unexpected.</span>
+          <span>
+            Failed to render {this.props.tabName} tab. The data format may be
+            unexpected.
+          </span>
         </div>
       );
     }
@@ -138,9 +159,10 @@ interface PortalData {
 }
 
 function detectPortalTypeFromUrl(url: string | null | undefined): string {
-  if (!url) return "projectdox";
+  if (!url) return "unknown";
   const lower = url.toLowerCase();
-  if (lower.includes("avolvecloud.com") || lower.includes("projectdox")) return "projectdox";
+  if (lower.includes("avolvecloud.com") || lower.includes("projectdox"))
+    return "projectdox";
   if (lower.includes("accela.com")) return "accela";
   return "unknown";
 }
@@ -154,14 +176,25 @@ export default function PortalDataViewer() {
   const [portalStatus, setPortalStatus] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [noPermitConfigured, setNoPermitConfigured] = useState(false);
-  const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
+  const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(
+    null,
+  );
   const [refreshing, setRefreshing] = useState(false);
-  const [expectedPortalType, setExpectedPortalType] = useState<string | null>(null);
+  const [expectedPortalType, setExpectedPortalType] = useState<string | null>(
+    null,
+  );
   const scrape = useScrape();
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [expandedFileComments, setExpandedFileComments] = useState<Set<string>>(new Set());
-  const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(),
+  );
+  const [expandedFileComments, setExpandedFileComments] = useState<Set<string>>(
+    new Set(),
+  );
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(100);
   const fetchIdRef = useRef(0);
 
@@ -175,8 +208,14 @@ export default function PortalDataViewer() {
   }, [lightboxImage]);
 
   useEffect(() => {
-    if (import.meta.env.DEV) console.log("[PortalDataViewer] selectedProjectId changed →", selectedProjectId);
+    if (import.meta.env.DEV) {
+      console.log(
+        "[PortalDataViewer] selectedProjectId changed →",
+        selectedProjectId,
+      );
+    }
     setResolvedProjectId(null);
+    setExpectedPortalType(null);
     setNoPermitConfigured(false);
     setLoading(true);
   }, [selectedProjectId]);
@@ -187,17 +226,40 @@ export default function PortalDataViewer() {
     setLoading(true);
     setNoPermitConfigured(false);
     try {
-      let project: { id: string; portal_data: unknown; portal_status: string | null; last_checked_at: string | null; permit_number?: string; credential_id?: string } | null = null;
+      let project: {
+        id: string;
+        portal_data: unknown;
+        portal_status: string | null;
+        last_checked_at: string | null;
+        permit_number?: string;
+        credential_id?: string;
+      } | null = null;
 
       if (selectedProjectId) {
         const { data, error } = await supabase
           .from("projects")
-          .select("id, portal_data, portal_status, last_checked_at, permit_number, credential_id")
+          .select(
+            "id, portal_data, portal_status, last_checked_at, permit_number, credential_id",
+          )
           .eq("id", selectedProjectId)
           .eq("user_id", user.id)
           .maybeSingle();
         if (!error) project = data as typeof project;
-        if (import.meta.env.DEV) console.log("[PortalDataViewer] fetch for selectedProjectId:", selectedProjectId, "→ project:", project?.id ?? "(none)", "permit:", (project as any)?.permit_number ?? "(none)", "credential:", (project as any)?.credential_id ?? "(none)", "hasPortalData:", !!project?.portal_data, "portalType:", (project?.portal_data as any)?.portalType ?? "(none)");
+        if (import.meta.env.DEV)
+          console.log(
+            "[PortalDataViewer] fetch for selectedProjectId:",
+            selectedProjectId,
+            "→ project:",
+            project?.id ?? "(none)",
+            "permit:",
+            (project as any)?.permit_number ?? "(none)",
+            "credential:",
+            (project as any)?.credential_id ?? "(none)",
+            "hasPortalData:",
+            !!project?.portal_data,
+            "portalType:",
+            (project?.portal_data as any)?.portalType ?? "(none)",
+          );
       }
 
       if (thisRequestId !== fetchIdRef.current) return;
@@ -226,7 +288,10 @@ export default function PortalDataViewer() {
           if (thisRequestId !== fetchIdRef.current) return;
           if (cred) {
             credExpectedType = detectPortalTypeFromUrl(cred.login_url);
-            if (import.meta.env.DEV) console.log(`[PortalDataViewer] credential=${project.credential_id}, login_url=${cred.login_url}, expectedPortalType=${credExpectedType}`);
+            if (import.meta.env.DEV)
+              console.log(
+                `[PortalDataViewer] credential=${project.credential_id}, login_url=${cred.login_url}, expectedPortalType=${credExpectedType}`,
+              );
           }
         }
         setExpectedPortalType(credExpectedType);
@@ -236,35 +301,48 @@ export default function PortalDataViewer() {
           setPortalStatus((project.portal_status as string) ?? null);
           setLastCheckedAt(null);
           setResolvedProjectId(project.id);
-          if (import.meta.env.DEV) console.log(`[PortalDataViewer] empty state: no saved portal_data for project ${project.id}${!project.credential_id ? " (no credential linked)" : ""}`);
+          if (import.meta.env.DEV)
+            console.log(
+              `[PortalDataViewer] empty state: no saved portal_data for project ${project.id}${!project.credential_id ? " (no credential linked)" : ""}`,
+            );
         } else {
           const pd = (project.portal_data as PortalData) || null;
           const actualType = pd?.portalType || "unknown";
 
-          if (pd && credExpectedType && credExpectedType !== "unknown" && actualType !== "unknown" && credExpectedType !== actualType) {
-            if (import.meta.env.DEV) console.log(`[PortalDataViewer] MISMATCH: credential expects "${credExpectedType}", but portal_data has "${actualType}". Clearing stale data.`);
-            await supabase
-              .from("projects")
-              .update({ portal_data: null, portal_status: null, last_checked_at: null })
-              .eq("id", project.id);
-            if (thisRequestId !== fetchIdRef.current) return;
+          if (
+            pd &&
+            credExpectedType &&
+            credExpectedType !== "unknown" &&
+            actualType !== "unknown" &&
+            credExpectedType !== actualType
+          ) {
+            if (import.meta.env.DEV) {
+              console.log(
+                `[PortalDataViewer] MISMATCH: credential expects "${credExpectedType}", but portal_data has "${actualType}". Hiding mismatched data only.`,
+              );
+            }
             setPortalData(null);
-            setPortalStatus(null);
-            setLastCheckedAt(null);
+            setPortalStatus((project.portal_status as string) ?? null);
+            setLastCheckedAt((project.last_checked_at as string) ?? null);
             setResolvedProjectId(project.id);
-            if (import.meta.env.DEV) console.log(`[PortalDataViewer] empty state: stale data cleared (type mismatch) for project ${project.id}`);
           } else {
             setPortalData(pd);
             setPortalStatus((project.portal_status as string) ?? null);
             setLastCheckedAt((project.last_checked_at as string) ?? null);
             setResolvedProjectId(project.id);
             if (import.meta.env.DEV) {
-              console.log(`[PortalDataViewer] ✅ saved data rendered immediately: project=${project.id}, portalType=${actualType}, expectedType=${credExpectedType ?? "none"}`);
+              console.log(
+                `[PortalDataViewer] ✅ saved data rendered immediately: project=${project.id}, portalType=${actualType}, expectedType=${credExpectedType ?? "none"}`,
+              );
               if (pd?.tabs?.files) {
                 const filesTab = pd.tabs.files as FilesTabData;
-                const allFiles = filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
+                const allFiles =
+                  filesTab.folders?.flatMap((f) => f.files ?? []) ?? [];
                 const withUrl = allFiles.filter((f) => !!f.viewUrl);
-                console.log(`[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`, withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })));
+                console.log(
+                  `[PortalDataViewer] Loaded ${allFiles.length} files, ${withUrl.length} with viewUrl`,
+                  withUrl.map((f) => ({ name: f.name, viewUrl: f.viewUrl })),
+                );
               }
             }
           }
@@ -272,7 +350,10 @@ export default function PortalDataViewer() {
       }
     } catch (err) {
       console.error(err);
-      if (thisRequestId === fetchIdRef.current) setPortalData(null);
+      if (thisRequestId === fetchIdRef.current) {
+        setPortalData(null);
+        setExpectedPortalType(null);
+      }
     } finally {
       if (thisRequestId === fetchIdRef.current) setLoading(false);
     }
@@ -281,13 +362,21 @@ export default function PortalDataViewer() {
   const silentRefetch = useCallback(async () => {
     if (!user || !resolvedProjectId) return;
     if (selectedProjectId && resolvedProjectId !== selectedProjectId) {
-      if (import.meta.env.DEV) console.log("[PortalDataViewer] silentRefetch skipped — resolvedProjectId", resolvedProjectId, "≠ selectedProjectId", selectedProjectId);
+      if (import.meta.env.DEV)
+        console.log(
+          "[PortalDataViewer] silentRefetch skipped — resolvedProjectId",
+          resolvedProjectId,
+          "≠ selectedProjectId",
+          selectedProjectId,
+        );
       return;
     }
     try {
       const { data, error } = await supabase
         .from("projects")
-        .select("id, portal_data, portal_status, last_checked_at, credential_id")
+        .select(
+          "id, portal_data, portal_status, last_checked_at, credential_id",
+        )
         .eq("id", resolvedProjectId)
         .eq("user_id", user.id)
         .maybeSingle();
@@ -310,8 +399,16 @@ export default function PortalDataViewer() {
           const pd = data.portal_data as PortalData;
           const actualType = pd.portalType || "unknown";
 
-          if (credExpectedType && credExpectedType !== "unknown" && actualType !== "unknown" && credExpectedType !== actualType) {
-            if (import.meta.env.DEV) console.log(`[PortalDataViewer] silentRefetch MISMATCH: credential expects "${credExpectedType}", but portal_data has "${actualType}". Ignoring stale data.`);
+          if (
+            credExpectedType &&
+            credExpectedType !== "unknown" &&
+            actualType !== "unknown" &&
+            credExpectedType !== actualType
+          ) {
+            if (import.meta.env.DEV)
+              console.log(
+                `[PortalDataViewer] silentRefetch MISMATCH: credential expects "${credExpectedType}", but portal_data has "${actualType}". Ignoring stale data.`,
+              );
             setPortalData(null);
             return;
           }
@@ -319,10 +416,14 @@ export default function PortalDataViewer() {
           const filesTab = pd.tabs?.files as FilesTabData | undefined;
           if (filesTab?.folders) {
             const urlCount = filesTab.folders.reduce(
-              (sum, f) => sum + (f.files?.filter((file) => !!file.viewUrl).length ?? 0),
+              (sum, f) =>
+                sum + (f.files?.filter((file) => !!file.viewUrl).length ?? 0),
               0,
             );
-            if (import.meta.env.DEV) console.log(`[PortalDataViewer] silentRefetch: ${urlCount} files with viewUrl`);
+            if (import.meta.env.DEV)
+              console.log(
+                `[PortalDataViewer] silentRefetch: ${urlCount} files with viewUrl`,
+              );
           }
           setPortalData(pd);
         } else {
@@ -330,7 +431,7 @@ export default function PortalDataViewer() {
         }
       }
     } catch {}
-  }, [user, resolvedProjectId, selectedProjectId]);
+  }, [user, resolvedProjectId, selectedProjectId, expectedPortalType]);
 
   const handleManualRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -397,7 +498,9 @@ export default function PortalDataViewer() {
             <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
             <h2 className="text-lg font-semibold mb-2">No project linked</h2>
             <p className="text-muted-foreground mb-4">
-              In Settings &gt; Portal Credentials, link credentials to a project. Then select that project in the sidebar and set Permit # there.
+              In Settings &gt; Portal Credentials, link credentials to a
+              project. Then select that project in the sidebar and set Permit #
+              there.
             </p>
             <Button asChild variant="outline">
               <Link to="/settings">Open Settings</Link>
@@ -409,10 +512,16 @@ export default function PortalDataViewer() {
   }
 
   if (!portalData) {
-    const emptyLabel = expectedPortalType === "accela" ? "No Accela data yet"
-      : expectedPortalType === "projectdox" ? "No ProjectDox data yet"
-      : "No portal data yet";
-    if (import.meta.env.DEV) console.log(`[PortalDataViewer] rendering empty state: expectedPortalType=${expectedPortalType}, label="${emptyLabel}"`);
+    const emptyLabel =
+      expectedPortalType === "accela"
+        ? "No Accela data yet"
+        : expectedPortalType === "projectdox"
+          ? "No ProjectDox data yet"
+          : "No portal data yet";
+    if (import.meta.env.DEV)
+      console.log(
+        `[PortalDataViewer] rendering empty state: expectedPortalType=${expectedPortalType}, label="${emptyLabel}"`,
+      );
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl">
         <Card className="border-dashed">
@@ -420,7 +529,9 @@ export default function PortalDataViewer() {
             <FileText className="h-12 w-12 text-muted-foreground mb-4" />
             <h2 className="text-lg font-semibold mb-2">{emptyLabel}</h2>
             <p className="text-muted-foreground mb-4">
-              Click Run Manual Check on the Dashboard to fetch data.
+              Saved data for the selected project will appear here
+              automatically. Run a new scrape only if this project does not have
+              valid saved data yet.
             </p>
             <Button asChild className="bg-accent hover:bg-accent/90">
               <Link to="/dashboard">Go to Dashboard</Link>
@@ -436,9 +547,12 @@ export default function PortalDataViewer() {
     : null;
 
   if (!portalData?.tabs) {
-    const noTabsLabel = expectedPortalType === "accela" ? "No Accela data available."
-      : expectedPortalType === "projectdox" ? "No ProjectDox data available."
-      : "No portal data available.";
+    const noTabsLabel =
+      expectedPortalType === "accela"
+        ? "No Accela data available."
+        : expectedPortalType === "projectdox"
+          ? "No ProjectDox data available."
+          : "No portal data available.";
     return (
       <section className="py-6 px-4 sm:px-6 max-w-5xl">
         <div className="p-8 text-center text-gray-400">
@@ -448,17 +562,31 @@ export default function PortalDataViewer() {
     );
   }
 
-  const renderAccelaUI = expectedPortalType === "accela" || (!expectedPortalType && portalData.portalType === "accela");
-  if (import.meta.env.DEV) console.log(`[PortalDataViewer] rendering UI: expectedPortalType=${expectedPortalType}, portalData.portalType=${portalData.portalType}, renderAccelaUI=${renderAccelaUI}`);
+  const renderAccelaUI =
+    expectedPortalType === "accela" ||
+    (!expectedPortalType && portalData.portalType === "accela");
+  if (import.meta.env.DEV)
+    console.log(
+      `[PortalDataViewer] rendering UI: expectedPortalType=${expectedPortalType}, portalData.portalType=${portalData.portalType}, renderAccelaUI=${renderAccelaUI}`,
+    );
   if (renderAccelaUI) {
     return (
-      <section className="py-6 px-4 sm:px-6 max-w-5xl" data-testid="portal-data-viewer">
+      <section
+        className="py-6 px-4 sm:px-6 max-w-5xl"
+        data-testid="portal-data-viewer"
+      >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-[#F0F6FF]">Portal Data</h1>
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            <h1 className="text-xl font-semibold text-[#F0F6FF]">
+              Portal Data
+            </h1>
+            {loading && (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            )}
             {lastCheckedStr && (
-              <p className="text-xs text-muted-foreground mt-0.5">{lastCheckedStr}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {lastCheckedStr}
+              </p>
             )}
           </div>
           <Button
@@ -469,7 +597,9 @@ export default function PortalDataViewer() {
             className="gap-1.5"
             data-testid="button-refresh"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
         </div>
@@ -517,7 +647,9 @@ export default function PortalDataViewer() {
   /** Detect if tabs.info.projectInfo is malformed (scraper put values as keys). Do not use for display. */
   const isProjectInfoMalformed = (): boolean => {
     const jurisdiction =
-      (portalData?.dashboardStatus ?? "") + (portalData?.location ?? "") + (portalData?.name ?? "");
+      (portalData?.dashboardStatus ?? "") +
+      (portalData?.location ?? "") +
+      (portalData?.name ?? "");
     const isDC =
       /washington\s*dc|projectdox|avolve|dc\s*accela/i.test(jurisdiction) ||
       (portalData?.location && /sheridan|dc\b/i.test(portalData.location));
@@ -525,11 +657,16 @@ export default function PortalDataViewer() {
     const projectNum = portalData?.projectNum ?? "";
     if (!projectNum) return false;
     const hasProjectNumAsKey = projectInfoFromTab.some(
-      (kv) => kv.key === projectNum || kv.key?.trim() === projectNum
+      (kv) => kv.key === projectNum || kv.key?.trim() === projectNum,
     );
     if (hasProjectNumAsKey) return true;
-    const emptyCount = projectInfoFromTab.filter((kv) => !kv.value?.trim()).length;
-    if (projectInfoFromTab.length >= 5 && emptyCount >= projectInfoFromTab.length - 2)
+    const emptyCount = projectInfoFromTab.filter(
+      (kv) => !kv.value?.trim(),
+    ).length;
+    if (
+      projectInfoFromTab.length >= 5 &&
+      emptyCount >= projectInfoFromTab.length - 2
+    )
       return true;
     return false;
   };
@@ -544,15 +681,21 @@ export default function PortalDataViewer() {
     const description = portalData?.description ?? "";
     const location = portalData?.location ?? "";
 
-    const infoTable = infoTables.find((t) => isWeirdProjectInfoTable(t, projectNum));
+    const infoTable = infoTables.find((t) =>
+      isWeirdProjectInfoTable(t, projectNum),
+    );
     const firstColKey = infoTable?.headers?.[0] ?? "Project name:";
 
     const getRowValue = (rowIndex: number): string => {
       if (!infoTable?.rows?.[rowIndex]) return "";
       const row = infoTable.rows[rowIndex];
-      const v = row[firstColKey] ?? (Object.values(row)[0] as string | undefined);
+      const v =
+        row[firstColKey] ?? (Object.values(row)[0] as string | undefined);
       return typeof v === "string"
-        ? v.replace(/\s+/g, " ").replace(/\u00a0/g, "").trim()
+        ? v
+            .replace(/\s+/g, " ")
+            .replace(/\u00a0/g, "")
+            .trim()
         : "";
     };
 
@@ -566,7 +709,9 @@ export default function PortalDataViewer() {
       console.log("[PortalDataViewer] weirdTable debug:", {
         headers: infoTable?.headers,
         rowCount,
-        extractedByIndex: values.slice(0, rowCount).map((v, i) => `[${i}]: ${(v || "(empty)").slice(0, 50)}`),
+        extractedByIndex: values
+          .slice(0, rowCount)
+          .map((v, i) => `[${i}]: ${(v || "(empty)").slice(0, 50)}`),
       });
     }
 
@@ -579,11 +724,16 @@ export default function PortalDataViewer() {
 
     const v5 = values[5] ?? "";
     const looksLikeJobClass = (s: string) =>
-      /^[A-Z]{1,3}-[A-Z]{1,3}$/.test(s.trim()) || /C-C|Job\s*Class/i.test(s) || (s.length <= 6 && /^[A-Z0-9\-]+$/.test(s.trim()));
+      /^[A-Z]{1,3}-[A-Z]{1,3}$/.test(s.trim()) ||
+      /C-C|Job\s*Class/i.test(s) ||
+      (s.length <= 6 && /^[A-Z0-9\-]+$/.test(s.trim()));
     const looksLikePhone = (s: string) =>
-      s.length >= 7 && /^[\d\s\-\(\)]+$/.test(s.replace(/\s/g, "")) && /\d{7,}/.test(s);
+      s.length >= 7 &&
+      /^[\d\s\-\(\)]+$/.test(s.replace(/\s/g, "")) &&
+      /\d{7,}/.test(s);
 
-    const hasCellPhoneRow = v5 !== "" && looksLikePhone(v5) && !looksLikeJobClass(v5);
+    const hasCellPhoneRow =
+      v5 !== "" && looksLikePhone(v5) && !looksLikeJobClass(v5);
 
     let jobClassIdx: number;
     let projectOwnerIdx: number;
@@ -611,8 +761,7 @@ export default function PortalDataViewer() {
       startEndIdx = rowCount >= 12 ? 11 : rowCount >= 11 ? 10 : -1;
     }
 
-    const startEndValue =
-      startEndIdx >= 0 ? (values[startEndIdx] ?? "") : "";
+    const startEndValue = startEndIdx >= 0 ? (values[startEndIdx] ?? "") : "";
 
     const rows: KeyValue[] = [
       { key: "Project name", value: projectName },
@@ -626,7 +775,10 @@ export default function PortalDataViewer() {
       { key: "Project Owner", value: values[projectOwnerIdx] ?? "" },
       { key: "Owner's Email", value: values[ownerEmailIdx] ?? "" },
       { key: "Status", value: values[statusIdx] ?? "" },
-      { key: "Review Cycle", value: reviewCycleIdx >= 0 ? (values[reviewCycleIdx] ?? "") : "" },
+      {
+        key: "Review Cycle",
+        value: reviewCycleIdx >= 0 ? (values[reviewCycleIdx] ?? "") : "",
+      },
       { key: "Project Start/End", value: startEndValue },
     ];
     return rows;
@@ -637,14 +789,18 @@ export default function PortalDataViewer() {
     const hasProjectNameHeader = headers[0]?.includes("Project name:");
     const hasVeryLongHeader = headers.some((h) => (h ?? "").length > 100);
     const hasLabelLikeHeaders = headers.some((h) =>
-      /^(Description|Location|Contact):?$/i.test((h ?? "").trim())
+      /^(Description|Location|Contact):?$/i.test((h ?? "").trim()),
     );
     return hasProjectNameHeader || hasVeryLongHeader || hasLabelLikeHeaders;
   };
-  const filteredInfoTables = infoTables.filter((table) => !isMalformedInfoTable(table));
+  const filteredInfoTables = infoTables.filter(
+    (table) => !isMalformedInfoTable(table),
+  );
 
   let displayProjectInfo: KeyValue[] = [];
-  const weirdTable = infoTables.find((t) => isWeirdProjectInfoTable(t, portalData?.projectNum ?? ""));
+  const weirdTable = infoTables.find((t) =>
+    isWeirdProjectInfoTable(t, portalData?.projectNum ?? ""),
+  );
   if (isProjectInfoMalformed() || weirdTable) {
     displayProjectInfo = buildProjectInfoFromPortalAndTable();
   } else if (projectInfoFromTab.length > 2) {
@@ -655,16 +811,19 @@ export default function PortalDataViewer() {
         (h) =>
           h?.includes("Project name:") ||
           (h ?? "").length > 100 ||
-          /^(Description|Location|Contact):?$/i.test((h ?? "").trim())
-      )
+          /^(Description|Location|Contact):?$/i.test((h ?? "").trim()),
+      ),
     );
     if (infoTable) {
       const parsedInfo: KeyValue[] = [];
       const projectNameValue = infoTable.headers?.find(
-        (h) => h && h.length < 20 && !h.includes(":")
+        (h) => h && h.length < 20 && !h.includes(":"),
       );
       if (projectNameValue?.trim()) {
-        parsedInfo.push({ key: "Project name", value: projectNameValue.trim() });
+        parsedInfo.push({
+          key: "Project name",
+          value: projectNameValue.trim(),
+        });
       }
       const headers = infoTable.headers ?? [];
       const valueColumnKey = headers[1] ?? null;
@@ -676,14 +835,20 @@ export default function PortalDataViewer() {
           const v = row[valueColumnKey];
           value =
             typeof v === "string"
-              ? v.replace(/\s+/g, " ").replace(/\u00a0/g, "").trim()
+              ? v
+                  .replace(/\s+/g, " ")
+                  .replace(/\u00a0/g, "")
+                  .trim()
               : "";
         } else {
           const values = Object.values(row);
           const second = values[1];
           value =
             typeof second === "string"
-              ? String(second).replace(/\s+/g, " ").replace(/\u00a0/g, "").trim()
+              ? String(second)
+                  .replace(/\s+/g, " ")
+                  .replace(/\u00a0/g, "")
+                  .trim()
               : "";
         }
         parsedInfo.push({ key: PROJECT_INFO_LABELS[labelIdx], value });
@@ -692,12 +857,21 @@ export default function PortalDataViewer() {
     }
   }
 
-  if (typeof window !== "undefined" && import.meta.env.DEV && displayProjectInfo.length > 0) {
-    const cellPhoneIdx = displayProjectInfo.findIndex((kv) => /cell\s*phone/i.test(kv.key));
+  if (
+    typeof window !== "undefined" &&
+    import.meta.env.DEV &&
+    displayProjectInfo.length > 0
+  ) {
+    const cellPhoneIdx = displayProjectInfo.findIndex((kv) =>
+      /cell\s*phone/i.test(kv.key),
+    );
     if (cellPhoneIdx >= 0 && cellPhoneIdx + 1 < displayProjectInfo.length) {
       const nextKey = displayProjectInfo[cellPhoneIdx + 1].key;
       if (nextKey !== "Job Class") {
-        console.warn("[PortalDataViewer] Project Info alignment: after Cell Phone expected Job Class, got", nextKey);
+        console.warn(
+          "[PortalDataViewer] Project Info alignment: after Cell Phone expected Job Class, got",
+          nextKey,
+        );
       }
     }
   }
@@ -712,7 +886,7 @@ export default function PortalDataViewer() {
       (p) =>
         p.fileName &&
         reportName &&
-        (p.fileName.includes(reportName) || reportName.includes(p.fileName))
+        (p.fileName.includes(reportName) || reportName.includes(p.fileName)),
     );
 
   function parseReviewComments(originalText: string) {
@@ -838,7 +1012,11 @@ export default function PortalDataViewer() {
     const processed = text.replace(/\n\t/g, "\t");
     const lines = processed.split("\n");
 
-    const tableRegions: Array<{ start: number; end: number; headers: string[] }> = [];
+    const tableRegions: Array<{
+      start: number;
+      end: number;
+      headers: string[];
+    }> = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -999,7 +1177,10 @@ export default function PortalDataViewer() {
       const table = tablesByStart.get(lineIdx);
       if (table) {
         elements.push(
-          <div key={keyInc++} className="overflow-x-auto my-4 border rounded-lg">
+          <div
+            key={keyInc++}
+            className="overflow-x-auto my-4 border rounded-lg"
+          >
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-[#091428] border-b-2 border-[#1A3055]">
@@ -1031,7 +1212,7 @@ export default function PortalDataViewer() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>,
         );
         lineIdx = table.end;
         continue;
@@ -1052,7 +1233,7 @@ export default function PortalDataViewer() {
             className="text-xs text-[#6B9AC4] mt-6 pt-2 border-t border-[#1A3055] italic"
           >
             {trimmed}
-          </p>
+          </p>,
         );
         lineIdx++;
         continue;
@@ -1073,7 +1254,7 @@ export default function PortalDataViewer() {
             className="text-xl font-light text-[#6B9AC4] pb-2 mb-4 border-b-2 border-blue-600"
           >
             {trimmed}
-          </h3>
+          </h3>,
         );
         lineIdx++;
         continue;
@@ -1093,7 +1274,7 @@ export default function PortalDataViewer() {
             className="text-center text-sm font-bold tracking-wider text-[#6B9AC4] bg-[#091428] py-2 my-4 border-y border-[#1A3055]"
           >
             {trimmed}
-          </div>
+          </div>,
         );
         lineIdx++;
         continue;
@@ -1114,8 +1295,10 @@ export default function PortalDataViewer() {
               <span className="text-sm text-[#6B9AC4] whitespace-nowrap min-w-[160px]">
                 {key}:
               </span>
-              <span className="text-sm font-semibold text-[#F0F6FF]">{val}</span>
-            </div>
+              <span className="text-sm font-semibold text-[#F0F6FF]">
+                {val}
+              </span>
+            </div>,
           );
           lineIdx++;
           continue;
@@ -1125,7 +1308,7 @@ export default function PortalDataViewer() {
       elements.push(
         <p key={keyInc++} className="text-sm text-[#F0F6FF] py-0.5">
           {trimmed}
-        </p>
+        </p>,
       );
       lineIdx++;
     }
@@ -1142,9 +1325,7 @@ export default function PortalDataViewer() {
     const rcSectionIdx = text.indexOf("REVIEW COMMENTS");
     if (rcSectionIdx > 0) {
       const beforeRC = text.substring(0, rcSectionIdx);
-      elements.push(
-        <div key={keyInc++}>{renderReportContent(beforeRC)}</div>
-      );
+      elements.push(<div key={keyInc++}>{renderReportContent(beforeRC)}</div>);
     }
 
     elements.push(
@@ -1153,7 +1334,7 @@ export default function PortalDataViewer() {
         className="text-center text-sm font-bold tracking-wider text-[#6B9AC4] bg-[#091428] py-2 my-4 border-y border-[#1A3055]"
       >
         REVIEW COMMENTS
-      </div>
+      </div>,
     );
 
     const comments = parseReviewComments(text);
@@ -1162,7 +1343,7 @@ export default function PortalDataViewer() {
       elements.push(
         <p key={keyInc++} className="text-sm text-[#6B9AC4] italic py-2">
           No comments parsed.
-        </p>
+        </p>,
       );
     }
 
@@ -1185,7 +1366,9 @@ export default function PortalDataViewer() {
                 </span>
               )}
               {comment.reviewer && (
-                <span className="text-sm text-[#F0F6FF] font-medium">{comment.reviewer}</span>
+                <span className="text-sm text-[#F0F6FF] font-medium">
+                  {comment.reviewer}
+                </span>
               )}
               {comment.date && (
                 <span className="text-xs text-[#6B9AC4]">{comment.date}</span>
@@ -1232,16 +1415,19 @@ export default function PortalDataViewer() {
               );
             })}
           </div>
-        </div>
+        </div>,
       );
     });
 
     const footerMatch = text.match(/Created in ProjectDox[^\n]*/);
     if (footerMatch) {
       elements.push(
-        <p key={keyInc++} className="text-xs text-[#6B9AC4] mt-4 pt-2 border-t border-[#1A3055] italic">
+        <p
+          key={keyInc++}
+          className="text-xs text-[#6B9AC4] mt-4 pt-2 border-t border-[#1A3055] italic"
+        >
           {footerMatch[0]}
-        </p>
+        </p>,
       );
     }
 
@@ -1265,13 +1451,19 @@ export default function PortalDataViewer() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold">{portalData.projectNum}</h1>
-              {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+              {loading && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              )}
             </div>
             {portalData.description && (
-              <p className="text-muted-foreground mt-1 max-w-2xl">{portalData.description}</p>
+              <p className="text-muted-foreground mt-1 max-w-2xl">
+                {portalData.description}
+              </p>
             )}
             {portalData.location && (
-              <p className="text-sm text-muted-foreground mt-0.5">{portalData.location}</p>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {portalData.location}
+              </p>
             )}
             <div className="flex items-center gap-3 mt-2 flex-wrap">
               {(portalData.dashboardStatus ?? portalStatus) && (
@@ -1280,13 +1472,18 @@ export default function PortalDataViewer() {
                 </Badge>
               )}
               {lastCheckedStr && (
-                <span className="text-sm text-muted-foreground">{lastCheckedStr}</span>
+                <span className="text-sm text-muted-foreground">
+                  {lastCheckedStr}
+                </span>
               )}
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {scrape.isScraping && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1" data-testid="text-auto-refresh-active">
+              <span
+                className="text-xs text-muted-foreground flex items-center gap-1"
+                data-testid="text-auto-refresh-active"
+              >
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Auto-refreshing
               </span>
@@ -1338,99 +1535,122 @@ export default function PortalDataViewer() {
           <Card>
             <CardContent className="p-0">
               <TabErrorBoundary tabName="Info">
-              {infoTab?.error ? (
-                <div className="p-4 text-destructive flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" />
-                  {infoTab?.error}
-                </div>
-              ) : hasInfoData ? (
-                <div>
-                  {displayProjectInfo.length > 0 && (
-                    <div className="p-4 pb-0">
-                      <p className="text-sm font-bold mb-2">Project Info</p>
-                      <div className="border border-border rounded-md overflow-hidden">
-                        <div className="grid grid-cols-3 border-b border-border bg-muted/30">
-                          <div className="col-span-1 px-3 py-2 text-sm font-semibold">Field</div>
-                          <div className="col-span-2 px-3 py-2 text-sm font-semibold">Value</div>
-                        </div>
-                        {displayProjectInfo.map((kv, i) => (
-                          <div
-                            key={`${kv.key}-${i}`}
-                            className={`grid grid-cols-3 border-b border-border last:border-b-0 ${
-                              i % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"
-                            }`}
-                          >
-                            <div className="col-span-1 w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold bg-[#091428] border-r border-[#1A3055]">
-                              {kv.key}
+                {infoTab?.error ? (
+                  <div className="p-4 text-destructive flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {infoTab?.error}
+                  </div>
+                ) : hasInfoData ? (
+                  <div>
+                    {displayProjectInfo.length > 0 && (
+                      <div className="p-4 pb-0">
+                        <p className="text-sm font-bold mb-2">Project Info</p>
+                        <div className="border border-border rounded-md overflow-hidden">
+                          <div className="grid grid-cols-3 border-b border-border bg-muted/30">
+                            <div className="col-span-1 px-3 py-2 text-sm font-semibold">
+                              Field
                             </div>
+                            <div className="col-span-2 px-3 py-2 text-sm font-semibold">
+                              Value
+                            </div>
+                          </div>
+                          {displayProjectInfo.map((kv, i) => (
                             <div
-                              className={`col-span-2 px-3 py-2 text-sm ${
-                                kv.key === "Description"
-                                  ? "whitespace-normal break-words"
-                                  : ""
+                              key={`${kv.key}-${i}`}
+                              className={`grid grid-cols-3 border-b border-border last:border-b-0 ${
+                                i % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"
                               }`}
                             >
-                              {kv.value.trim() !== "" ? kv.value : "-"}
+                              <div className="col-span-1 w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold bg-[#091428] border-r border-[#1A3055]">
+                                {kv.key}
+                              </div>
+                              <div
+                                className={`col-span-2 px-3 py-2 text-sm ${
+                                  kv.key === "Description"
+                                    ? "whitespace-normal break-words"
+                                    : ""
+                                }`}
+                              >
+                                {kv.value.trim() !== "" ? kv.value : "-"}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {infoTab?.keyValues && infoTab?.keyValues?.length > 0 && displayProjectInfo.length === 0 && (
-                    <div className="border-0">
-                      {infoTab?.keyValues?.map((kv, i) => (
-                        <div
-                          key={i}
-                          className={`flex border-b border-border last:border-b-0 ${
-                            i % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"
-                          }`}
-                        >
-                          <div className="w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold text-muted-foreground bg-muted/40 shrink-0">
-                            {kv.key}
-                          </div>
-                          <div className="flex-1 px-3 py-2 text-sm">
-                            {kv.value}
-                          </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  )}
-                  {filteredInfoTables.map((tbl, ti) => (
-                    <div
-                      key={ti}
-                      className={`overflow-x-auto ${
-                        ti === 0 && !infoTab?.keyValues?.length && displayProjectInfo.length === 0
-                          ? ""
-                          : "mt-4"
-                      }`}
-                    >
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-[#091428] hover:bg-[#091428]">
-                            {tbl.headers?.map((h, hi) => (
-                              <TableHead key={hi} className="text-foreground font-medium whitespace-nowrap">
-                                {h}
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {tbl.rows?.map((row, ri) => (
-                            <TableRow key={ri} className={ri % 2 === 1 ? "bg-[#091428]" : "bg-[#0D1E38]"}>
-                              {tbl.headers?.map((h) => (
-                                <TableCell key={h} className="whitespace-nowrap">{row[h] ?? ""}</TableCell>
+                      </div>
+                    )}
+                    {infoTab?.keyValues &&
+                      infoTab?.keyValues?.length > 0 &&
+                      displayProjectInfo.length === 0 && (
+                        <div className="border-0">
+                          {infoTab?.keyValues?.map((kv, i) => (
+                            <div
+                              key={i}
+                              className={`flex border-b border-border last:border-b-0 ${
+                                i % 2 === 0 ? "bg-[#0D1E38]" : "bg-[#091428]"
+                              }`}
+                            >
+                              <div className="w-1/3 min-w-[140px] px-3 py-2 text-sm font-semibold text-muted-foreground bg-muted/40 shrink-0">
+                                {kv.key}
+                              </div>
+                              <div className="flex-1 px-3 py-2 text-sm">
+                                {kv.value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    {filteredInfoTables.map((tbl, ti) => (
+                      <div
+                        key={ti}
+                        className={`overflow-x-auto ${
+                          ti === 0 &&
+                          !infoTab?.keyValues?.length &&
+                          displayProjectInfo.length === 0
+                            ? ""
+                            : "mt-4"
+                        }`}
+                      >
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-[#091428] hover:bg-[#091428]">
+                              {tbl.headers?.map((h, hi) => (
+                                <TableHead
+                                  key={hi}
+                                  className="text-foreground font-medium whitespace-nowrap"
+                                >
+                                  {h}
+                                </TableHead>
                               ))}
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="p-4 text-muted-foreground">No info data available.</p>
-              )}
+                          </TableHeader>
+                          <TableBody>
+                            {tbl.rows?.map((row, ri) => (
+                              <TableRow
+                                key={ri}
+                                className={
+                                  ri % 2 === 1 ? "bg-[#091428]" : "bg-[#0D1E38]"
+                                }
+                              >
+                                {tbl.headers?.map((h) => (
+                                  <TableCell
+                                    key={h}
+                                    className="whitespace-nowrap"
+                                  >
+                                    {row[h] ?? ""}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="p-4 text-muted-foreground">
+                    No info data available.
+                  </p>
+                )}
               </TabErrorBoundary>
             </CardContent>
           </Card>
@@ -1438,337 +1658,442 @@ export default function PortalDataViewer() {
 
         <TabsContent value="reports" className="mt-4">
           <p className="text-sm text-muted-foreground mb-3">
-            Source data from the portal. For an actionable comment list and responses, use <strong>Comment Review</strong>.
+            Source data from the portal. For an actionable comment list and
+            responses, use <strong>Comment Review</strong>.
           </p>
           <Card>
             <CardContent className="p-0">
               <TabErrorBoundary tabName="Reports">
-              {reportsTab?.error ? (
-                <div className="p-4 text-destructive flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" />
-                  {reportsTab?.error}
-                </div>
-              ) : reportsTable ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-[#091428] hover:bg-[#091428]">
-                      {reportsTable.headers?.map((h, hi) => (
-                        <TableHead key={hi} className="text-foreground font-medium">
-                          {h}
-                        </TableHead>
-                      ))}
-                      <TableHead className="text-foreground font-medium w-12 min-w-[3rem] text-right" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {reportsRows.map((row, ri) => {
-                      const reportName = String(row["REPORT NAME"] ?? row["Report Name"] ?? "");
-                      const isExpanded = expandedReport === reportName;
-                      const pdf = findPdfForReport(reportName);
-                      const hasError = pdf?.error;
+                {reportsTab?.error ? (
+                  <div className="p-4 text-destructive flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {reportsTab?.error}
+                  </div>
+                ) : reportsTable ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-[#091428] hover:bg-[#091428]">
+                        {reportsTable.headers?.map((h, hi) => (
+                          <TableHead
+                            key={hi}
+                            className="text-foreground font-medium"
+                          >
+                            {h}
+                          </TableHead>
+                        ))}
+                        <TableHead className="text-foreground font-medium w-12 min-w-[3rem] text-right" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {reportsRows.map((row, ri) => {
+                        const reportName = String(
+                          row["REPORT NAME"] ?? row["Report Name"] ?? "",
+                        );
+                        const isExpanded = expandedReport === reportName;
+                        const pdf = findPdfForReport(reportName);
+                        const hasError = pdf?.error;
 
-                      return (
-                        <Collapsible
-                          key={ri}
-                          open={isExpanded}
-                          onOpenChange={(open) =>
-                            setExpandedReport(open ? reportName : null)
-                          }
-                        >
-                          <>
-                            <TableRow
-                              className={`cursor-pointer hover:bg-muted/50 ${ri % 2 === 1 ? "bg-muted/30" : ""}`}
-                              onClick={() =>
-                                setExpandedReport(isExpanded ? null : reportName)
-                              }
-                            >
-                              {reportsTable.headers?.map((h) => (
-                                <TableCell key={h}>{row[h] ?? ""}</TableCell>
-                              ))}
-                              <TableCell className="w-12 min-w-[3rem] text-right align-middle">
-                                <div className="flex justify-end">
-                                  <CollapsibleTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-                                      {isExpanded ? (
-                                        <ChevronDown className="h-4 w-4" />
-                                      ) : (
-                                        <ChevronRight className="h-4 w-4" />
-                                      )}
-                                    </Button>
-                                  </CollapsibleTrigger>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                            <CollapsibleContent asChild>
-                              <TableRow>
-                                <TableCell
-                                  colSpan={(reportsTable.headers?.length ?? 1) + 1}
-                                  className="bg-muted/30 p-0"
-                                >
-                                    <div className="p-4">
-                                    <Card className="bg-background border shadow-sm">
-                                      <CardHeader className="pb-2">
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                          <CardTitle className="text-base flex items-center gap-2">
-                                            {reportName}
-                                            {hasError && (
-                                              <Badge
-                                                variant="destructive"
-                                                className="text-xs"
-                                              >
-                                                Error
-                                              </Badge>
-                                            )}
-                                          </CardTitle>
-                                          <div className="flex items-center gap-2">
-                                            {reportName && reportName.includes("Review Comments") && (
-                                              <Button
-                                                size="sm"
-                                                className="bg-accent hover:bg-accent/90"
-                                                onClick={() => navigate("/comment-review", { state: { fromReports: true } })}
-                                              >
-                                                <ListChecks className="h-4 w-4 mr-2" />
-                                                Open Comment Review
-                                              </Button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </CardHeader>
-                                      <CardContent className="pt-0">
-                                        {hasError ? (
-                                          <p className="text-sm text-destructive">
-                                            {pdf?.error}
-                                          </p>
-                                        ) : pdf?.screenshot ? (
-                                          <div>
-                                            <div
-                                              className="overflow-auto rounded border cursor-pointer transition-all duration-200 hover:border-[#FF6B2B40] hover:shadow-[0_0_8px_#FF6B2B40] hover:brightness-105"
-                                              style={{ maxHeight: "700px" }}
-                                              onClick={() => {
-                                                setLightboxImage({ src: `data:image/png;base64,${pdf.screenshot}`, alt: reportName });
-                                                setLightboxZoom(100);
-                                              }}
-                                              data-testid={`img-report-${reportName}`}
-                                            >
-                                              <img
-                                                src={`data:image/png;base64,${pdf.screenshot}`}
-                                                alt={reportName}
-                                                className="w-full pointer-events-none"
-                                              />
-                                            </div>
-                                            {pdf.text && (
-                                              <details className="mt-2">
-                                                <summary className="text-xs text-[#6B9AC4] cursor-pointer hover:text-[#F0F6FF]">
-                                                  Show extracted text
-                                                </summary>
-                                                <pre className="mt-2 text-xs bg-[#091428] text-[#F0F6FF] p-3 rounded border border-[#1A3055] overflow-auto max-h-64 whitespace-pre-wrap">
-                                                  {pdf.text}
-                                                </pre>
-                                              </details>
-                                            )}
-                                          </div>
-                                        ) : pdf?.text ? (
-                                          <div className="max-h-96 overflow-y-auto rounded border border-[#1A3055] bg-[#0D1E38] p-4">
-                                            {pdf.fileName?.includes("Review Comments")
-                                              ? renderReviewComments(pdf.text)
-                                              : renderReportContent(pdf.text)}
-                                          </div>
+                        return (
+                          <Collapsible
+                            key={ri}
+                            open={isExpanded}
+                            onOpenChange={(open) =>
+                              setExpandedReport(open ? reportName : null)
+                            }
+                          >
+                            <>
+                              <TableRow
+                                className={`cursor-pointer hover:bg-muted/50 ${ri % 2 === 1 ? "bg-muted/30" : ""}`}
+                                onClick={() =>
+                                  setExpandedReport(
+                                    isExpanded ? null : reportName,
+                                  )
+                                }
+                              >
+                                {reportsTable.headers?.map((h) => (
+                                  <TableCell key={h}>{row[h] ?? ""}</TableCell>
+                                ))}
+                                <TableCell className="w-12 min-w-[3rem] text-right align-middle">
+                                  <div className="flex justify-end">
+                                    <CollapsibleTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 shrink-0"
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronDown className="h-4 w-4" />
                                         ) : (
-                                          <p className="text-sm text-muted-foreground">
-                                            No content available.
-                                          </p>
+                                          <ChevronRight className="h-4 w-4" />
                                         )}
-                                      </CardContent>
-                                    </Card>
+                                      </Button>
+                                    </CollapsibleTrigger>
                                   </div>
                                 </TableCell>
                               </TableRow>
-                            </CollapsibleContent>
-                          </>
-                        </Collapsible>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              ) : (
-                <p className="p-4 text-muted-foreground">No reports data available.</p>
-              )}
+                              <CollapsibleContent asChild>
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={
+                                      (reportsTable.headers?.length ?? 1) + 1
+                                    }
+                                    className="bg-muted/30 p-0"
+                                  >
+                                    <div className="p-4">
+                                      <Card className="bg-background border shadow-sm">
+                                        <CardHeader className="pb-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <CardTitle className="text-base flex items-center gap-2">
+                                              {reportName}
+                                              {hasError && (
+                                                <Badge
+                                                  variant="destructive"
+                                                  className="text-xs"
+                                                >
+                                                  Error
+                                                </Badge>
+                                              )}
+                                            </CardTitle>
+                                            <div className="flex items-center gap-2">
+                                              {reportName &&
+                                                reportName.includes(
+                                                  "Review Comments",
+                                                ) && (
+                                                  <Button
+                                                    size="sm"
+                                                    className="bg-accent hover:bg-accent/90"
+                                                    onClick={() =>
+                                                      navigate(
+                                                        "/comment-review",
+                                                        {
+                                                          state: {
+                                                            fromReports: true,
+                                                          },
+                                                        },
+                                                      )
+                                                    }
+                                                  >
+                                                    <ListChecks className="h-4 w-4 mr-2" />
+                                                    Open Comment Review
+                                                  </Button>
+                                                )}
+                                            </div>
+                                          </div>
+                                        </CardHeader>
+                                        <CardContent className="pt-0">
+                                          {hasError ? (
+                                            <p className="text-sm text-destructive">
+                                              {pdf?.error}
+                                            </p>
+                                          ) : pdf?.screenshot ? (
+                                            <div>
+                                              <div
+                                                className="overflow-auto rounded border cursor-pointer transition-all duration-200 hover:border-[#FF6B2B40] hover:shadow-[0_0_8px_#FF6B2B40] hover:brightness-105"
+                                                style={{ maxHeight: "700px" }}
+                                                onClick={() => {
+                                                  setLightboxImage({
+                                                    src: `data:image/png;base64,${pdf.screenshot}`,
+                                                    alt: reportName,
+                                                  });
+                                                  setLightboxZoom(100);
+                                                }}
+                                                data-testid={`img-report-${reportName}`}
+                                              >
+                                                <img
+                                                  src={`data:image/png;base64,${pdf.screenshot}`}
+                                                  alt={reportName}
+                                                  className="w-full pointer-events-none"
+                                                />
+                                              </div>
+                                              {pdf.text && (
+                                                <details className="mt-2">
+                                                  <summary className="text-xs text-[#6B9AC4] cursor-pointer hover:text-[#F0F6FF]">
+                                                    Show extracted text
+                                                  </summary>
+                                                  <pre className="mt-2 text-xs bg-[#091428] text-[#F0F6FF] p-3 rounded border border-[#1A3055] overflow-auto max-h-64 whitespace-pre-wrap">
+                                                    {pdf.text}
+                                                  </pre>
+                                                </details>
+                                              )}
+                                            </div>
+                                          ) : pdf?.text ? (
+                                            <div className="max-h-96 overflow-y-auto rounded border border-[#1A3055] bg-[#0D1E38] p-4">
+                                              {pdf.fileName?.includes(
+                                                "Review Comments",
+                                              )
+                                                ? renderReviewComments(pdf.text)
+                                                : renderReportContent(pdf.text)}
+                                            </div>
+                                          ) : (
+                                            <p className="text-sm text-muted-foreground">
+                                              No content available.
+                                            </p>
+                                          )}
+                                        </CardContent>
+                                      </Card>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              </CollapsibleContent>
+                            </>
+                          </Collapsible>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="p-4 text-muted-foreground">
+                    No reports data available.
+                  </p>
+                )}
               </TabErrorBoundary>
             </CardContent>
           </Card>
         </TabsContent>
 
         {filesTab && (
-          <TabsContent value="files" className="mt-4" data-testid="tabcontent-files">
+          <TabsContent
+            value="files"
+            className="mt-4"
+            data-testid="tabcontent-files"
+          >
             <Card>
               <CardContent className="p-0">
                 <TabErrorBoundary tabName="Files">
-                {filesTab?.error ? (
-                  <div className="p-4 text-destructive flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" />
-                    {filesTab?.error}
-                  </div>
-                ) : (filesTab?.folders ?? []).length === 0 ? (
-                  <p className="p-4 text-muted-foreground">No files data available.</p>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {(filesTab?.folders ?? []).map((folder, fi) => {
-                          const folderKey = `${folder.name}-${fi}`;
-                          const isOpen = expandedFolders.has(folderKey);
-                          const totalComments = folder.files?.reduce((sum, f) => sum + (f.commentCount || 0), 0) ?? 0;
-                          return (
-                            <Collapsible
-                              key={folderKey}
-                              open={isOpen}
-                              onOpenChange={(open) => {
-                                setExpandedFolders((prev) => {
-                                  const next = new Set(prev);
-                                  if (open) next.add(folderKey);
-                                  else next.delete(folderKey);
-                                  return next;
-                                });
-                              }}
-                            >
-                              <CollapsibleTrigger asChild>
-                                <button
-                                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
-                                  data-testid={`button-folder-${fi}`}
-                                >
-                                  {isOpen ? (
-                                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                  )}
-                                  <FolderOpen className="h-4 w-4 shrink-0 text-[#FF6B2B]" />
-                                  <span className="font-medium text-sm flex-1">{folder.name}</span>
-                                  <Badge variant="secondary" className="text-xs">
-                                    {folder.fileCount ?? folder.files?.length ?? 0} files
+                  {filesTab?.error ? (
+                    <div className="p-4 text-destructive flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      {filesTab?.error}
+                    </div>
+                  ) : (filesTab?.folders ?? []).length === 0 ? (
+                    <p className="p-4 text-muted-foreground">
+                      No files data available.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-border">
+                      {(filesTab?.folders ?? []).map((folder, fi) => {
+                        const folderKey = `${folder.name}-${fi}`;
+                        const isOpen = expandedFolders.has(folderKey);
+                        const totalComments =
+                          folder.files?.reduce(
+                            (sum, f) => sum + (f.commentCount || 0),
+                            0,
+                          ) ?? 0;
+                        return (
+                          <Collapsible
+                            key={folderKey}
+                            open={isOpen}
+                            onOpenChange={(open) => {
+                              setExpandedFolders((prev) => {
+                                const next = new Set(prev);
+                                if (open) next.add(folderKey);
+                                else next.delete(folderKey);
+                                return next;
+                              });
+                            }}
+                          >
+                            <CollapsibleTrigger asChild>
+                              <button
+                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                                data-testid={`button-folder-${fi}`}
+                              >
+                                {isOpen ? (
+                                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                )}
+                                <FolderOpen className="h-4 w-4 shrink-0 text-[#FF6B2B]" />
+                                <span className="font-medium text-sm flex-1">
+                                  {folder.name}
+                                </span>
+                                <Badge variant="secondary" className="text-xs">
+                                  {folder.fileCount ??
+                                    folder.files?.length ??
+                                    0}{" "}
+                                  files
+                                </Badge>
+                                {totalComments > 0 && (
+                                  <Badge className="text-xs bg-[#FF6B2B] text-white">
+                                    <MessageSquare className="h-3 w-3 mr-1" />
+                                    {totalComments}
                                   </Badge>
-                                  {totalComments > 0 && (
-                                    <Badge className="text-xs bg-[#FF6B2B] text-white">
-                                      <MessageSquare className="h-3 w-3 mr-1" />
-                                      {totalComments}
-                                    </Badge>
-                                  )}
-                                </button>
-                              </CollapsibleTrigger>
-                              <CollapsibleContent>
-                                <div className="overflow-x-auto">
-                                  <Table>
-                                    <TableHeader>
-                                      <TableRow className="bg-[#091428] hover:bg-[#091428]">
-                                        <TableHead className="text-foreground font-medium">File Name</TableHead>
-                                        <TableHead className="text-foreground font-medium">Status</TableHead>
-                                        <TableHead className="text-foreground font-medium">Reviewed By</TableHead>
-                                        <TableHead className="text-foreground font-medium">Uploaded</TableHead>
-                                        <TableHead className="text-foreground font-medium text-right">Comments</TableHead>
-                                      </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                      {(folder.files ?? []).map((file, fIdx) => {
-                                        const fileKey = `${folderKey}--${file.name}-${fIdx}`;
-                                        const hasComments = Array.isArray(file.comments) && file.comments.length > 0;
-                                        const isFileExpanded = expandedFileComments.has(fileKey);
-                                        return (
-                                          <React.Fragment key={fileKey}>
-                                            <TableRow
-                                              className={`${fIdx % 2 === 1 ? "bg-[#091428]" : "bg-[#0D1E38]"} ${hasComments ? "cursor-pointer hover:bg-muted/40" : ""}`}
-                                              onClick={() => {
-                                                if (!hasComments) return;
-                                                setExpandedFileComments((prev) => {
+                                )}
+                              </button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                              <div className="overflow-x-auto">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow className="bg-[#091428] hover:bg-[#091428]">
+                                      <TableHead className="text-foreground font-medium">
+                                        File Name
+                                      </TableHead>
+                                      <TableHead className="text-foreground font-medium">
+                                        Status
+                                      </TableHead>
+                                      <TableHead className="text-foreground font-medium">
+                                        Reviewed By
+                                      </TableHead>
+                                      <TableHead className="text-foreground font-medium">
+                                        Uploaded
+                                      </TableHead>
+                                      <TableHead className="text-foreground font-medium text-right">
+                                        Comments
+                                      </TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {(folder.files ?? []).map((file, fIdx) => {
+                                      const fileKey = `${folderKey}--${file.name}-${fIdx}`;
+                                      const hasComments =
+                                        Array.isArray(file.comments) &&
+                                        file.comments.length > 0;
+                                      const isFileExpanded =
+                                        expandedFileComments.has(fileKey);
+                                      return (
+                                        <React.Fragment key={fileKey}>
+                                          <TableRow
+                                            className={`${fIdx % 2 === 1 ? "bg-[#091428]" : "bg-[#0D1E38]"} ${hasComments ? "cursor-pointer hover:bg-muted/40" : ""}`}
+                                            onClick={() => {
+                                              if (!hasComments) return;
+                                              setExpandedFileComments(
+                                                (prev) => {
                                                   const next = new Set(prev);
-                                                  if (next.has(fileKey)) next.delete(fileKey);
+                                                  if (next.has(fileKey))
+                                                    next.delete(fileKey);
                                                   else next.add(fileKey);
                                                   return next;
-                                                });
-                                              }}
-                                              data-testid={`row-file-${fi}-${fIdx}`}
-                                            >
-                                              <TableCell className="text-sm">
-                                                <div className="flex items-center gap-2">
-                                                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                                  {file.viewUrl ? (
-                                                    <a
-                                                      href={file.viewUrl}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className="truncate max-w-[300px] text-[#6B9AC4] hover:text-[#FF6B2B] hover:underline transition-colors"
-                                                      onClick={(e) => e.stopPropagation()}
-                                                      data-testid={`link-file-${fi}-${fIdx}`}
-                                                    >
-                                                      {file.name}
-                                                    </a>
-                                                  ) : (
-                                                    <span className="truncate max-w-[300px]">{file.name}</span>
-                                                  )}
-                                                  {file.downloadStatus === "failed" && (
-                                                    <Badge
-                                                      className="bg-red-600 text-white text-[10px] px-1.5 py-0 shrink-0"
-                                                      title={file.downloadError || "Download failed"}
-                                                      data-testid={`badge-failed-${fi}-${fIdx}`}
-                                                    >
-                                                      Failed
-                                                    </Badge>
-                                                  )}
-                                                </div>
-                                              </TableCell>
-                                              <TableCell className="text-sm whitespace-nowrap">{file.status || "—"}</TableCell>
-                                              <TableCell className="text-sm whitespace-nowrap">{file.reviewedBy || "—"}</TableCell>
-                                              <TableCell className="text-sm whitespace-nowrap">{file.uploadedDate || "—"}</TableCell>
-                                              <TableCell className="text-sm text-right">
-                                                {(file.commentCount || 0) > 0 ? (
-                                                  <Badge className="bg-[#FF6B2B] text-white text-xs">
-                                                    {file.commentCount}
-                                                  </Badge>
+                                                },
+                                              );
+                                            }}
+                                            data-testid={`row-file-${fi}-${fIdx}`}
+                                          >
+                                            <TableCell className="text-sm">
+                                              <div className="flex items-center gap-2">
+                                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                                {file.viewUrl ? (
+                                                  <a
+                                                    href={file.viewUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="truncate max-w-[300px] text-[#6B9AC4] hover:text-[#FF6B2B] hover:underline transition-colors"
+                                                    onClick={(e) =>
+                                                      e.stopPropagation()
+                                                    }
+                                                    data-testid={`link-file-${fi}-${fIdx}`}
+                                                  >
+                                                    {file.name}
+                                                  </a>
                                                 ) : (
-                                                  <span className="text-muted-foreground">0</span>
+                                                  <span className="truncate max-w-[300px]">
+                                                    {file.name}
+                                                  </span>
                                                 )}
-                                              </TableCell>
-                                            </TableRow>
-                                            {hasComments && isFileExpanded && (
-                                              <TableRow>
-                                                <TableCell colSpan={5} className="p-0 bg-[#091428]">
-                                                  <div className="px-6 py-3 space-y-2">
-                                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                                                      Comments ({file.comments!.length})
-                                                    </p>
-                                                    {file.comments!.map((comment, ci) => (
+                                                {file.downloadStatus ===
+                                                  "failed" && (
+                                                  <Badge
+                                                    className="bg-red-600 text-white text-[10px] px-1.5 py-0 shrink-0"
+                                                    title={
+                                                      file.downloadError ||
+                                                      "Download failed"
+                                                    }
+                                                    data-testid={`badge-failed-${fi}-${fIdx}`}
+                                                  >
+                                                    Failed
+                                                  </Badge>
+                                                )}
+                                              </div>
+                                            </TableCell>
+                                            <TableCell className="text-sm whitespace-nowrap">
+                                              {file.status || "—"}
+                                            </TableCell>
+                                            <TableCell className="text-sm whitespace-nowrap">
+                                              {file.reviewedBy || "—"}
+                                            </TableCell>
+                                            <TableCell className="text-sm whitespace-nowrap">
+                                              {file.uploadedDate || "—"}
+                                            </TableCell>
+                                            <TableCell className="text-sm text-right">
+                                              {(file.commentCount || 0) > 0 ? (
+                                                <Badge className="bg-[#FF6B2B] text-white text-xs">
+                                                  {file.commentCount}
+                                                </Badge>
+                                              ) : (
+                                                <span className="text-muted-foreground">
+                                                  0
+                                                </span>
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                          {hasComments && isFileExpanded && (
+                                            <TableRow>
+                                              <TableCell
+                                                colSpan={5}
+                                                className="p-0 bg-[#091428]"
+                                              >
+                                                <div className="px-6 py-3 space-y-2">
+                                                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                                                    Comments (
+                                                    {file.comments!.length})
+                                                  </p>
+                                                  {file.comments!.map(
+                                                    (comment, ci) => (
                                                       <div
                                                         key={ci}
                                                         className="border border-border rounded-md p-3 bg-[#0D1E38]"
                                                         data-testid={`comment-${fi}-${fIdx}-${ci}`}
                                                       >
                                                         <div className="flex items-center gap-3 mb-1 text-xs text-muted-foreground">
-                                                          <span className="font-medium text-foreground">{comment.author || "Unknown"}</span>
-                                                          {comment.date && <span>{comment.date}</span>}
-                                                          {comment.page != null && <span>Page {comment.page}</span>}
+                                                          <span className="font-medium text-foreground">
+                                                            {comment.author ||
+                                                              "Unknown"}
+                                                          </span>
+                                                          {comment.date && (
+                                                            <span>
+                                                              {comment.date}
+                                                            </span>
+                                                          )}
+                                                          {comment.page !=
+                                                            null && (
+                                                            <span>
+                                                              Page{" "}
+                                                              {comment.page}
+                                                            </span>
+                                                          )}
                                                         </div>
-                                                        <p className="text-sm whitespace-pre-wrap">{comment.text}</p>
+                                                        <p className="text-sm whitespace-pre-wrap">
+                                                          {comment.text}
+                                                        </p>
                                                       </div>
-                                                    ))}
-                                                  </div>
-                                                </TableCell>
-                                              </TableRow>
-                                            )}
-                                          </React.Fragment>
-                                        );
-                                      })}
-                                      {(!folder.files || folder.files.length === 0) && (
-                                        <TableRow>
-                                          <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
-                                            No files in this folder.
-                                          </TableCell>
-                                        </TableRow>
-                                      )}
-                                    </TableBody>
-                                  </Table>
-                                </div>
-                              </CollapsibleContent>
-                            </Collapsible>
-                          );
-                        })}
-                  </div>
-                )}
+                                                    ),
+                                                  )}
+                                                </div>
+                                              </TableCell>
+                                            </TableRow>
+                                          )}
+                                        </React.Fragment>
+                                      );
+                                    })}
+                                    {(!folder.files ||
+                                      folder.files.length === 0) && (
+                                      <TableRow>
+                                        <TableCell
+                                          colSpan={5}
+                                          className="text-center text-muted-foreground py-4"
+                                        >
+                                          No files in this folder.
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        );
+                      })}
+                    </div>
+                  )}
                 </TabErrorBoundary>
               </CardContent>
             </Card>
@@ -1785,19 +2110,28 @@ export default function PortalDataViewer() {
         >
           <button
             className="fixed top-4 right-4 z-[60] p-2 rounded-full bg-black/40 hover:bg-black/60 transition-colors"
-            onClick={(e) => { e.stopPropagation(); setLightboxImage(null); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setLightboxImage(null);
+            }}
             data-testid="button-lightbox-close"
           >
             <X className="h-6 w-6" style={{ color: "#F0F6FF" }} />
           </button>
 
           <div className="fixed bottom-4 right-4 z-[60] flex items-center gap-2">
-            <span className="text-xs font-mono px-2 py-1 rounded bg-black/40" style={{ color: "#F0F6FF" }}>
+            <span
+              className="text-xs font-mono px-2 py-1 rounded bg-black/40"
+              style={{ color: "#F0F6FF" }}
+            >
               {lightboxZoom}%
             </span>
             <button
               className="p-2 rounded-full bg-black/40 hover:bg-black/60 transition-colors disabled:opacity-40"
-              onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.max(50, z - 25)); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxZoom((z) => Math.max(50, z - 25));
+              }}
               disabled={lightboxZoom <= 50}
               data-testid="button-lightbox-zoom-out"
             >
@@ -1805,7 +2139,10 @@ export default function PortalDataViewer() {
             </button>
             <button
               className="p-2 rounded-full bg-black/40 hover:bg-black/60 transition-colors disabled:opacity-40"
-              onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.min(200, z + 25)); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxZoom((z) => Math.min(200, z + 25));
+              }}
               disabled={lightboxZoom >= 200}
               data-testid="button-lightbox-zoom-in"
             >
