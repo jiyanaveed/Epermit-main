@@ -44,6 +44,7 @@ import {
   Bell,
   CircleDot,
 } from "lucide-react";
+import { AdminPageShell } from "@/components/admin/AdminPageShell";
 
 interface OverallMetrics {
   total_predictions: number;
@@ -566,60 +567,56 @@ function ShadowModeDashboardInner() {
     });
   };
 
-  return (
-    <div className="container mx-auto p-6 max-w-7xl space-y-6" data-testid="shadow-mode-dashboard">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate("/admin")}
-            data-testid="button-back-admin"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Shield className="h-6 w-6 text-primary" />
-              Shadow Mode Dashboard
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              AI pipeline testing & baseline comparison
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={exportWeeklyReport}
-            disabled={exporting}
-            data-testid="button-export-report"
-          >
-            {exporting ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <FileDown className="h-4 w-4 mr-2" />
-            )}
-            {exporting ? "Generating..." : "Export Weekly Report"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => { fetchMetrics(selectedProjectId, true); fetchPredictions(selectedProjectId); fetchCircuitBreaker(selectedProjectId); }}
-            disabled={refreshing}
-            data-testid="button-refresh-metrics"
-          >
-            {refreshing ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Refresh
-          </Button>
-        </div>
-      </div>
+  const shadowModeActions = (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => navigate("/admin")}
+        data-testid="button-back-admin"
+      >
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        Back to Admin
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={exportWeeklyReport}
+        disabled={exporting}
+        data-testid="button-export-report"
+      >
+        {exporting ? (
+          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+        ) : (
+          <FileDown className="h-4 w-4 mr-2" />
+        )}
+        {exporting ? "Generating..." : "Export Report"}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => { fetchMetrics(selectedProjectId, true); fetchPredictions(selectedProjectId); fetchCircuitBreaker(selectedProjectId); }}
+        disabled={refreshing}
+        data-testid="button-refresh-metrics"
+      >
+        {refreshing ? (
+          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+        ) : (
+          <RefreshCw className="h-4 w-4 mr-2" />
+        )}
+        Refresh
+      </Button>
+    </div>
+  );
 
+  return (
+    <AdminPageShell
+      title="Shadow Mode Dashboard"
+      description="AI pipeline testing & baseline comparison"
+      breadcrumbs={[{ label: "Shadow Mode" }]}
+      actions={shadowModeActions}
+    >
+      <div className="space-y-6 max-w-7xl" data-testid="shadow-mode-dashboard">
       <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4" data-testid="text-explainer">
         <Info className="h-5 w-5 text-primary mt-0.5 shrink-0" />
         <p className="text-sm text-muted-foreground leading-relaxed">
@@ -1036,6 +1033,7 @@ function ShadowModeDashboardInner() {
           )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </AdminPageShell>
   );
 }

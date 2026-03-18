@@ -12,10 +12,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { Shield, Send, Users, Bell, Loader2, Mail, Eye, Palette, Save, History, CheckCircle, XCircle, Clock, Calendar, Trash2, Building2, MailCheck } from 'lucide-react';
+import { Shield, Send, Users, Bell, Loader2, Mail, Eye, Palette, Save, History, CheckCircle, XCircle, Clock, Calendar, Trash2, Building2, MailCheck, Flag, MapPin } from 'lucide-react';
 import { DripCampaignManager } from '@/components/admin/DripCampaignManager';
+import { AdminPageShell } from '@/components/admin/AdminPageShell';
 import { Badge } from '@/components/ui/badge';
-import { format, addHours } from 'date-fns';
+import { format } from 'date-fns';
 
 interface JurisdictionSubscribers {
   jurisdiction_id: string;
@@ -69,10 +70,8 @@ const defaultBranding: Omit<BrandingSettings, 'id'> = {
 };
 
 export default function AdminPanel() {
-  const { user, loading: authLoading } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [checkingRole, setCheckingRole] = useState(true);
   const [jurisdictions, setJurisdictions] = useState<JurisdictionSubscribers[]>([]);
   const [selectedJurisdiction, setSelectedJurisdiction] = useState<string>('');
   const [notificationTitle, setNotificationTitle] = useState('');
@@ -100,42 +99,9 @@ export default function AdminPanel() {
   const [loadingScheduled, setLoadingScheduled] = useState(true);
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate('/auth');
-    }
-  }, [user, authLoading, navigate]);
+    if (!user) return;
 
-  useEffect(() => {
-    async function checkAdminRole() {
-      if (!user) return;
-      
-      try {
-        const { data, error } = await supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', user.id)
-          .eq('role', 'admin')
-          .maybeSingle();
-
-        if (error) throw error;
-        setIsAdmin(!!data);
-      } catch (error) {
-        console.error('Error checking admin role:', error);
-        setIsAdmin(false);
-      } finally {
-        setCheckingRole(false);
-      }
-    }
-
-    if (user) {
-      checkAdminRole();
-    }
-  }, [user]);
-
-  useEffect(() => {
     async function fetchData() {
-      if (!isAdmin) return;
-
       // Fetch jurisdictions
       try {
         const { data, error } = await supabase
@@ -145,7 +111,7 @@ export default function AdminPanel() {
         if (error) throw error;
 
         const jurisdictionMap = new Map<string, JurisdictionSubscribers>();
-        
+
         data?.forEach((sub) => {
           const existing = jurisdictionMap.get(sub.jurisdiction_id);
           if (existing) {
@@ -160,7 +126,7 @@ export default function AdminPanel() {
           }
         });
 
-        setJurisdictions(Array.from(jurisdictionMap.values()).sort((a, b) => 
+        setJurisdictions(Array.from(jurisdictionMap.values()).sort((a, b) =>
           a.jurisdiction_name.localeCompare(b.jurisdiction_name)
         ));
       } catch (error) {
@@ -178,7 +144,7 @@ export default function AdminPanel() {
           .single();
 
         if (error && error.code !== 'PGRST116') throw error;
-        
+
         if (data) {
           setBranding(data);
           setEditedBranding({
@@ -228,10 +194,8 @@ export default function AdminPanel() {
       }
     }
 
-    if (isAdmin) {
-      fetchData();
-    }
-  }, [isAdmin]);
+    fetchData();
+  }, [user?.id]);
 
   const handleSaveBranding = async () => {
     setSavingBranding(true);
@@ -550,40 +514,34 @@ export default function AdminPanel() {
     }
   };
 
-  if (authLoading || checkingRole) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    console.warn("Admin role not found for user — allowing access for testing");
-  }
-
   const currentBranding = editedBranding;
+
+  const adminQuickLinks = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" size="sm" onClick={() => navigate('/admin/shadow-mode')}>
+        <Shield className="mr-2 h-4 w-4" />
+        Shadow Mode
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => navigate('/admin/jurisdictions')}>
+        <Building2 className="mr-2 h-4 w-4" />
+        Jurisdictions
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => navigate('/admin/feature-flags')}>
+        <Flag className="mr-2 h-4 w-4" />
+        Feature Flags
+      </Button>
+    </div>
+  );
 
   return (
     <>
-      <div className="min-h-screen bg-muted/30 py-12">
-        <div className="w-full max-w-4xl ml-0 mr-auto pl-2 pr-4 sm:pl-3 sm:pr-6 md:pl-4 md:pr-6">
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <Shield className="h-8 w-8 text-primary" />
-              <h1 className="text-3xl font-bold">Admin Panel</h1>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => navigate('/admin/shadow-mode')}>
-                <Shield className="mr-2 h-4 w-4" />
-                Shadow Mode
-              </Button>
-              <Button variant="outline" onClick={() => navigate('/admin/jurisdictions')}>
-                <Building2 className="mr-2 h-4 w-4" />
-                Manage Jurisdictions
-              </Button>
-            </div>
-          </div>
+      <AdminPageShell
+        title="Admin Panel"
+        description="Notifications, drip campaigns, activity log, and email branding."
+        breadcrumbs={[{ label: 'Overview' }]}
+        actions={adminQuickLinks}
+      >
+        <div className="space-y-6">
 
           <Tabs defaultValue="notifications" className="space-y-6">
             <TabsList className="grid w-full grid-cols-4">
@@ -1141,8 +1099,29 @@ export default function AdminPanel() {
               </Card>
             </TabsContent>
           </Tabs>
+
+          {/* Coverage Requests — integration-ready placeholder */}
+          <Card className="border-dashed">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                Coverage Requests
+              </CardTitle>
+              <CardDescription>
+                Manage jurisdiction coverage requests submitted via the public form. Backend (RLS) supports admin view and updates; UI wiring pending.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Not connected yet — list and actions will appear here once the admin coverage-requests view is implemented.
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Table: <code className="bg-muted px-1 rounded">coverage_requests</code>. Admins can SELECT, UPDATE, DELETE.
+              </p>
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      </AdminPageShell>
 
       {/* Email Preview Modal */}
       <Dialog open={showPreview} onOpenChange={setShowPreview}>

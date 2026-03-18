@@ -30,6 +30,7 @@ import {
   FileSearch,
   Tags,
   Layers,
+  Flag,
 } from "lucide-react";
 import { useSelectedProjectOptional } from "@/contexts/SelectedProjectContext";
 import { useProjects } from "@/hooks/useProjects";
@@ -46,6 +47,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { useNavigationHistory } from "@/hooks/useRecentlyUsed";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -235,9 +237,17 @@ const helpNavigation = [
   },
 ];
 
+const adminNavigation = [
+  { title: "Overview", href: "/admin", icon: Shield, description: "Admin home" },
+  { title: "Jurisdictions", href: "/admin/jurisdictions", icon: Building2, description: "Manage jurisdictions" },
+  { title: "Feature Flags", href: "/admin/feature-flags", icon: Flag, description: "Toggle features" },
+  { title: "Shadow Mode", href: "/admin/shadow-mode", icon: Shield, description: "AI pipeline metrics" },
+];
+
 export function AppSidebar() {
   const location = useLocation();
   const { user } = useAuth();
+  const { isAdmin } = useRequireAdmin();
   const { state } = useSidebar();
   const { recentPages, favorites, toggleFavorite, isFavorite, clearRecent } =
     useNavigationHistory();
@@ -990,6 +1000,19 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {isAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {adminNavigation.map((item) => (
+                  <NavItem key={item.href} item={item} />
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         <SidebarGroup>
           <Collapsible defaultOpen={false} className="group/collapsible">

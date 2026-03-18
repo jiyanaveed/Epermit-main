@@ -11,6 +11,7 @@ import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { OfflineIndicator } from "@/components/pwa/OfflineIndicator";
 import { ProtectedLayoutRoute } from "@/components/auth/ProtectedRoute";
 import { PublicOnlyRoute } from "@/components/auth/PublicOnlyRoute";
+import { AdminLayout } from "@/components/admin/AdminLayout";
 import { MarketingLayout } from "@/components/layout/MarketingLayout";
 
 import LandingPage from "./pages/LandingPage";
@@ -122,10 +123,12 @@ const App = () => (
                   <Route path="/code-reference" element={<CodeReferenceLibrary />} />
                   <Route path="/roi-calculator" element={<ROICalculator />} />
                   <Route path="/consolidation-calculator" element={<ConsolidationCalculator />} />
-                  <Route path="/admin" element={<AdminPanel />} />
-                  <Route path="/admin/jurisdictions" element={<JurisdictionAdmin />} />
-                  <Route path="/admin/feature-flags" element={<FeatureFlagsAdmin />} />
-                  <Route path="/admin/shadow-mode" element={<ShadowModeDashboard />} />
+                  <Route path="/admin" element={<AdminLayout />}>
+                    <Route index element={<AdminPanel />} />
+                    <Route path="jurisdictions" element={<JurisdictionAdmin />} />
+                    <Route path="feature-flags" element={<FeatureFlagsAdmin />} />
+                    <Route path="shadow-mode" element={<ShadowModeDashboard />} />
+                  </Route>
                   <Route path="/mvp-documentation" element={<MVPDocumentation />} />
                   <Route path="/api-docs" element={<APIDocumentation />} />
                   <Route path="/checklist-history" element={<ChecklistHistory />} />
