@@ -5,8 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
 const SCRAPER_URL =
-  "https://60319c1c-9adb-4aa0-a7f5-cc9fa75759e9-00-23cha9g730ax7.janeway.replit.dev";
-
+    import.meta.env.VITE_API_BASE_URL || "https://epermit-production.up.railway.app";
 const SCRAPE_KEYFRAMES = `
   @keyframes scrape-pulse-glow {
     0%, 100% { opacity: 1; box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }

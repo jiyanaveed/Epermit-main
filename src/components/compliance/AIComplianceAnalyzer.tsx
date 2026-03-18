@@ -871,7 +871,9 @@ export function AIComplianceAnalyzer() {
         if (authSession?.access_token) {
           headers["Authorization"] = `Bearer ${authSession.access_token}`;
         }
-        const response = await fetch("/api/analyze-drawing", {
+        const API_BASE_URL =
+          import.meta.env.VITE_API_BASE_URL || "https://epermit-production.up.railway.app";
+        const response = await fetch(`${API_BASE_URL}/api/analyze-drawing`, {
           method: "POST",
           headers,
           body: JSON.stringify({

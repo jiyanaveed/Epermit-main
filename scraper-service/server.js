@@ -89,7 +89,7 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/view-file", express.static(path.join(__dirname, "downloads")));
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 const DEFAULT_DASHBOARD_URL = "https://washington-dc-us.avolvecloud.com";
 
 const MIN_FILE_SIZE = 1024;
@@ -4357,7 +4357,10 @@ app.listen(PORT, () => {
 ║  Automatic PDF Downloading Enabled (Option A)        ║
 ╚══════════════════════════════════════════════════════╝
   `);
-  import("open")
-    .then((mod) => mod.default(`http://localhost:${PORT}`))
-    .catch(() => {});
+  // ✅ Only open browser on your local machine
+  if (!process.env.RAILWAY_ENVIRONMENT) {
+    import("open")
+      .then((mod) => mod.default(`http://localhost:${PORT}`))
+      .catch(() => {});
+  }
 });
