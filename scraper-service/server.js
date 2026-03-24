@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { chromium } = require("playwright");
+const { execSync } = require("child_process");
 const ExcelJS = require("exceljs");
 const path = require("path");
 const fs = require("fs");
@@ -50,6 +51,100 @@ const { montgomeryFile } = require("./montgomery-filer");
 const { montgomerySubmit } = require("./montgomery-submit");
 const { energovFile } = require("./energov-filer");
 const { energovSubmit } = require("./energov-submit");
+
+// ─── Playwright browser launch reliability ───────────────────────────────────
+const BROWSER_INSTALL_MESSAGE =
+  "Playwright Chromium not installed. Run: npx playwright install chromium (or npm run install-browsers in scraper-service)";
+
+function isBrowserLaunchError(err) {
+  if (!err || !err.message) return false;
+  const msg = err.message;
+  return (
+    /Executable doesn't exist/i.test(msg) ||
+    /browserType\.launch/i.test(msg) ||
+    /Playwright doesn't support/i.test(msg)
+  );
+}
+
+function sendBrowserLaunchError(res, err) {
+  console.error("❌ Browser launch failed:", err.message);
+  res.status(503).json({
+    error: BROWSER_INSTALL_MESSAGE,
+    detail: err.message,
+  });
+}
+
+/**
+ * Single browser launch path: same as startup diagnostic. No executablePath,
+ * no /root/.cache or Linux-specific overrides. Use Playwright-managed Chromium only.
+ * @param {{ label?: string, route?: string, file?: string }} callerInfo - For logging (e.g. label: 'quick-scrape', route: 'POST /api/login', file: 'server.js')
+ * @returns {Promise<import('playwright').Browser>}
+ */
+async function launchChromiumForScraper(callerInfo = {}) {
+  const label = callerInfo.label || "scraper";
+  const route = callerInfo.route || "";
+  const file = callerInfo.file || "server.js";
+  const launchOptions = { headless: true };
+
+  const isQuickScrape = label === "quick-scrape";
+  if (isQuickScrape) {
+    console.log("[Quick Scrape] browser launch starting");
+    console.log("[Quick Scrape] launch options:", JSON.stringify(launchOptions));
+    console.log("[Quick Scrape] launching from:", file, route || "(login flow)");
+  }
+
+  try {
+    const browser = await chromium.launch(launchOptions);
+    if (isQuickScrape) console.log("[Quick Scrape] browser launch success");
+    return browser;
+  } catch (err) {
+    if (isQuickScrape) {
+      console.error("[Quick Scrape] browser launch failed:", err.message);
+      console.error("[Quick Scrape] full error:", err);
+    }
+    throw err;
+  }
+}
+
+async function runPlaywrightStartupDiagnostics() {
+  let playwrightVersion = "unknown";
+  try {
+    const pkg = require("playwright/package.json");
+    playwrightVersion = pkg.version || playwrightVersion;
+  } catch (_) {}
+
+  const platform = `${process.platform}/${process.arch}`;
+  console.log(`  Playwright version: ${playwrightVersion}`);
+  console.log(`  Platform: ${platform}`);
+
+  let browser;
+  try {
+    browser = await launchChromiumForScraper({ label: "startup-diagnostic", file: "server.js", route: "runPlaywrightStartupDiagnostics" });
+    await browser.close();
+    console.log("  ✅ Playwright Chromium: launch OK");
+    return true;
+  } catch (err) {
+    console.error("  ❌ Playwright Chromium: launch failed:", err.message);
+    if (isBrowserLaunchError(err)) {
+      console.log(`  → Run: npx playwright install chromium`);
+      console.log(`  → Or:  npm run install-browsers (in scraper-service)`);
+      try {
+        console.log("  → Attempting automatic install...");
+        execSync("npx playwright install chromium", {
+          stdio: "inherit",
+          cwd: __dirname,
+        });
+        const retry = await launchChromiumForScraper({ label: "startup-diagnostic-retry", file: "server.js" });
+        await retry.close();
+        console.log("  ✅ Playwright Chromium: install + launch OK");
+        return true;
+      } catch (installErr) {
+        console.error("  ❌ Auto-install failed:", installErr.message);
+      }
+    }
+    return false;
+  }
+}
 
 function detectPortalType(url) {
   if (!url) return "projectdox";
@@ -642,7 +737,7 @@ app.post("/api/login", async (req, res) => {
   let browser;
   try {
     console.log("🔐 Launching browser...");
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromiumForScraper({ label: "quick-scrape", route: "POST /api/login", file: "server.js" });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 2,
@@ -823,6 +918,9 @@ app.post("/api/login", async (req, res) => {
   } catch (err) {
     console.error("❌ Login error:", err.message);
     if (browser) await browser.close().catch(() => {});
+    if (isBrowserLaunchError(err)) {
+      return sendBrowserLaunchError(res, err);
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -1492,7 +1590,7 @@ function isTargetClosedError(err) {
 async function reinitializeBrowser(session) {
   console.log('   🔄 Re-initializing browser after crash...');
   try { if (session.browser) await session.browser.close().catch(() => {}); } catch (_) {}
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromiumForScraper({ label: "reinitialize", route: "reinitializeBrowser", file: "server.js" });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
@@ -2917,7 +3015,7 @@ app.post("/api/permitwizard/login", async (req, res) => {
   let browser;
   try {
     console.log("🔐 [PermitWizard] Launching browser for SSO login...");
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromiumForScraper({ label: "permitwizard-login", route: "POST /api/permitwizard/login", file: "server.js" });
 
     const result = await permitWizardLogin(
       browser,
@@ -2953,6 +3051,9 @@ app.post("/api/permitwizard/login", async (req, res) => {
   } catch (err) {
     console.error("❌ [PermitWizard] Login error:", err.message);
     if (browser) await browser.close().catch(() => {});
+    if (isBrowserLaunchError(err)) {
+      return sendBrowserLaunchError(res, err);
+    }
     res.status(500).json({
       success: false,
       error: "login_error",
@@ -2989,7 +3090,7 @@ app.post("/api/permitwizard/reauth", async (req, res) => {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromiumForScraper({ label: "permitwizard-reauth", route: "POST /api/permitwizard/reauth", file: "server.js" });
     const result = await reAuthenticate(browser, sessionToken);
 
     if (!result || !result.success) {
@@ -3006,6 +3107,9 @@ app.post("/api/permitwizard/reauth", async (req, res) => {
     res.json(result);
   } catch (err) {
     if (browser) await browser.close().catch(() => {});
+    if (isBrowserLaunchError(err)) {
+      return sendBrowserLaunchError(res, err);
+    }
     res.status(500).json({
       success: false,
       error: "reauth_error",
@@ -3441,7 +3545,7 @@ app.post("/api/filing/login", async (req, res) => {
   let browser;
   try {
     console.log(`[Filing] Launching browser for ${portal_type} login...`);
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromiumForScraper({ label: "filing-login", route: "POST /api/filing/login", file: "server.js" });
 
     let result;
     const credentials = { username: loginUsername, password: loginPassword };
@@ -3490,6 +3594,9 @@ app.post("/api/filing/login", async (req, res) => {
   } catch (err) {
     console.error(`[Filing] Login error (${portal_type}):`, err.message);
     if (browser) await browser.close().catch(() => {});
+    if (isBrowserLaunchError(err)) {
+      return sendBrowserLaunchError(res, err);
+    }
     res.status(500).json({
       success: false,
       error: "login_error",
@@ -4095,11 +4202,11 @@ app.post("/api/filing/reauth", async (req, res) => {
     let browser;
     switch (resolvedType) {
       case "accela":
-        browser = await chromium.launch({ headless: true });
+        browser = await launchChromiumForScraper({ label: "filing-reauth-accela", route: "POST /api/filing/reauth", file: "server.js" });
         await reAuthenticate(browser, sessionToken);
         break;
       case "aspnet_webforms":
-        browser = await chromium.launch({ headless: true });
+        browser = await launchChromiumForScraper({ label: "filing-reauth-montgomery", route: "POST /api/filing/reauth", file: "server.js" });
         await reAuthenticateMontgomery(browser, sessionToken);
         break;
       case "momentum_liferay":
@@ -4125,6 +4232,10 @@ app.post("/api/filing/reauth", async (req, res) => {
     });
   } catch (err) {
     console.error(`[Filing Reauth] Error:`, err.message);
+    if (browser) await browser.close().catch(() => {});
+    if (isBrowserLaunchError(err)) {
+      return sendBrowserLaunchError(res, err);
+    }
     res.status(500).json({
       success: false,
       error: "reauth_failed",
@@ -4348,8 +4459,15 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-app.listen(PORT, () => {
-  console.log(`
+async function startServer() {
+  console.log("Playwright startup diagnostics:");
+  const browserOk = await runPlaywrightStartupDiagnostics();
+  if (!browserOk) {
+    console.log("Server will start anyway; login/scrape will return 503 until Chromium is installed.");
+  }
+
+  app.listen(PORT, () => {
+    console.log(`
 ╔══════════════════════════════════════════════════════╗
 ║  🏛️  ProjectDox Data Extractor                        ║
 ║  Server running at: http://localhost:${PORT}          ║
@@ -4357,10 +4475,16 @@ app.listen(PORT, () => {
 ║  Automatic PDF Downloading Enabled (Option A)        ║
 ╚══════════════════════════════════════════════════════╝
   `);
-  // ✅ Only open browser on your local machine
-  if (!process.env.RAILWAY_ENVIRONMENT) {
-    import("open")
-      .then((mod) => mod.default(`http://localhost:${PORT}`))
-      .catch(() => {});
-  }
+    // ✅ Only open browser on your local machine
+    if (!process.env.RAILWAY_ENVIRONMENT) {
+      import("open")
+        .then((mod) => mod.default(`http://localhost:${PORT}`))
+        .catch(() => {});
+    }
+  });
+}
+
+startServer().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });

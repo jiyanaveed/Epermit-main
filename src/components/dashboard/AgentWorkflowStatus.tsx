@@ -35,8 +35,14 @@ import {
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
-const SCRAPER_URL =
-  "https://60319c1c-9adb-4aa0-a7f5-cc9fa75759e9-00-23cha9g730ax7.janeway.replit.dev";
+function getScraperBaseUrl() {
+  const raw =
+    import.meta.env.VITE_API_BASE_URL || "https://epermit-production.up.railway.app";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/localhost|127\.0\.0\.1/i.test(raw)) return `http://${raw}`;
+  return `https://${raw}`;
+}
+const SCRAPER_URL = getScraperBaseUrl();
 
 type PipelineResult = {
   comment_parser?: {

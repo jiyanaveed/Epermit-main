@@ -871,8 +871,13 @@ export function AIComplianceAnalyzer() {
         if (authSession?.access_token) {
           headers["Authorization"] = `Bearer ${authSession.access_token}`;
         }
-        const API_BASE_URL =
+        const raw =
           import.meta.env.VITE_API_BASE_URL || "https://epermit-production.up.railway.app";
+        const API_BASE_URL = /^https?:\/\//i.test(raw)
+          ? raw
+          : /localhost|127\.0\.0\.1/i.test(raw)
+            ? `http://${raw}`
+            : `https://${raw}`;
         const response = await fetch(`${API_BASE_URL}/api/analyze-drawing`, {
           method: "POST",
           headers,

@@ -110,6 +110,13 @@ const intakeNavigation = [
     requiresAuth: true,
   },
   {
+    title: "Baltimore Portal",
+    href: "/baltimore",
+    icon: Building2,
+    description: "Accela portal clone (Permits & Inspections)",
+    requiresAuth: true,
+  },
+  {
     title: "Comment Review",
     href: "/comment-review",
     icon: FileSearch,

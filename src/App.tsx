@@ -49,6 +49,10 @@ import ResponseMatrix from "./pages/ResponseMatrix";
 import PortalDataViewer from "./pages/PortalDataViewer";
 import ClassifiedComments from "./pages/ClassifiedComments";
 import PermitWizardFiling from "./pages/PermitWizardFiling";
+import BaltimorePortalHome from "./pages/baltimore/BaltimorePortalHome";
+import BaltimorePermitsPage from "./pages/baltimore/BaltimorePermitsPage";
+import BaltimoreRecordsListPage from "./pages/baltimore/BaltimoreRecordsListPage";
+import BaltimoreRecordDetailPage from "./pages/baltimore/BaltimoreRecordDetailPage";
 
 const queryClient = new QueryClient();
 
@@ -138,6 +142,11 @@ const App = () => (
                   <Route path="/classified-comments" element={<ClassifiedComments />} />
                   <Route path="/portal-data" element={<PortalDataViewer />} />
                   <Route path="/permit-wizard-filing" element={<PermitWizardFiling />} />
+                  {/* Baltimore Accela portal clone (UI only, mock data) */}
+                  <Route path="/baltimore" element={<BaltimorePortalHome />} />
+                  <Route path="/baltimore/permits" element={<BaltimorePermitsPage />} />
+                  <Route path="/baltimore/records" element={<BaltimoreRecordsListPage />} />
+                  <Route path="/baltimore/records/:recordId" element={<BaltimoreRecordDetailPage />} />
                 </Route>
 
                 <Route path="*" element={<NotFound />} />

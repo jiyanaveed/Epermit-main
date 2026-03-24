@@ -39,6 +39,8 @@ import {
   Loader2,
 } from "lucide-react";
 import AccelaProjectView from "@/components/portal/AccelaProjectView";
+import { BaltimorePortalDataView } from "@/components/baltimore/BaltimorePortalDataView";
+import { isBaltimorePortal } from "@/lib/portalView";
 
 class TabErrorBoundary extends React.Component<
   { tabName: string; children: React.ReactNode },
@@ -183,6 +185,11 @@ export default function PortalDataViewer() {
   const [expectedPortalType, setExpectedPortalType] = useState<string | null>(
     null,
   );
+  /** Stored credential fields used to derive Baltimore vs generic Accela UI at render time. */
+  const [credentialForView, setCredentialForView] = useState<{
+    login_url: string | null;
+    jurisdiction: string | null;
+  } | null>(null);
   const scrape = useScrape();
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
@@ -214,10 +221,11 @@ export default function PortalDataViewer() {
         selectedProjectId,
       );
     }
-    setResolvedProjectId(null);
-    setExpectedPortalType(null);
-    setNoPermitConfigured(false);
-    setLoading(true);
+        setResolvedProjectId(null);
+        setExpectedPortalType(null);
+        setCredentialForView(null);
+        setNoPermitConfigured(false);
+        setLoading(true);
   }, [selectedProjectId]);
 
   const fetchData = useCallback(async () => {
@@ -277,6 +285,7 @@ export default function PortalDataViewer() {
         setLastCheckedAt(null);
         setResolvedProjectId(null);
         setExpectedPortalType(null);
+        setCredentialForView(null);
       } else {
         let credExpectedType: string | null = null;
         if (project.credential_id) {
@@ -288,11 +297,19 @@ export default function PortalDataViewer() {
           if (thisRequestId !== fetchIdRef.current) return;
           if (cred) {
             credExpectedType = detectPortalTypeFromUrl(cred.login_url);
+            setCredentialForView({
+              login_url: cred.login_url ?? null,
+              jurisdiction: cred.jurisdiction ?? null,
+            });
             if (import.meta.env.DEV)
               console.log(
-                `[PortalDataViewer] credential=${project.credential_id}, login_url=${cred.login_url}, expectedPortalType=${credExpectedType}`,
+                `[PortalDataViewer] credential=${project.credential_id}, login_url=${cred.login_url}, jurisdiction=${cred.jurisdiction}, expectedPortalType=${credExpectedType}, isBaltimore=${isBaltimorePortal(cred)}`,
               );
+          } else {
+            setCredentialForView(null);
           }
+        } else {
+          setCredentialForView(null);
         }
         setExpectedPortalType(credExpectedType);
 
@@ -353,6 +370,7 @@ export default function PortalDataViewer() {
       if (thisRequestId === fetchIdRef.current) {
         setPortalData(null);
         setExpectedPortalType(null);
+        setCredentialForView(null);
       }
     } finally {
       if (thisRequestId === fetchIdRef.current) setLoading(false);
@@ -391,7 +409,17 @@ export default function PortalDataViewer() {
             .select("login_url, jurisdiction")
             .eq("id", (data as any).credential_id)
             .maybeSingle();
-          if (cred) credExpectedType = detectPortalTypeFromUrl(cred.login_url);
+          if (cred) {
+            credExpectedType = detectPortalTypeFromUrl(cred.login_url);
+            setCredentialForView({
+              login_url: cred.login_url ?? null,
+              jurisdiction: cred.jurisdiction ?? null,
+            });
+          } else {
+            setCredentialForView(null);
+          }
+        } else {
+          setCredentialForView(null);
         }
         setExpectedPortalType(credExpectedType);
 
@@ -565,9 +593,13 @@ export default function PortalDataViewer() {
   const renderAccelaUI =
     expectedPortalType === "accela" ||
     (!expectedPortalType && portalData.portalType === "accela");
+
+  /** Derive Baltimore at render from stored credential; do not rely on a separate boolean. */
+  const isBaltimore = renderAccelaUI && credentialForView !== null && isBaltimorePortal(credentialForView);
+
   if (import.meta.env.DEV)
     console.log(
-      `[PortalDataViewer] rendering UI: expectedPortalType=${expectedPortalType}, portalData.portalType=${portalData.portalType}, renderAccelaUI=${renderAccelaUI}`,
+      `[PortalDataViewer] rendering UI: expectedPortalType=${expectedPortalType}, portalData.portalType=${portalData.portalType}, renderAccelaUI=${renderAccelaUI}, credentialForView=${credentialForView ? "set" : "null"}, isBaltimore=${isBaltimore}`,
     );
   if (renderAccelaUI) {
     return (
@@ -603,7 +635,16 @@ export default function PortalDataViewer() {
             Refresh
           </Button>
         </div>
-        <AccelaProjectView portalData={portalData as any} />
+        {isBaltimore ? (
+          <BaltimorePortalDataView
+            portalData={portalData as any}
+            projectId={resolvedProjectId}
+            permitNumber={portalData?.projectNum ?? portalData?.name ?? null}
+            credentialLoginUrl={credentialForView?.login_url ?? null}
+          />
+        ) : (
+          <AccelaProjectView portalData={portalData as any} />
+        )}
       </section>
     );
   }

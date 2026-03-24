@@ -4,8 +4,14 @@ import { CheckCircle2, ChevronDown, Circle, XCircle, Minimize2, Eye } from "luci
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
-const SCRAPER_URL =
+function getScraperBaseUrl() {
+  const raw =
     import.meta.env.VITE_API_BASE_URL || "https://epermit-production.up.railway.app";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/localhost|127\.0\.0\.1/i.test(raw)) return `http://${raw}`;
+  return `https://${raw}`;
+}
+const SCRAPER_URL = getScraperBaseUrl();
 const SCRAPE_KEYFRAMES = `
   @keyframes scrape-pulse-glow {
     0%, 100% { opacity: 1; box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
