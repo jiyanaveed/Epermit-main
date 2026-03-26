@@ -75,6 +75,22 @@ function sendBrowserLaunchError(res, err) {
 }
 
 /**
+ * Headless on Railway/production hosts (no display). Local dev defaults to headed
+ * for debugging. Override: SCRAPER_HEADLESS=true|false or PLAYWRIGHT_HEADLESS=true|false.
+ * @returns {boolean}
+ */
+function scraperRunsHeadless() {
+  const raw = (process.env.SCRAPER_HEADLESS || process.env.PLAYWRIGHT_HEADLESS || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "false" || raw === "0") return false;
+  if (raw === "true" || raw === "1") return true;
+  if (process.env.RAILWAY_ENVIRONMENT) return true;
+  if (process.env.NODE_ENV === "production") return true;
+  return false;
+}
+
+/**
  * Single browser launch path: same as startup diagnostic. No executablePath,
  * no /root/.cache or Linux-specific overrides. Use Playwright-managed Chromium only.
  * @param {{ label?: string, route?: string, file?: string }} callerInfo - For logging (e.g. label: 'quick-scrape', route: 'POST /api/login', file: 'server.js')
@@ -84,7 +100,14 @@ async function launchChromiumForScraper(callerInfo = {}) {
   const label = callerInfo.label || "scraper";
   const route = callerInfo.route || "";
   const file = callerInfo.file || "server.js";
-  const launchOptions = { headless: true };
+  const launchOptions = {
+    headless: scraperRunsHeadless(),
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+    ],
+  };
 
   const isQuickScrape = label === "quick-scrape";
   if (isQuickScrape) {
@@ -116,6 +139,7 @@ async function runPlaywrightStartupDiagnostics() {
   const platform = `${process.platform}/${process.arch}`;
   console.log(`  Playwright version: ${playwrightVersion}`);
   console.log(`  Platform: ${platform}`);
+  console.log(`  Headless mode: ${scraperRunsHeadless()}`);
 
   let browser;
   try {
@@ -964,6 +988,20 @@ app.post("/api/scrape", async (req, res) => {
         .status(400)
         .json({ error: "Accela scraping requires a permitNumber" });
     }
+    const portalUrlStr = String(session.portalUrl || "");
+    const accelaIsBaltimore = portalUrlStr.toUpperCase().includes("BALTIMORE");
+    if (
+      accelaIsBaltimore &&
+      (!projectId || String(projectId).trim() === "")
+    ) {
+      return res.status(400).json({
+        error:
+          "Baltimore Accela scraping requires projectId (projects.id) for permit integrity and DB write",
+      });
+    }
+    console.log(
+      `[api/scrape accela] permitNumber=${String(permitNumber).trim()} projectId=${projectId || "(none)"} baltimore=${accelaIsBaltimore}`,
+    );
     session.status = "scraping";
     session.total = 1;
     session.progress = 0;
