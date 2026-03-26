@@ -35,3 +35,4 @@ scraper-service/debug/
 scraper-service/PROBE_*.png
 scraper-service/grid_not_found.png
 scraper-service/debug_dashboard.png
+scraper-service/check_iframe.js

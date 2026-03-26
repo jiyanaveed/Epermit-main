@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/**
+ * TEMP: Baltimore portal-data UI — only Record Details + Attachments.
+ * Set `false` to restore full Record Info / Payments / Plan Review chrome.
+ */
+export const BALTIMORE_MINIMAL_SECTIONS_UI = true;
+
 export type RecordInfoPanel =
   | "record_details"
   | "processing_status"
@@ -21,6 +27,8 @@ export type DetailPanel = RecordInfoPanel | PaymentsPanel | "plan_review";
 interface BaltimoreRecordTabBarProps {
   activePanel: DetailPanel;
   onPanelChange: (panel: DetailPanel) => void;
+  /** When true (Baltimore temp mode), only Record Details + Attachments. */
+  minimalSections?: boolean;
 }
 
 const RECORD_INFO_LABELS: Record<RecordInfoPanel, string> = {
@@ -31,10 +39,33 @@ const RECORD_INFO_LABELS: Record<RecordInfoPanel, string> = {
   inspections: "Inspections",
 };
 
+const MINIMAL_RECORD_PANELS: RecordInfoPanel[] = [
+  "record_details",
+  "attachments",
+];
+
 export function BaltimoreRecordTabBar({
   activePanel,
   onPanelChange,
+  minimalSections = BALTIMORE_MINIMAL_SECTIONS_UI,
 }: BaltimoreRecordTabBarProps) {
+  if (minimalSections) {
+    return (
+      <div className="flex flex-wrap items-center gap-1 border-b bg-muted/50 p-1">
+        {MINIMAL_RECORD_PANELS.map((key) => (
+          <Button
+            key={key}
+            variant={activePanel === key ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => onPanelChange(key)}
+          >
+            {RECORD_INFO_LABELS[key]}
+          </Button>
+        ))}
+      </div>
+    );
+  }
+
   const isRecordInfo = [
     "record_details",
     "processing_status",
@@ -68,7 +99,7 @@ export function BaltimoreRecordTabBar({
               >
                 {RECORD_INFO_LABELS[key]}
               </DropdownMenuItem>
-            )
+            ),
           )}
         </DropdownMenuContent>
       </DropdownMenu>

@@ -1,8 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { BaltimoreLayout } from "@/components/baltimore/BaltimoreLayout";
-import { BaltimoreRecordTabBar } from "@/components/baltimore/BaltimoreRecordTabBar";
-import type { DetailPanel } from "@/components/baltimore/BaltimoreRecordTabBar";
+import {
+  BaltimoreRecordTabBar,
+  BALTIMORE_MINIMAL_SECTIONS_UI,
+  type DetailPanel,
+} from "@/components/baltimore/BaltimoreRecordTabBar";
 import { BaltimoreDetailSection } from "@/components/baltimore/BaltimoreDetailSection";
 import { BaltimoreInfoGrid } from "@/components/baltimore/BaltimoreInfoGrid";
 import { BaltimorePanelTable } from "@/components/baltimore/BaltimorePanelTable";
@@ -60,6 +63,8 @@ export function BaltimorePortalDataView({
 }: BaltimorePortalDataViewProps) {
   const [activePanel, setActivePanel] = useState<DetailPanel>("record_details");
 
+  const showFullSections = !BALTIMORE_MINIMAL_SECTIONS_UI;
+
   const isEmbeddedInPortalData = projectId != null;
   const header = portalData.tabs?.info?.fields ?? {};
   const recordNumber = (header.record_number || portalData.name || portalData.projectNum) ?? "";
@@ -69,24 +74,57 @@ export function BaltimorePortalDataView({
 
   const infoKeyValues = portalData.tabs?.info?.keyValues ?? [];
   const infoTables = portalData.tabs?.info?.tables ?? [];
-  const departments = portalData.tabs?.status?.departments ?? [];
-  const relatedTables = portalData.tabs?.relatedRecords?.tables ?? [];
+  const departments = showFullSections
+    ? (portalData.tabs?.status?.departments ?? [])
+    : [];
+  const relatedTables = showFullSections
+    ? (portalData.tabs?.relatedRecords?.tables ?? [])
+    : [];
   const relatedRows = relatedTables.flatMap((t) => t.rows ?? []);
   const attachmentTables = portalData.tabs?.attachments?.tables ?? [];
   const attachmentRows = attachmentTables.flatMap((t) => t.rows ?? []);
-  const inspectionTables = portalData.tabs?.inspections?.tables ?? [];
+
+  /** Supabase URL: backend uses `viewUrl`; some paths use `publicUrl`. */
+  const attachmentFileUrl = (row: Record<string, string>) =>
+    (row.viewUrl || row.publicUrl || "").trim();
+
+  const successfulDownloadAttachments = useMemo(() => {
+    return attachmentRows.filter((raw) => {
+      const row = raw as Record<string, string>;
+      const status = (row.downloadStatus ?? "").toLowerCase();
+      const isSuccess = status === "uploaded" || status === "success";
+      const url = attachmentFileUrl(row);
+      return isSuccess && url.length > 0;
+    }) as Record<string, string>[];
+  }, [attachmentRows]);
+  const inspectionTables = showFullSections
+    ? (portalData.tabs?.inspections?.tables ?? [])
+    : [];
   const inspectionRows = inspectionTables.flatMap((t) => t.rows ?? []);
-  const paymentTables = portalData.tabs?.payments?.tables ?? [];
+  const paymentTables = showFullSections
+    ? (portalData.tabs?.payments?.tables ?? [])
+    : [];
   const paymentRows = paymentTables.flatMap((t) => t.rows ?? []);
-  const planReviewPdfs = portalData.tabs?.reports?.pdfs ?? [];
+  const planReviewPdfs = showFullSections
+    ? (portalData.tabs?.reports?.pdfs ?? [])
+    : [];
   const planReviewComments = planReviewPdfs.flatMap((p) => p.comments ?? []);
-  const planReviewSummary = portalData.tabs?.reports?.planReviewSummary;
+  const planReviewSummary = showFullSections
+    ? portalData.tabs?.reports?.planReviewSummary
+    : undefined;
   const planReviewRawFields = planReviewSummary?.rawFields ?? {};
 
   const recordDetailRows = infoTables.find((t) => /record detail/i.test(t.title ?? ""))?.rows ?? infoTables[0]?.rows ?? [];
   const recordDetailItems: Array<[string, string]> = recordDetailRows.length
     ? recordDetailRows.map((r) => [(r.key ?? r.Field ?? ""), (r.value ?? r.Value ?? "")]).filter(([k]) => k)
     : infoKeyValues.map((kv) => [kv.key, kv.value]);
+
+  useEffect(() => {
+    if (!BALTIMORE_MINIMAL_SECTIONS_UI) return;
+    if (activePanel !== "record_details" && activePanel !== "attachments") {
+      setActivePanel("record_details");
+    }
+  }, [activePanel]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -146,7 +184,11 @@ export function BaltimorePortalDataView({
         </Card>
 
         <Card>
-          <BaltimoreRecordTabBar activePanel={activePanel} onPanelChange={setActivePanel} />
+          <BaltimoreRecordTabBar
+            activePanel={activePanel}
+            onPanelChange={setActivePanel}
+            minimalSections={BALTIMORE_MINIMAL_SECTIONS_UI}
+          />
           <CardContent className="min-h-[200px] pt-6">
             {activePanel === "record_details" && (
               <BaltimoreDetailSection title="Record Details">
@@ -158,7 +200,7 @@ export function BaltimorePortalDataView({
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "processing_status" && (
+            {showFullSections && activePanel === "processing_status" && (
               <BaltimoreDetailSection title="Processing Status">
                 <BaltimorePanelTable
                   columns={[
@@ -172,7 +214,7 @@ export function BaltimorePortalDataView({
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "related_records" && (
+            {showFullSections && activePanel === "related_records" && (
               <BaltimoreDetailSection title="Related Records">
                 <BaltimorePanelTable
                   columns={[
@@ -188,19 +230,40 @@ export function BaltimorePortalDataView({
 
             {activePanel === "attachments" && (
               <BaltimoreDetailSection title="Attachments">
-                <BaltimorePanelTable
-                  columns={[
-                    { key: "name", header: "Name", render: (r) => (r as Record<string, string>).name ?? "" },
-                    { key: "type", header: "Type", render: (r) => (r as Record<string, string>).type ?? "" },
-                    { key: "size", header: "Size", render: (r) => (r as Record<string, string>).size ?? "" },
-                  ]}
-                  data={attachmentRows as Record<string, unknown>[]}
-                  emptyMessage="No attachments."
-                />
+                {successfulDownloadAttachments.length === 0 ? (
+                  <p className="py-4 text-sm text-muted-foreground">
+                    No downloadable attachments yet
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-3 pt-1">
+                    {successfulDownloadAttachments.map((row, i) => {
+                      const name =
+                        row.name?.trim() || row.file_name?.trim() || "Attachment";
+                      const href = attachmentFileUrl(row);
+                      return (
+                        <li key={`${href}-${i}`}>
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex max-w-full items-start gap-2 rounded-md text-sm font-medium text-primary transition-colors hover:text-primary/90 hover:underline"
+                          >
+                            <span className="select-none leading-6" aria-hidden>
+                              📄
+                            </span>
+                            <span className="min-w-0 break-all leading-6">
+                              {name}
+                            </span>
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "inspections" && (
+            {showFullSections && activePanel === "inspections" && (
               <BaltimoreDetailSection title="Inspections">
                 <BaltimorePanelTable
                   columns={[
@@ -214,7 +277,7 @@ export function BaltimorePortalDataView({
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "fees" && (
+            {showFullSections && activePanel === "fees" && (
               <BaltimoreDetailSection title="Fees">
                 <BaltimorePanelTable
                   columns={[
@@ -228,7 +291,7 @@ export function BaltimorePortalDataView({
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "plan_review" && (
+            {showFullSections && activePanel === "plan_review" && (
               <BaltimoreDetailSection title="Plan Review">
                 {Object.keys(planReviewRawFields).length > 0 ? (
                   <div className="space-y-3 text-sm">

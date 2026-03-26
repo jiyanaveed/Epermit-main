@@ -1,10 +1,13 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { BaltimoreLayout } from "@/components/baltimore/BaltimoreLayout";
 import { BaltimoreRecordHeader } from "@/components/baltimore/BaltimoreRecordHeader";
-import { BaltimoreRecordTabBar } from "@/components/baltimore/BaltimoreRecordTabBar";
-import type { DetailPanel } from "@/components/baltimore/BaltimoreRecordTabBar";
+import {
+  BaltimoreRecordTabBar,
+  BALTIMORE_MINIMAL_SECTIONS_UI,
+  type DetailPanel,
+} from "@/components/baltimore/BaltimoreRecordTabBar";
 import { BaltimoreDetailSection } from "@/components/baltimore/BaltimoreDetailSection";
 import { BaltimoreInfoGrid } from "@/components/baltimore/BaltimoreInfoGrid";
 import { BaltimorePanelTable } from "@/components/baltimore/BaltimorePanelTable";
@@ -13,11 +16,19 @@ import { getBaltimoreRecordDetail } from "@/data/baltimorePortalMock";
 export default function BaltimoreRecordDetailPage() {
   const { recordId } = useParams<{ recordId: string }>();
   const [activePanel, setActivePanel] = useState<DetailPanel>("record_details");
+  const showFullSections = !BALTIMORE_MINIMAL_SECTIONS_UI;
 
   const record = useMemo(() => {
     if (!recordId) return null;
     return getBaltimoreRecordDetail(recordId);
   }, [recordId]);
+
+  useEffect(() => {
+    if (!BALTIMORE_MINIMAL_SECTIONS_UI) return;
+    if (activePanel !== "record_details" && activePanel !== "attachments") {
+      setActivePanel("record_details");
+    }
+  }, [activePanel]);
 
   if (!recordId) {
     return (
@@ -52,6 +63,7 @@ export default function BaltimoreRecordDetailPage() {
           <BaltimoreRecordTabBar
             activePanel={activePanel}
             onPanelChange={setActivePanel}
+            minimalSections={BALTIMORE_MINIMAL_SECTIONS_UI}
           />
           <CardContent className="min-h-[200px] pt-6">
             {activePanel === "record_details" && (
@@ -141,7 +153,7 @@ export default function BaltimoreRecordDetailPage() {
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "processing_status" && (
+            {showFullSections && activePanel === "processing_status" && (
               <BaltimoreDetailSection title="Processing Status">
                 <BaltimorePanelTable
                   columns={[
@@ -172,7 +184,7 @@ export default function BaltimoreRecordDetailPage() {
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "related_records" && (
+            {showFullSections && activePanel === "related_records" && (
               <BaltimoreDetailSection title="Related Records">
                 <BaltimorePanelTable
                   columns={[
@@ -236,7 +248,7 @@ export default function BaltimoreRecordDetailPage() {
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "inspections" && (
+            {showFullSections && activePanel === "inspections" && (
               <BaltimoreDetailSection title="Inspections">
                 <BaltimorePanelTable
                   columns={[
@@ -275,7 +287,7 @@ export default function BaltimoreRecordDetailPage() {
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "fees" && (
+            {showFullSections && activePanel === "fees" && (
               <BaltimoreDetailSection title="Fees">
                 <BaltimorePanelTable
                   columns={[
@@ -306,7 +318,7 @@ export default function BaltimoreRecordDetailPage() {
               </BaltimoreDetailSection>
             )}
 
-            {activePanel === "plan_review" && (
+            {showFullSections && activePanel === "plan_review" && (
               <BaltimoreDetailSection title="Plan Review">
                 <BaltimorePanelTable
                   columns={[

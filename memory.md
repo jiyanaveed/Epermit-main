@@ -146,3 +146,23 @@ Long-term memory for work performed on this repository. **Keep this file updated
 **Doc produced:** `ARCHITECTURE.md` — overview; high-level diagram (client ↔ scraper ↔ Supabase); tech stack; repo structure (src, scraper-service, supabase); frontend (entry, App routes, providers, layout, contexts, portal/Baltimore view, Vite config); scraper (server, API routes table, Accela/Baltimore flow, hash/persistence, other scrapers); database (core tables, migrations, edge functions); data flows (auth, projects, scrape, portal view selection); env and config; PWA/offline; security; deployment; index of related docs.
 
 ---
+
+## 2026-03-26 — Baltimore temporary “minimal portal” (Record Details + Attachments only)
+
+**Action:** Temporary mode for the **Baltimore** Accela flow: API returns only record details and attachments; UI shows only those two sections. Other section **code is kept** (backend: skipped/trimmed; frontend: hidden). Attachment download and Supabase upload logic were **not** changed.
+
+**Backend (`scraper-service/accela-scraper.js`):**
+- **Flag:** `BALTIMORE_MINIMAL_PORTAL_TABS = true` (near other Baltimore helpers). Set to `false` to restore full tabs payload and extraction runs for Baltimore.
+- When Baltimore + flag: skip navigating/extracting Processing Status, Plan Review, Related Records, Inspections, Payments (logged as `(skip) … BALTIMORE_MINIMAL_PORTAL_TABS`). Still run record details and attachments.
+- After building `portalData`, if Baltimore + flag: `portalData.tabs = { info: …, attachments: … }` only. Tab keys remain **`info`** (Record Details) and **`attachments`** — not `recordInfo`.
+- **Log:** `console.log("[PortalData] sections returned:", Object.keys(portalData.tabs), "(info = Record Details)");` — expect `["info","attachments"]` for Baltimore minimal.
+
+**Frontend:**
+- **Flag:** `BALTIMORE_MINIMAL_SECTIONS_UI = true` in `src/components/baltimore/BaltimoreRecordTabBar.tsx`. Set to `false` to restore Record Info / Payments / Plan Review chrome.
+- **`BaltimoreRecordTabBar`:** In minimal mode, two inline buttons (Record Details, Attachments) instead of dropdowns + Plan Review.
+- **`BaltimorePortalDataView.tsx`:** `showFullSections = !BALTIMORE_MINIMAL_SECTIONS_UI`; hidden panels wrapped with `showFullSections &&` (Processing Status, Related Records, Inspections, Fees, Plan Review); derived data for those sections only read when `showFullSections`; `useEffect` resets `activePanel` to `record_details` if it is not allowed in minimal mode.
+- **`BaltimoreRecordDetailPage.tsx`:** Same `minimalSections` prop, `showFullSections` gates, and panel reset `useEffect` (mock `/baltimore/records/:id` stays consistent with portal-data UI).
+
+**Revert:** `BALTIMORE_MINIMAL_PORTAL_TABS = false` in scraper; `BALTIMORE_MINIMAL_SECTIONS_UI = false` in `BaltimoreRecordTabBar.tsx`.
+
+---
