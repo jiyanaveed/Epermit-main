@@ -245,6 +245,7 @@ async function waitForRecordInfoSubmenuAnchors(page, frames, timeoutMs = 5000) {
   while (Date.now() < deadline) {
     for (const ctx of contexts) {
       for (const hint of hints) {
+        let baltimoreOnResponse = null;
         try {
           const safe = hint.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
           await ctx.waitForSelector(`a:has-text("${safe}")`, {
@@ -2639,6 +2640,674 @@ async function extractRelatedRecords(page) {
   };
 }
 
+/**
+ * Runs in browser: scrape attachment table rows from Accela content (main frame or iframe).
+ * @param {boolean} [baltimoreIframeTable] - when true, prefer main `table` in iframe; rows are direct `tr` children
+ */
+function accelaExtractAttachmentRowsInPage(baltimoreIframeTable) {
+  const _cSelsTail = [
+    "#ctl00_PlaceHolderMain_uploadedFiles",
+    '[id*="uploadedFiles"]',
+    '[id*="AttachmentList"]',
+    "#ctl00_PlaceHolderMain_PermitDetailList",
+    "#ctl00_PlaceHolderMain_CAPDetail",
+    '[id*="PlaceHolderMain"][id*="Detail"]',
+    '[id*="PlaceHolderMain"][id*="Permit"]',
+    '[id*="PlaceHolderMain"][id*="Record"]',
+    '[id*="PlaceHolderMain"][id*="Cap"]',
+    "#ctl00_PlaceHolderMain_TabDataList",
+    "#ctl00_PlaceHolderMain_pnlContent",
+    "#ctl00_PlaceHolderMain",
+  ];
+  const _cSels = baltimoreIframeTable
+    ? [
+        "table",
+        ".document_status_list",
+        '[class*="document_status"]',
+        ..._cSelsTail,
+      ]
+    : [
+        ".document_status_list",
+        '[class*="document_status"]',
+        ..._cSelsTail,
+      ];
+  let container = document.body;
+  for (const s of _cSels) {
+    const e = document.querySelector(s);
+    if (e && e.textContent.trim().length > 10) {
+      container = e;
+      break;
+    }
+  }
+  if (!container || !container.querySelectorAll) container = document.body;
+
+  const results = [];
+  const rowSel = baltimoreIframeTable
+    ? "tr"
+    : '[id*="Attachment"] tr, [id*="Document"] tr';
+  const rowNodes =
+    container && container.querySelectorAll
+      ? container.querySelectorAll(rowSel)
+      : [];
+  rowNodes.forEach((row) => {
+    const cells = row.querySelectorAll("td");
+    if (cells.length < 2) return;
+
+    const name = cells[0].textContent.trim();
+
+    // Skip pagination and action rows
+    if (
+      !name ||
+      name.includes("< Prev") ||
+      name.includes("Next >") ||
+      /^\d+$/.test(name) ||
+      name === "View Details" ||
+      name === "Action" ||
+      name === "Name" ||
+      name.toLowerCase().includes("file name") ||
+      name.toLowerCase().includes("document name")
+    ) {
+      return;
+    }
+
+    // Only keep rows that look like actual filenames or have a size value
+    const hasSize = cells.length > 5 && cells[5].textContent.trim().length > 0;
+    const looksLikeFile = name.includes(".") || hasSize;
+    if (!looksLikeFile) return;
+
+    if (name.length >= 200) return;
+
+    const actionLinks = row.querySelectorAll("a");
+    let hasDownload = false;
+    for (const a of actionLinks) {
+      const t = a.textContent.trim().toLowerCase();
+      if (t.includes("download") || t.includes("view")) hasDownload = true;
+    }
+    results.push({
+      name,
+      record_id: cells.length > 1 ? cells[1].textContent.trim() : "",
+      record_type: cells.length > 2 ? cells[2].textContent.trim() : "",
+      entity_type: cells.length > 3 ? cells[3].textContent.trim() : "",
+      type: cells.length > 4 ? cells[4].textContent.trim() : "",
+      size: cells.length > 5 ? cells[5].textContent.trim() : "",
+      latest_update: cells.length > 6 ? cells[6].textContent.trim() : "",
+      rowIndex: Array.from(row.parentElement.children).indexOf(row),
+      hasDownload,
+    });
+  });
+  return results;
+}
+
+/** Normalize permit / record numbers for safe comparison (spacing, case). */
+function normalizePermitNumberKey(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
+}
+
+/**
+ * TEMP (Baltimore): Only `tabs.info` (Record Details) + `tabs.attachments` in portalData;
+ * other tab keys are omitted and their extractors are skipped. Set `false` to restore full portal payload.
+ */
+const BALTIMORE_MINIMAL_PORTAL_TABS = true;
+
+/**
+ * Parse __doPostBack('target','arg') for the "Next >" pager link in the attachment iframe.
+ */
+async function baltimoreParseAttachmentNextPostBack(frame) {
+  return frame
+    .evaluate(() => {
+      const anchors = [...document.querySelectorAll("a")];
+      const nextA = anchors.find((a) => {
+        const t = (a.textContent || "").replace(/\s+/g, " ").trim();
+        return t === "Next >" || /^Next\s*>$/i.test(t);
+      });
+      if (!nextA) return null;
+      const href = (nextA.getAttribute("href") || "").trim();
+      const onclick = (nextA.getAttribute("onclick") || "").trim();
+      const src = href.includes("__doPostBack")
+        ? href
+        : onclick.includes("__doPostBack")
+          ? onclick
+          : href;
+      const m = /__doPostBack\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*\)/.exec(
+        src,
+      );
+      if (!m) return null;
+      return { target: m[1], argument: m[2] || "" };
+    })
+    .catch(() => null);
+}
+
+/**
+ * Replay ASP.NET WebForms postback: serialize the iframe form, set __EVENT*, POST with cookies,
+ * replace document (same-origin fetch). Primary Baltimore attachment pager — not UI click.
+ */
+async function baltimoreSubmitAttachmentIframeFormPost(
+  frame,
+  eventTarget,
+  eventArgument,
+) {
+  return frame.evaluate(
+    async ({ eventTarget: et, eventArgument: ea }) => {
+      const form =
+        document.getElementById("aspnetForm") ||
+        document.querySelector("form#aspnetForm") ||
+        document.forms[0];
+      if (!form) return { ok: false, error: "no_form" };
+      const rawAction = form.getAttribute("action") || window.location.pathname;
+      const absAction = new URL(rawAction, window.location.href).href;
+      const params = new URLSearchParams();
+      for (const el of form.querySelectorAll("input, select, textarea")) {
+        if (!el.name) continue;
+        const tag = el.tagName.toLowerCase();
+        if (tag === "input") {
+          const type = (el.type || "text").toLowerCase();
+          if (type === "submit" || type === "button") continue;
+          if (type === "checkbox" || type === "radio") {
+            if (el.checked) params.append(el.name, el.value);
+          } else {
+            params.append(el.name, el.value);
+          }
+        } else if (tag === "select") {
+          for (const o of el.selectedOptions) {
+            params.append(el.name, o.value);
+          }
+        } else {
+          params.append(el.name, el.value);
+        }
+      }
+      params.set("__EVENTTARGET", et);
+      params.set("__EVENTARGUMENT", ea || "");
+      try {
+        const r = await fetch(absAction, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Referer: window.location.href,
+          },
+          body: params.toString(),
+        });
+        const html = await r.text();
+        if (!r.ok) {
+          return {
+            ok: false,
+            status: r.status,
+            error: "http_" + r.status,
+          };
+        }
+        document.open();
+        document.write(html);
+        document.close();
+        return { ok: true, status: r.status };
+      } catch (e) {
+        return { ok: false, error: String(e.message || e) };
+      }
+    },
+    { eventTarget, eventArgument: eventArgument || "" },
+  );
+}
+
+async function baltimoreReadAttachmentPageSignature(frame) {
+  return frame
+    .evaluate(() => {
+      const vsEl = document.querySelector('input[name="__VIEWSTATE"]');
+      const vs = vsEl ? vsEl.value || "" : "";
+      const names = [...document.querySelectorAll("table tr td:first-child")]
+        .map((c) => (c.textContent || "").trim())
+        .filter(
+          (t) =>
+            t &&
+            !t.includes("Next") &&
+            !t.includes("Prev") &&
+            !/^Name$/i.test(t),
+        );
+      return { viewStateTail: vs.slice(-64), rowKeys: names.sort().join("|") };
+    })
+    .catch(() => ({ viewStateTail: "", rowKeys: "" }));
+}
+
+
+async function downloadBaltimoreAttachmentForRow(page, att, frame, deps) {
+  const {
+    DOWNLOADS_DIR,
+    supabaseProjectId,
+    uploadFn,
+    baltimoreRowFilenameLinkLocator,
+    baltimoreDlState,
+  } = deps;
+
+  const iframeLinks = await frame
+    .evaluate(() =>
+      [...document.querySelectorAll("a")]
+        .map((a) => a.innerText.trim())
+        .filter(
+          (t) =>
+            t.length > 5 &&
+            ![
+              "Record ID",
+              "Record Type",
+              "Entity Type",
+              "Latest Update",
+              "Entity",
+              "Next >",
+              "< Prev",
+              "Resubmit",
+              "Actions",
+              "View Details",
+              "Name",
+              "Size",
+              "Type",
+            ].includes(t),
+        ),
+    )
+    .catch(() => []);
+  const visibleFilenamesForLog = Array.isArray(iframeLinks)
+    ? [...iframeLinks]
+    : [];
+  let link = baltimoreRowFilenameLinkLocator(frame, att.name);
+  let found = (await link.count()) > 0;
+
+  if (!found) {
+    att.downloadStatus = "failed";
+    att.downloadError = "link_not_found";
+    console.log(
+      `[Baltimore Attach] FAIL ${att.name} link_not_found filesOnPage=${JSON.stringify(visibleFilenamesForLog.slice(0, 12))}`,
+    );
+    return;
+  }
+
+  try {
+    let baltimoreCapturePath = null;
+    let baltimoreUploadKey = null;
+    const context = page.context();
+    const frameUrlsBefore = page.frames().map((f) => f.url());
+
+    const capturedResponses = [];
+    const onResponse = (resp) => {
+      try {
+        const headers = resp.headers();
+        const ct = (headers["content-type"] || "").toLowerCase();
+        const cd = (headers["content-disposition"] || "").toLowerCase();
+        if (
+          ct.includes("application/pdf") ||
+          cd.includes("attachment") ||
+          resp.url().toLowerCase().includes(".pdf")
+        ) {
+          capturedResponses.push(resp);
+        }
+      } catch (_) {}
+    };
+    baltimoreDlState.onResponse = onResponse;
+    page.on("response", onResponse);
+
+    let resolvedDownload = null;
+    let popupPageAfterClick = null;
+    let contextSpawnedAfterClick = null;
+
+    if (!baltimoreDlState.clickCompareDone) {
+      try {
+        const popupPromiseM1 = page
+          .waitForEvent("popup", { timeout: 12000 })
+          .catch(() => null);
+        const contextPagePromiseM1 = context
+          .waitForEvent("page", { timeout: 12000 })
+          .catch(() => null);
+        const downloadPromiseM1 = page
+          .waitForEvent("download", { timeout: 12000 })
+          .catch(() => null);
+
+        await link.click({ force: true });
+        await new Promise((r) => setTimeout(r, 2500));
+        const d1 = await downloadPromiseM1;
+        const popupM1 = await popupPromiseM1;
+        const ctxPageM1 = await contextPagePromiseM1;
+        popupPageAfterClick = popupM1;
+        contextSpawnedAfterClick = ctxPageM1;
+
+        let download = d1;
+        if (!download) {
+          const downloadPromise2 = page
+            .waitForEvent("download", { timeout: 25000 })
+            .catch(() => null);
+          const popupPromise2 = page
+            .waitForEvent("popup", { timeout: 10000 })
+            .catch(() => null);
+          const contextPagePromise2 = context
+            .waitForEvent("page", { timeout: 10000 })
+            .catch(() => null);
+          await frame
+            .evaluate((fname) => {
+              const norm = (s) =>
+                (s || "").replace(/\s+/g, " ").trim();
+              const rows = [...document.querySelectorAll("tr")];
+              let a = null;
+              for (const tr of rows) {
+                const inRow = [...tr.querySelectorAll("a")];
+                const hit = inRow.find(
+                  (el) =>
+                    norm(el.innerText) === norm(fname) ||
+                    norm(el.textContent).includes(fname),
+                );
+                if (hit) {
+                  a = hit;
+                  break;
+                }
+              }
+              if (!a) {
+                return { error: "anchor not found for Method2 (row-scoped)" };
+              }
+              const href = (a.getAttribute("href") || "").trim();
+              const onclickAttr = a.getAttribute("onclick") || "";
+              const db =
+                typeof window.__doPostBack === "function"
+                  ? window.__doPostBack
+                  : null;
+              let invoked = null;
+              if (db && href.includes("__doPostBack")) {
+                const m = href.match(
+                  /__doPostBack\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*\)/,
+                );
+                if (m) {
+                  try {
+                    db(m[1], m[2]);
+                    invoked = {
+                      type: "href__doPostBack",
+                      target: m[1],
+                      argument: m[2],
+                    };
+                  } catch (e) {
+                    return {
+                      error: "doPostBack threw: " + String(e.message),
+                      href,
+                    };
+                  }
+                }
+              }
+              if (!invoked && onclickAttr) {
+                const code = onclickAttr.replace(
+                  /^\s*javascript:\s*/i,
+                  "",
+                );
+                try {
+                  const fn = new Function(code);
+                  fn.call(a);
+                  invoked = { type: "onclick_newFunction" };
+                } catch (e1) {
+                  try {
+                    (0, eval)(code);
+                    invoked = { type: "onclick_eval" };
+                  } catch (e2) {
+                    return {
+                      error:
+                        "onclick failed: " +
+                        String(e2.message),
+                      onclickSnippet: onclickAttr.slice(0, 300),
+                    };
+                  }
+                }
+              }
+              if (!invoked) {
+                return {
+                  error: "no invokable postback/onclick",
+                  href,
+                  onclickSnippet: onclickAttr.slice(0, 300),
+                  doPostBackDefined:
+                    typeof window.__doPostBack === "function",
+                };
+              }
+              return {
+                ok: true,
+                invoked,
+                href,
+                onclickSnippet: onclickAttr.slice(0, 300),
+                iframeUrlAfterInvoke: window.location.href,
+                doPostBackDefined:
+                  typeof window.__doPostBack === "function",
+              };
+            }, att.name)
+            .catch((e) => ({ error: String(e.message) }));
+          await new Promise((r) => setTimeout(r, 2500));
+          download = await downloadPromise2;
+          const popupM2 = await popupPromise2;
+          const ctxPageM2 = await contextPagePromise2;
+          if (popupM2) popupPageAfterClick = popupM2;
+          if (ctxPageM2) contextSpawnedAfterClick = ctxPageM2;
+        }
+
+        resolvedDownload = download;
+      } finally {
+        baltimoreDlState.clickCompareDone = true;
+      }
+    } else {
+      const popupPromise = page
+        .waitForEvent("popup", { timeout: 12000 })
+        .catch(() => null);
+      const contextPagePromise = context
+        .waitForEvent("page", { timeout: 12000 })
+        .catch(() => null);
+      const downloadPromise = page
+        .waitForEvent("download", { timeout: 30000 })
+        .catch(() => null);
+      await link.click({ force: true });
+      resolvedDownload = await downloadPromise;
+      popupPageAfterClick = await popupPromise;
+      contextSpawnedAfterClick = await contextPagePromise;
+    }
+
+    const saveAndUploadLocalFile = async (
+      fileNameHint,
+      bodyBuffer,
+      sourceLabel,
+    ) => {
+      const safeName = (
+        fileNameHint ||
+        att.name ||
+        `baltimore_${Date.now()}.pdf`
+      ).replace(/[\\/:*?"<>|]/g, "_");
+      const localPath = path.join(DOWNLOADS_DIR, safeName);
+      fs.writeFileSync(localPath, bodyBuffer);
+      const storagePath = `drawings/${supabaseProjectId}/${safeName}`;
+      const publicUrl = await uploadFn(localPath, storagePath);
+      if (publicUrl) {
+        att.viewUrl = publicUrl;
+        att.downloadStatus = "uploaded";
+        try {
+          fs.unlinkSync(localPath);
+        } catch (_) {}
+        console.log(
+          `       ✅ Baltimore capture via ${sourceLabel}: ${safeName}`,
+        );
+      } else {
+        att.downloadStatus = "local";
+        att.viewUrl = "";
+        console.log(
+          `       ⚠️ Baltimore capture local only via ${sourceLabel}: ${safeName}`,
+        );
+      }
+      return { safeName, storagePath, publicUrl };
+    };
+
+    let captured = false;
+
+    // A) Native Playwright download event
+    const download = resolvedDownload;
+    if (download) {
+      const fileName = download.suggestedFilename() || att.name;
+      const localPath = path.join(DOWNLOADS_DIR, fileName);
+      await download.saveAs(localPath);
+      const storagePath = `drawings/${supabaseProjectId}/${fileName}`;
+      const publicUrl = await uploadFn(localPath, storagePath);
+      baltimoreUploadKey = storagePath;
+      baltimoreCapturePath = "A(download event)";
+      if (publicUrl) {
+        att.viewUrl = publicUrl;
+        att.downloadStatus = "uploaded";
+        try {
+          fs.unlinkSync(localPath);
+        } catch (_) {}
+      } else {
+        att.downloadStatus = "local";
+        att.viewUrl = "";
+      }
+      captured = true;
+    }
+
+    // B) popup/new page path
+    let popupPage = popupPageAfterClick;
+    const contextSpawnedPage = contextSpawnedAfterClick;
+    if (!popupPage && contextSpawnedPage && contextSpawnedPage !== page) {
+      popupPage = contextSpawnedPage;
+    }
+    if (!captured && popupPage) {
+      await popupPage.waitForLoadState("domcontentloaded").catch(() => {});
+      const popupUrl = popupPage.url();
+      let popupDownloaded = false;
+      const popupDl = await popupPage
+        .waitForEvent("download", { timeout: 5000 })
+        .catch(() => null);
+      if (popupDl) {
+        const popupName = popupDl.suggestedFilename() || att.name;
+        const popupLocal = path.join(DOWNLOADS_DIR, popupName);
+        await popupDl.saveAs(popupLocal);
+        const popupStorage = `drawings/${supabaseProjectId}/${popupName}`;
+        const popupUrlUploaded = await uploadFn(popupLocal, popupStorage);
+        baltimoreUploadKey = popupStorage;
+        baltimoreCapturePath = "B(popup download event)";
+        if (popupUrlUploaded) {
+          att.viewUrl = popupUrlUploaded;
+          att.downloadStatus = "uploaded";
+          try {
+            fs.unlinkSync(popupLocal);
+          } catch (_) {}
+        } else {
+          att.downloadStatus = "local";
+          att.viewUrl = "";
+        }
+        captured = true;
+        popupDownloaded = true;
+      }
+      if (!popupDownloaded && popupUrl && /pdf|fileupload|attachment/i.test(popupUrl)) {
+        const popupResp = await context.request
+          .get(popupUrl, { timeout: 20000 })
+          .catch(() => null);
+        if (popupResp && popupResp.ok()) {
+          const headers = popupResp.headers();
+          const ct = (headers["content-type"] || "").toLowerCase();
+          const cd = (headers["content-disposition"] || "").toLowerCase();
+          if (
+            ct.includes("application/pdf") ||
+            cd.includes("attachment") ||
+            popupUrl.toLowerCase().includes(".pdf")
+          ) {
+            const buf = Buffer.from(await popupResp.body());
+            const up = await saveAndUploadLocalFile(
+              att.name,
+              buf,
+              "B(popup response)",
+            );
+            baltimoreUploadKey = up.storagePath;
+            baltimoreCapturePath = "B(popup response)";
+            captured = true;
+          }
+        }
+      }
+    }
+
+    // C) response interception on original page
+    if (!captured) {
+      for (const resp of capturedResponses) {
+        const headers = resp.headers();
+        const ct = (headers["content-type"] || "").toLowerCase();
+        const cd = (headers["content-disposition"] || "").toLowerCase();
+        const isPdfLike =
+          ct.includes("application/pdf") ||
+          cd.includes("attachment") ||
+          resp.url().toLowerCase().includes(".pdf");
+        if (!isPdfLike) continue;
+        const body = await resp.body().catch(() => null);
+        if (body && body.length > 0) {
+          const up = await saveAndUploadLocalFile(
+            att.name,
+            body,
+            "C(response interception)",
+          );
+          baltimoreUploadKey = up.storagePath;
+          baltimoreCapturePath = "C(response interception)";
+          captured = true;
+          break;
+        }
+      }
+    }
+
+    // D) frame navigation path
+    if (!captured) {
+      await page.waitForTimeout(1500);
+      const frameUrlsAfter = page.frames().map((f) => f.url());
+      const newOrChangedFrameUrl = frameUrlsAfter.find(
+        (u) =>
+          u &&
+          !frameUrlsBefore.includes(u) &&
+          /pdf|fileupload|attachment|download/i.test(u),
+      );
+      if (newOrChangedFrameUrl) {
+        const frameResp = await context.request
+          .get(newOrChangedFrameUrl, { timeout: 20000 })
+          .catch(() => null);
+        if (frameResp && frameResp.ok()) {
+          const headers = frameResp.headers();
+          const ct = (headers["content-type"] || "").toLowerCase();
+          const cd = (headers["content-disposition"] || "").toLowerCase();
+          if (
+            ct.includes("application/pdf") ||
+            cd.includes("attachment") ||
+            newOrChangedFrameUrl.toLowerCase().includes(".pdf")
+          ) {
+            const buf = Buffer.from(await frameResp.body());
+            const up = await saveAndUploadLocalFile(
+              att.name,
+              buf,
+              "D(frame navigation)",
+            );
+            baltimoreUploadKey = up.storagePath;
+            baltimoreCapturePath = "D(frame navigation)";
+            captured = true;
+          }
+        }
+      }
+    }
+
+    page.off("response", onResponse);
+    baltimoreDlState.onResponse = null;
+
+    if (!captured) {
+      att.downloadStatus = "failed";
+      att.downloadError = "click_no_download";
+      console.log(`[Baltimore Attach] FAIL ${att.name} click_no_download`);
+    } else if (
+      att.viewUrl &&
+      ["uploaded", "success"].includes(att.downloadStatus)
+    ) {
+      console.log(
+        `[Baltimore Attach] OK ${att.name} path=${baltimoreCapturePath || "?"}`,
+      );
+    } else if (captured) {
+      console.log(`[Baltimore Attach] FAIL ${att.name} captured_but_no_public_url`);
+    }
+  } catch (dlErr) {
+    if (baltimoreDlState.onResponse) {
+      page.off("response", baltimoreDlState.onResponse);
+    }
+    att.downloadStatus = "failed";
+    att.downloadError = dlErr.message;
+    console.log(`[Baltimore Attach] FAIL ${att.name} ${dlErr.message}`);
+  }
+}
+
+
 async function extractAttachments(
   page,
   session,
@@ -2649,6 +3318,7 @@ async function extractAttachments(
 ) {
   console.log("  📋 Extracting attachments...");
   const ctx = getExtractionContext(page);
+  let baltimoreAttachmentFrame = null;
 
   if (isBaltimorePortal(page)) {
     try {
@@ -2664,6 +3334,44 @@ async function extractAttachments(
         return { attachments: [], screenshot: null };
       }
       await saveCheckpointScreenshot(page, "after_attachments").catch(() => {});
+
+      // Wait for attachment iframe to load real content (async after navigation)
+      baltimoreAttachmentFrame = null;
+      const maxWait = 15000;
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        const loaded = page.frames().find(
+          (fr) =>
+            fr.url().includes("AttachmentsList") ||
+            fr.url().includes("FileUpload/A"),
+        );
+        if (loaded) {
+          baltimoreAttachmentFrame = loaded;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      if (!baltimoreAttachmentFrame) {
+        console.log(
+          "  [Baltimore Attachments] iframe never loaded — no attachments",
+        );
+        return { attachments: [], screenshot: null };
+      }
+      console.log(
+        `  [Baltimore Attachments] iframe loaded: ${baltimoreAttachmentFrame.url().substring(0, 80)}`,
+      );
+
+      // Wait for table rows to appear inside the attachment iframe
+      try {
+        await baltimoreAttachmentFrame.waitForSelector("table tr", {
+          timeout: 10000,
+        });
+      } catch (e) {
+        console.log(
+          "  [Baltimore Attachments] table never appeared in iframe",
+        );
+        return { attachments: [], screenshot: null };
+      }
     } catch (e) {
       console.log(`  [Baltimore] Skipped Attachments — navigation failed`);
       console.log(`  [Baltimore] ${e.message}`);
@@ -2692,138 +3400,343 @@ async function extractAttachments(
     }
   }
 
-  const attachments = await ctx.evaluate(() => {
-    const _cSels = [
-      "#ctl00_PlaceHolderMain_PermitDetailList",
-      "#ctl00_PlaceHolderMain_CAPDetail",
-      '[id*="PlaceHolderMain"][id*="Detail"]',
-      '[id*="PlaceHolderMain"][id*="Permit"]',
-      '[id*="PlaceHolderMain"][id*="Record"]',
-      '[id*="PlaceHolderMain"][id*="Cap"]',
-      "#ctl00_PlaceHolderMain_TabDataList",
-      "#ctl00_PlaceHolderMain_pnlContent",
-      "#ctl00_PlaceHolderMain",
-    ];
-    let container = document.body;
-    for (const s of _cSels) {
-      const e = document.querySelector(s);
-      if (e && e.textContent.trim().length > 10) {
-        container = e;
-        break;
-      }
-    }
-
-    const results = [];
-    container
-      .querySelectorAll('[id*="Attachment"] tr, [id*="Document"] tr')
-      .forEach((row) => {
-        const cells = row.querySelectorAll("td");
-        if (cells.length >= 2) {
-          const name = cells[0].textContent.trim();
-          if (
-            name &&
-            name.length < 200 &&
-            !name.toLowerCase().includes("file name") &&
-            !name.toLowerCase().includes("document name")
-          ) {
-            const actionLinks = row.querySelectorAll("a");
-            let hasDownload = false;
-            for (const a of actionLinks) {
-              const t = a.textContent.trim().toLowerCase();
-              if (t.includes("download") || t.includes("view"))
-                hasDownload = true;
-            }
-            results.push({
-              name,
-              record_id: cells.length > 1 ? cells[1].textContent.trim() : "",
-              record_type: cells.length > 2 ? cells[2].textContent.trim() : "",
-              entity_type: cells.length > 3 ? cells[3].textContent.trim() : "",
-              type: cells.length > 4 ? cells[4].textContent.trim() : "",
-              size: cells.length > 5 ? cells[5].textContent.trim() : "",
-              latest_update:
-                cells.length > 6 ? cells[6].textContent.trim() : "",
-              rowIndex: Array.from(row.parentElement.children).indexOf(row),
-              hasDownload,
-            });
-          }
-        }
-      });
-    return results;
-  });
-
-  console.log(`     [panel] Attachments: ${attachments.length} items extracted`);
-  if (attachments.length === 0) console.log("     [panel] Attachments: panel empty (no data)");
-  console.log(
-    `     Found ${attachments.length} attachments, attempting downloads...`,
-  );
-
   const DOWNLOADS_DIR = path.join(__dirname, "downloads");
   if (!fs.existsSync(DOWNLOADS_DIR))
     fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
   const downloadedHashes = new Map();
 
-  for (let ai = 0; ai < attachments.length; ai++) {
-    const att = attachments[ai];
-    if (session)
-      session.message = `Attachments → downloading ${ai + 1}/${attachments.length}: ${att.name}`;
-    console.log(
-      `       📥 [${ai + 1}/${attachments.length}] Downloading: ${att.name}`,
-    );
+  const rowHost = baltimoreAttachmentFrame || page;
+  const captureBaltimoreIframeDiag = async (frame) => {
+    if (!frame) {
+      return {
+        iframeUrl: "",
+        readyState: "unknown",
+        rowCount: 0,
+        firstRowTexts: [],
+        anchorCount: 0,
+        firstAnchors: [],
+        htmlLen: 0,
+        hasPdfAnchor: false,
+        hasPdfRow: false,
+      };
+    }
+    return frame
+      .evaluate(() => {
+        const iframeUrl = window.location.href || "";
+        const readyState = document.readyState || "";
+        const body = document.body;
+        const htmlLen = body ? body.innerHTML.length : 0;
+        const rows = Array.from(document.querySelectorAll("tr"));
+        const rowCount = rows.length;
+        const firstRowTexts = rows
+          .slice(0, 5)
+          .map((r) => (r.textContent || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+        const anchors = Array.from(document.querySelectorAll("a"));
+        const anchorCount = anchors.length;
+        const firstAnchors = anchors.slice(0, 10).map((a) => ({
+          text: (a.textContent || "").replace(/\s+/g, " ").trim(),
+          href: a.getAttribute("href") || "",
+        }));
+        const hasPdfAnchor = anchors.some((a) =>
+          ((a.textContent || "").toUpperCase().includes(".PDF")),
+        );
+        const hasPdfRow = rows.some((r) =>
+          ((r.textContent || "").toUpperCase().includes(".PDF")),
+        );
+        return {
+          iframeUrl,
+          readyState,
+          rowCount,
+          firstRowTexts,
+          anchorCount,
+          firstAnchors,
+          htmlLen,
+          hasPdfAnchor,
+          hasPdfRow,
+        };
+      })
+      .catch(() => ({
+        iframeUrl: "",
+        readyState: "unknown",
+        rowCount: 0,
+        firstRowTexts: [],
+        anchorCount: 0,
+        firstAnchors: [],
+        htmlLen: 0,
+        hasPdfAnchor: false,
+        hasPdfRow: false,
+      }));
+  };
 
-    try {
-      const rows = await page.$$('[id*="Attachment"] tr, [id*="Document"] tr');
-      let targetRow = null;
-      const dataRows = [];
-      for (const row of rows) {
-        const firstCell = await row.$("td");
-        if (firstCell) dataRows.push(row);
+  const waitForBaltimoreAttachmentContentReady = async (
+    frame,
+    label,
+    timeoutMs = 15000,
+    pollMs = 400,
+  ) => {
+    const start = Date.now();
+    let lastSnap = null;
+    let consecutiveEmptyHtml = 0;
+    while (Date.now() - start < timeoutMs) {
+      const snap = await captureBaltimoreIframeDiag(frame);
+      lastSnap = snap;
+      if (snap.htmlLen === 0) {
+        consecutiveEmptyHtml++;
+        if (consecutiveEmptyHtml >= 5) {
+          consecutiveEmptyHtml = 0;
+          await frame.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+          await new Promise((r) => setTimeout(r, pollMs));
+        }
+        await new Promise((r) => setTimeout(r, pollMs));
+        continue;
       }
-      if (att.rowIndex !== undefined && att.rowIndex < dataRows.length) {
-        targetRow = dataRows[att.rowIndex];
-      } else {
-        for (const row of dataRows) {
-          const firstCell = await row.$("td");
-          if (!firstCell) continue;
-          const text = (await firstCell.textContent().catch(() => "")).trim();
-          if (text === att.name) {
-            targetRow = row;
-            break;
-          }
+      consecutiveEmptyHtml = 0;
+      const isReady =
+        snap.readyState === "complete" &&
+        snap.rowCount > 1 &&
+        snap.htmlLen > 0;
+      if (isReady) {
+        return { ready: true, snap };
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    return { ready: false, snap: lastSnap };
+  };
+
+  /** Baltimore attachment download: row-scoped filename link (Playwright click only for file open, not paging). */
+  const baltimoreRowFilenameLinkLocator = (frame, filename) => {
+    const row = frame.locator("tr", { hasText: filename }).first();
+    return row.locator("a").filter({ hasText: filename }).first();
+  };
+
+  const baltimoreDlState = {
+    clickCompareDone: false,
+    onResponse: null,
+  };
+  let attachments;
+  if (baltimoreAttachmentFrame) {
+    attachments = [];
+    const seenNames = new Set();
+    const seenPageSigs = new Set();
+    const fr = baltimoreAttachmentFrame;
+    const downloadDeps = {
+      DOWNLOADS_DIR,
+      supabaseProjectId,
+      uploadFn,
+      baltimoreRowFilenameLinkLocator,
+      baltimoreDlState,
+    };
+    for (let pageIdx = 0; pageIdx < 50; pageIdx++) {
+      const pageReady = await waitForBaltimoreAttachmentContentReady(
+        fr,
+        `baltimore_p${pageIdx}`,
+      );
+      if (!pageReady.ready) {
+        console.log(
+          `[Baltimore Attach] page ${pageIdx + 1} readiness timeout — stop`,
+        );
+        break;
+      }
+      const sigObj = await baltimoreReadAttachmentPageSignature(fr);
+      const pageSig = `${sigObj.rowKeys}##${sigObj.viewStateTail}`;
+      if (seenPageSigs.has(pageSig)) {
+        console.log(
+          `[Baltimore Attach] duplicate WebForms page signature — stop (page ${pageIdx + 1})`,
+        );
+        break;
+      }
+      seenPageSigs.add(pageSig);
+
+      const batch = await fr.evaluate(accelaExtractAttachmentRowsInPage, true);
+      const namesOnPage = batch.map((r) => r.name);
+      console.log(
+        `[Baltimore Attach] page ${pageIdx + 1} filenames: ${JSON.stringify(namesOnPage)}`,
+      );
+
+      for (const row of batch) {
+        if (seenNames.has(row.name)) continue;
+        seenNames.add(row.name);
+        row._baltimorePageIndex = pageIdx;
+        attachments.push(row);
+        if (session) {
+          session.message = `Attachments → page ${pageIdx + 1}: ${row.name}`;
+        }
+        try {
+          await downloadBaltimoreAttachmentForRow(page, row, fr, downloadDeps);
+        } catch (e) {
+          row.downloadStatus = "failed";
+          row.downloadError = e.message;
+          console.log(`[Baltimore Attach] FAIL ${row.name} ${e.message}`);
         }
       }
 
-      if (!targetRow) {
-        console.log(
-          `       ⚠️ Could not re-locate row for "${att.name}" (index ${att.rowIndex}), skipping download`,
-        );
-        att.downloadStatus = "failed";
-        att.downloadError = "row_not_found";
-        continue;
+      const nextPb = await baltimoreParseAttachmentNextPostBack(fr);
+      if (!nextPb) {
+        console.log(`[Baltimore Attach] no further pages (no Next > postback)`);
+        break;
       }
-
-      const actionsLink = await targetRow.$(
-        'a:has-text("Actions"), a:has-text("View"), a[id*="Action"]',
+      console.log(
+        `[Baltimore Attach] form-post page ${pageIdx + 1}→${pageIdx + 2} __EVENTTARGET=${nextPb.target}`,
       );
-      if (!actionsLink) {
-        const downloadLink = await targetRow.$(
-          'a[href*="Download"], a[href*="download"], a[onclick*="download"]',
+      const postRes = await baltimoreSubmitAttachmentIframeFormPost(
+        fr,
+        nextPb.target,
+        nextPb.argument,
+      );
+      if (!postRes.ok) {
+        console.log(
+          `[Baltimore Attach] WebForms POST failed: ${postRes.error || postRes.status}`,
         );
-        if (downloadLink) {
+        break;
+      }
+    }
+    const ok = attachments.filter((a) =>
+      ["uploaded", "success"].includes(a.downloadStatus),
+    ).length;
+    const fail = attachments.filter((a) => a.downloadStatus === "failed")
+      .length;
+    console.log(
+      `[Baltimore Attach] summary: found=${attachments.length} downloaded=${ok} failed=${fail}`,
+    );
+  } else {
+    attachments = await ctx.evaluate(accelaExtractAttachmentRowsInPage);
+  }
+  console.log(
+    `     [panel] Attachments: ${attachments.length} items extracted`,
+  );
+  if (attachments.length === 0) {
+    console.log("     [panel] Attachments: panel empty (no data)");
+  }
+  console.log(
+    `     Found ${attachments.length} attachments, attempting downloads...`,
+  );
+
+  if (!baltimoreAttachmentFrame) {
+    for (let ai = 0; ai < attachments.length; ai++) {
+      const att = attachments[ai];
+      if (session)
+        session.message = `Attachments → downloading ${ai + 1}/${attachments.length}: ${att.name}`;
+      console.log(
+        `       📥 [${ai + 1}/${attachments.length}] Downloading: ${att.name}`,
+      );
+
+      try {
+        const rows = await rowHost.$$(
+          '[id*="Attachment"] tr, [id*="Document"] tr',
+        );
+        let targetRow = null;
+        const dataRows = [];
+        for (const row of rows) {
+          const firstCell = await row.$("td");
+          if (firstCell) dataRows.push(row);
+        }
+        if (att.rowIndex !== undefined && att.rowIndex < dataRows.length) {
+          targetRow = dataRows[att.rowIndex];
+        } else {
+          for (const row of dataRows) {
+            const firstCell = await row.$("td");
+            if (!firstCell) continue;
+            const text = (await firstCell.textContent().catch(() => "")).trim();
+            if (text === att.name) {
+              targetRow = row;
+              break;
+            }
+          }
+        }
+  
+        if (!targetRow) {
+          console.log(
+            `       ⚠️ Could not re-locate row for "${att.name}" (index ${att.rowIndex}), skipping download`,
+          );
+          att.downloadStatus = "failed";
+          att.downloadError = "row_not_found";
+          continue;
+        }
+  
+        const actionsLink = await targetRow.$(
+          'a:has-text("Actions"), a:has-text("View"), a[id*="Action"]',
+        );
+        if (!actionsLink) {
+          const downloadLink = await targetRow.$(
+            'a[href*="Download"], a[href*="download"], a[onclick*="download"]',
+          );
+          if (downloadLink) {
+            try {
+              const [download] = await Promise.all([
+                page.waitForEvent("download", { timeout: 30000 }),
+                downloadLink.click(),
+              ]);
+              const safeDlName = (
+                download.suggestedFilename() || att.name
+              ).replace(/[^a-zA-Z0-9._-]/g, "_");
+              const filePath = path.join(DOWNLOADS_DIR, safeDlName);
+              await download.saveAs(filePath);
+  
+              const viewUrl = await tryUploadAccelaFile(
+                filePath,
+                safeDlName,
+                supabaseProjectId,
+                uploadFn,
+                sanitizeFn,
+                downloadedHashes,
+              );
+              att.viewUrl = viewUrl;
+              att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
+              console.log(
+                `       ✅ Downloaded: ${att.name} → ${viewUrl || "(local)"}`,
+              );
+            } catch (dlErr) {
+              console.log(
+                `       ⚠️ Download failed for ${att.name}: ${dlErr.message}`,
+              );
+              att.downloadStatus = "failed";
+              att.downloadError = dlErr.message;
+            }
+            continue;
+          }
+  
+          console.log(
+            `       ⚠️ No Actions/Download link found for "${att.name}"`,
+          );
+          att.downloadStatus = "failed";
+          att.downloadError = "no_download_link";
+          continue;
+        }
+  
+        await actionsLink.click().catch(() => {});
+        await page.waitForTimeout(1000);
+  
+        const viewDetailsLink = await page.$(
+          'a:has-text("View Details"), a:has-text("Detail"), [id*="ViewDetail"]',
+        );
+        if (
+          viewDetailsLink &&
+          (await viewDetailsLink.isVisible().catch(() => false))
+        ) {
+          await viewDetailsLink.click().catch(() => {});
+          await waitForAccelaLoad(page);
+        }
+  
+        const downloadBtn = await page.$(
+          'a:has-text("Download"), input[value*="Download"], button:has-text("Download"), a[href*="Download"]',
+        );
+  
+        if (downloadBtn && (await downloadBtn.isVisible().catch(() => false))) {
           try {
             const [download] = await Promise.all([
               page.waitForEvent("download", { timeout: 30000 }),
-              downloadLink.click(),
+              downloadBtn.click(),
             ]);
-            const safeDlName = (
-              download.suggestedFilename() || att.name
-            ).replace(/[^a-zA-Z0-9._-]/g, "_");
-            const filePath = path.join(DOWNLOADS_DIR, safeDlName);
+            const suggestedName = download.suggestedFilename() || att.name;
+            const safeName = suggestedName.replace(/[^a-zA-Z0-9._-]/g, "_");
+            const filePath = path.join(DOWNLOADS_DIR, safeName);
             await download.saveAs(filePath);
-
+  
             const viewUrl = await tryUploadAccelaFile(
               filePath,
-              safeDlName,
+              safeName,
               supabaseProjectId,
               uploadFn,
               sanitizeFn,
@@ -2832,7 +3745,7 @@ async function extractAttachments(
             att.viewUrl = viewUrl;
             att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
             console.log(
-              `       ✅ Downloaded: ${att.name} → ${viewUrl || "(local)"}`,
+              `       ✅ Downloaded: ${safeName} → ${viewUrl || "(local)"}`,
             );
           } catch (dlErr) {
             console.log(
@@ -2841,104 +3754,61 @@ async function extractAttachments(
             att.downloadStatus = "failed";
             att.downloadError = dlErr.message;
           }
-          continue;
+        } else {
+          console.log(`       ⚠️ No Download button found for "${att.name}"`);
+          att.downloadStatus = "failed";
+          att.downloadError = "no_download_button";
         }
-
+  
+        const backLink = await page.$(
+          'a:has-text("Back"), a:has-text("Return"), a:has-text("Attachments")',
+        );
+        if (backLink && (await backLink.isVisible().catch(() => false))) {
+          await backLink.click().catch(() => {});
+          await waitForAccelaLoad(page);
+        } else {
+          await page.goBack().catch(() => {});
+          await waitForAccelaLoad(page);
+        }
+      } catch (err) {
         console.log(
-          `       ⚠️ No Actions/Download link found for "${att.name}"`,
+          `       ❌ Attachment error for "${att.name}": ${err.message}`,
         );
         att.downloadStatus = "failed";
-        att.downloadError = "no_download_link";
-        continue;
+        att.downloadError = err.message;
       }
-
-      await actionsLink.click().catch(() => {});
-      await page.waitForTimeout(1000);
-
-      const viewDetailsLink = await page.$(
-        'a:has-text("View Details"), a:has-text("Detail"), [id*="ViewDetail"]',
-      );
-      if (
-        viewDetailsLink &&
-        (await viewDetailsLink.isVisible().catch(() => false))
-      ) {
-        await viewDetailsLink.click().catch(() => {});
-        await waitForAccelaLoad(page);
-      }
-
-      const downloadBtn = await page.$(
-        'a:has-text("Download"), input[value*="Download"], button:has-text("Download"), a[href*="Download"]',
-      );
-
-      if (downloadBtn && (await downloadBtn.isVisible().catch(() => false))) {
-        try {
-          const [download] = await Promise.all([
-            page.waitForEvent("download", { timeout: 30000 }),
-            downloadBtn.click(),
-          ]);
-          const suggestedName = download.suggestedFilename() || att.name;
-          const safeName = suggestedName.replace(/[^a-zA-Z0-9._-]/g, "_");
-          const filePath = path.join(DOWNLOADS_DIR, safeName);
-          await download.saveAs(filePath);
-
-          const viewUrl = await tryUploadAccelaFile(
-            filePath,
-            safeName,
-            supabaseProjectId,
-            uploadFn,
-            sanitizeFn,
-            downloadedHashes,
-          );
-          att.viewUrl = viewUrl;
-          att.downloadStatus = viewUrl ? "success" : "uploaded_no_url";
-          console.log(
-            `       ✅ Downloaded: ${safeName} → ${viewUrl || "(local)"}`,
-          );
-        } catch (dlErr) {
-          console.log(
-            `       ⚠️ Download failed for ${att.name}: ${dlErr.message}`,
-          );
-          att.downloadStatus = "failed";
-          att.downloadError = dlErr.message;
-        }
-      } else {
-        console.log(`       ⚠️ No Download button found for "${att.name}"`);
-        att.downloadStatus = "failed";
-        att.downloadError = "no_download_button";
-      }
-
-      const backLink = await page.$(
-        'a:has-text("Back"), a:has-text("Return"), a:has-text("Attachments")',
-      );
-      if (backLink && (await backLink.isVisible().catch(() => false))) {
-        await backLink.click().catch(() => {});
-        await waitForAccelaLoad(page);
-      } else {
-        await page.goBack().catch(() => {});
-        await waitForAccelaLoad(page);
-      }
-    } catch (err) {
-      console.log(
-        `       ❌ Attachment error for "${att.name}": ${err.message}`,
-      );
-      att.downloadStatus = "failed";
-      att.downloadError = err.message;
     }
   }
 
   for (const att of attachments) {
     delete att.rowIndex;
     delete att.hasDownload;
+    delete att._baltimorePageIndex;
   }
 
   const attScreenshot = await page
     .screenshot({ fullPage: true })
     .catch(() => null);
-  const successCount = attachments.filter(
-    (a) => a.downloadStatus === "success",
+  const downloadedCount = attachments.filter((a) =>
+    ["success", "uploaded"].includes(a.downloadStatus),
+  ).length;
+  const failedCount = attachments.filter(
+    (a) => a.downloadStatus === "failed",
   ).length;
   console.log(
-    `     Attachments: ${attachments.length} found, ${successCount} downloaded`,
+    `     Attachments: ${attachments.length} found, ${downloadedCount} downloaded, ${failedCount} failed`,
+  );
+  const successfulFilenames = attachments
+    .filter((a) => ["success", "uploaded"].includes(a.downloadStatus))
+    .map((a) => a.name);
+  console.log(
+    `     [Attachment][SUMMARY] ${JSON.stringify({
+      attachmentsFound: attachments.length,
+      downloadedCount,
+      failedCount,
+      successfulFilenames,
+      downloadedCountIncludesStatuses: ["success", "uploaded"],
+    })}`,
   );
   return {
     attachments,
@@ -3383,6 +4253,10 @@ async function scrapeAccelaRecord(
       throw new Error("Accela scraping timed out (10 minute limit)");
   };
 
+  console.log(
+    `[Scrape] requested projectId=${supabaseProjectId || "(none)"} permitNumber=${permitNumber}`,
+  );
+
   try {
     session.message = `${permitNumber} → Searching...`;
     await searchPermit(page, portalUrl, permitNumber);
@@ -3390,6 +4264,31 @@ async function scrapeAccelaRecord(
 
     session.message = `${permitNumber} → Record Header`;
     const header = await extractRecordHeader(page);
+    const visiblePermit = (header.record_number || "").trim();
+    console.log(`[Scrape] visible permit loaded: ${visiblePermit || "(empty)"}`);
+    if (page._isBaltimore) {
+      if (!visiblePermit) {
+        throw new Error(
+          "PERMIT_VERIFY_FAILED: Baltimore record header did not expose permit number — aborting scrape (no DB write)",
+        );
+      }
+      if (
+        normalizePermitNumberKey(visiblePermit) !==
+        normalizePermitNumberKey(permitNumber)
+      ) {
+        throw new Error(
+          `PERMIT_MISMATCH visible=${visiblePermit} requested=${permitNumber} — aborting scrape (no DB write)`,
+        );
+      }
+    } else if (
+      visiblePermit &&
+      normalizePermitNumberKey(visiblePermit) !==
+        normalizePermitNumberKey(permitNumber)
+    ) {
+      throw new Error(
+        `PERMIT_MISMATCH visible=${visiblePermit} requested=${permitNumber} — aborting scrape (no DB write)`,
+      );
+    }
     checkTimeout();
 
     const headerScreenshot = await page
@@ -3409,11 +4308,17 @@ async function scrapeAccelaRecord(
     checkTimeout();
 
     let processingStatus = { departments: [], screenshot: null };
-    try {
-      session.message = `${permitNumber} → Processing Status`;
-      processingStatus = await extractProcessingStatus(page);
-    } catch (err) {
-      console.log(`  [scrape] Processing Status section error: ${err.message}`);
+    if (!page._isBaltimore || !BALTIMORE_MINIMAL_PORTAL_TABS) {
+      try {
+        session.message = `${permitNumber} → Processing Status`;
+        processingStatus = await extractProcessingStatus(page);
+      } catch (err) {
+        console.log(`  [scrape] Processing Status section error: ${err.message}`);
+      }
+    } else {
+      console.log(
+        "  [scrape] (skip) Processing Status — BALTIMORE_MINIMAL_PORTAL_TABS",
+      );
     }
     checkTimeout();
 
@@ -3424,20 +4329,30 @@ async function scrapeAccelaRecord(
       planReviewSummary: null,
       downloadLinks: [],
     };
-    try {
-      session.message = `${permitNumber} → Plan Review`;
-      planReview = await extractPlanReview(page);
-    } catch (err) {
-      console.log(`  [scrape] Plan Review section error: ${err.message}`);
+    if (!page._isBaltimore || !BALTIMORE_MINIMAL_PORTAL_TABS) {
+      try {
+        session.message = `${permitNumber} → Plan Review`;
+        planReview = await extractPlanReview(page);
+      } catch (err) {
+        console.log(`  [scrape] Plan Review section error: ${err.message}`);
+      }
+    } else {
+      console.log("  [scrape] (skip) Plan Review — BALTIMORE_MINIMAL_PORTAL_TABS");
     }
     checkTimeout();
 
     let relatedRecords = { records: [], screenshot: null };
-    try {
-      session.message = `${permitNumber} → Related Records`;
-      relatedRecords = await extractRelatedRecords(page);
-    } catch (err) {
-      console.log(`  [scrape] Related Records section error: ${err.message}`);
+    if (!page._isBaltimore || !BALTIMORE_MINIMAL_PORTAL_TABS) {
+      try {
+        session.message = `${permitNumber} → Related Records`;
+        relatedRecords = await extractRelatedRecords(page);
+      } catch (err) {
+        console.log(`  [scrape] Related Records section error: ${err.message}`);
+      }
+    } else {
+      console.log(
+        "  [scrape] (skip) Related Records — BALTIMORE_MINIMAL_PORTAL_TABS",
+      );
     }
     checkTimeout();
 
@@ -3463,20 +4378,30 @@ async function scrapeAccelaRecord(
       completed: [],
       screenshot: null,
     };
-    try {
-      session.message = `${permitNumber} → Inspections`;
-      inspections = await extractInspections(page);
-    } catch (err) {
-      console.log(`  [scrape] Inspections section error: ${err.message}`);
+    if (!page._isBaltimore || !BALTIMORE_MINIMAL_PORTAL_TABS) {
+      try {
+        session.message = `${permitNumber} → Inspections`;
+        inspections = await extractInspections(page);
+      } catch (err) {
+        console.log(`  [scrape] Inspections section error: ${err.message}`);
+      }
+    } else {
+      console.log(
+        "  [scrape] (skip) Inspections — BALTIMORE_MINIMAL_PORTAL_TABS",
+      );
     }
     checkTimeout();
 
     let payments = { payments: [], screenshot: null };
-    try {
-      session.message = `${permitNumber} → Payments`;
-      payments = await extractPayments(page);
-    } catch (err) {
-      console.log(`  [scrape] Payments section error: ${err.message}`);
+    if (!page._isBaltimore || !BALTIMORE_MINIMAL_PORTAL_TABS) {
+      try {
+        session.message = `${permitNumber} → Payments`;
+        payments = await extractPayments(page);
+      } catch (err) {
+        console.log(`  [scrape] Payments section error: ${err.message}`);
+      }
+    } else {
+      console.log("  [scrape] (skip) Payments — BALTIMORE_MINIMAL_PORTAL_TABS");
     }
 
     const isBaltimore = page._isBaltimore === true;
@@ -3494,26 +4419,98 @@ async function scrapeAccelaRecord(
       dashboardStatus: header.record_status || "",
       tabs: {
         info: {
-          tables: details.tables,
+          tables: (() => {
+            if (!isBaltimore) return details.tables;
+            const keepAlways = new Set([
+              "Record Number",
+              "Record Type",
+              "Record Status",
+              "Expiration Date",
+              "Work Location",
+              "Applicant",
+              "Licensed Professional",
+              "Project Description",
+            ]);
+            const bareDupLabels = new Set([
+              "primary phone",
+              "secondary phone",
+              "e-mail",
+              "email",
+            ]);
+            const navOrSpell = /< Prev|Next >|Additional Results|spell check/i;
+            const keepRow = ({ key, value }) => {
+              const k = (key ?? "").trim();
+              const v = String(value ?? "");
+              if (keepAlways.has(k)) return true;
+              if (k.includes(" - ")) return true;
+              if (/^\d{2}\/\d{2}\/\d{4}$/.test(k)) return false;
+              if (navOrSpell.test(k) || navOrSpell.test(v)) return false;
+              if (k.includes("Block:--") || k.includes("Lot:--")) return false;
+              if (/^\d+\)/.test(k)) return false;
+              if (/\wStatus:/i.test(k)) return false;
+              if (bareDupLabels.has(k.toLowerCase())) return false;
+              return true;
+            };
+            return details.tables.map((t) =>
+              t.title === "Record Details" && Array.isArray(t.rows)
+                ? { ...t, rows: t.rows.filter(keepRow) }
+                : t,
+            );
+          })(),
           fields: header,
-          keyValues: [
-            ...(header.record_number
-              ? [{ key: "Record Number", value: header.record_number }]
-              : []),
-            ...(header.record_type
-              ? [{ key: "Record Type", value: header.record_type }]
-              : []),
-            ...(header.record_status
-              ? [{ key: "Record Status", value: header.record_status }]
-              : []),
-            ...(header.expiration_date
-              ? [{ key: "Expiration Date", value: header.expiration_date }]
-              : []),
-            ...Object.entries(details.fields).map(([key, value]) => ({
-              key,
-              value,
-            })),
-          ],
+          keyValues: (() => {
+            const rows = [
+              ...(header.record_number
+                ? [{ key: "Record Number", value: header.record_number }]
+                : []),
+              ...(header.record_type
+                ? [{ key: "Record Type", value: header.record_type }]
+                : []),
+              ...(header.record_status
+                ? [{ key: "Record Status", value: header.record_status }]
+                : []),
+              ...(header.expiration_date
+                ? [{ key: "Expiration Date", value: header.expiration_date }]
+                : []),
+              ...Object.entries(details.fields).map(([key, value]) => ({
+                key,
+                value,
+              })),
+            ];
+            if (!isBaltimore) return rows;
+
+            const keepAlways = new Set([
+              "Record Number",
+              "Record Type",
+              "Record Status",
+              "Expiration Date",
+              "Work Location",
+              "Applicant",
+              "Licensed Professional",
+              "Project Description",
+            ]);
+            const bareDupLabels = new Set([
+              "primary phone",
+              "secondary phone",
+              "e-mail",
+              "email",
+            ]);
+            const navOrSpell = /< Prev|Next >|Additional Results|spell check/i;
+
+            return rows.filter(({ key, value }) => {
+              const k = (key ?? "").trim();
+              const v = String(value ?? "");
+              if (keepAlways.has(k)) return true;
+              if (k.includes(" - ")) return true;
+              if (/^\d{2}\/\d{2}\/\d{4}$/.test(k)) return false;
+              if (navOrSpell.test(k) || navOrSpell.test(v)) return false;
+              if (k.includes("Block:--") || k.includes("Lot:--")) return false;
+              if (/^\d+\)/.test(k)) return false;
+              if (/\wStatus:/i.test(k)) return false;
+              if (bareDupLabels.has(k.toLowerCase())) return false;
+              return true;
+            });
+          })(),
           screenshot: details.screenshot,
         },
         status: {
@@ -3671,6 +4668,18 @@ async function scrapeAccelaRecord(
       },
     };
 
+    if (isBaltimore && BALTIMORE_MINIMAL_PORTAL_TABS) {
+      portalData.tabs = {
+        info: portalData.tabs.info,
+        attachments: portalData.tabs.attachments,
+      };
+    }
+    console.log(
+      "[PortalData] sections returned:",
+      Object.keys(portalData.tabs),
+      "(info = Record Details)",
+    );
+
     session.data[permitNumber] = portalData;
 
     console.log(`  📊 Extraction summary: info.fields=${Object.keys(details.fields).length} | status.departments=${processingStatus.departments.length} | relatedRecords=${relatedRecords.records.length} | attachments=${attachments.attachments.length} | inspections=${inspections.inspections.length + inspections.upcoming.length + inspections.completed.length} | payments=${payments.payments.length}`);
@@ -3685,22 +4694,50 @@ async function scrapeAccelaRecord(
 
       let existingRow = null;
       const selectFields = page._isBaltimore
-        ? "id, portal_data_hash, portal_data"
+        ? "id, portal_data_hash, portal_data, permit_number, user_id"
         : "id, portal_data_hash";
-      if (supabaseProjectId) {
-        const { data: rows } = await supabase
+
+      if (page._isBaltimore) {
+        if (!supabaseProjectId) {
+          throw new Error(
+            "Baltimore scrape requires projectId — refusing DB write",
+          );
+        }
+        const { data: bRows, error: bErr } = await supabase
           .from("projects")
           .select(selectFields)
-          .eq("id", supabaseProjectId);
-        existingRow = rows && rows.length > 0 ? rows[0] : null;
-      }
-      if (!existingRow) {
-        const { data: rows } = await supabase
-          .from("projects")
-          .select(selectFields)
-          .eq("permit_number", permitNumber)
-          .eq("user_id", userId);
-        existingRow = rows && rows.length > 0 ? rows[0] : null;
+          .eq("id", supabaseProjectId)
+          .limit(1);
+        if (bErr || !bRows?.length) {
+          throw new Error(
+            `Baltimore scrape: projects row not found id=${supabaseProjectId}`,
+          );
+        }
+        existingRow = bRows[0];
+        if (
+          normalizePermitNumberKey(existingRow.permit_number) !==
+          normalizePermitNumberKey(permitNumber)
+        ) {
+          throw new Error(
+            `Baltimore DB permit mismatch projects.id=${supabaseProjectId} dbPermit=${existingRow.permit_number} requested=${permitNumber}`,
+          );
+        }
+      } else {
+        if (supabaseProjectId) {
+          const { data: rows } = await supabase
+            .from("projects")
+            .select(selectFields)
+            .eq("id", supabaseProjectId);
+          existingRow = rows && rows.length > 0 ? rows[0] : null;
+        }
+        if (!existingRow) {
+          const { data: rows } = await supabase
+            .from("projects")
+            .select(selectFields)
+            .eq("permit_number", permitNumber)
+            .eq("user_id", userId);
+          existingRow = rows && rows.length > 0 ? rows[0] : null;
+        }
       }
 
       const isLegacyBaltimore =
@@ -3709,7 +4746,12 @@ async function scrapeAccelaRecord(
         (existingRow.portal_data.schemaVersion == null || existingRow.portal_data.schemaVersion < 2);
       const forceOverwrite = isLegacyBaltimore;
 
-      if (existingRow && existingRow.portal_data_hash === newHash && !forceOverwrite) {
+      if (
+        existingRow &&
+        existingRow.portal_data_hash === newHash &&
+        !forceOverwrite &&
+        !page._isBaltimore
+      ) {
         console.log(
           `  ⏭️ Data unchanged (hash match), skipping update for row ${existingRow.id}`,
         );
@@ -3720,7 +4762,12 @@ async function scrapeAccelaRecord(
       } else if (existingRow) {
         if (forceOverwrite) {
           console.log(
-            `  📌 Baltimore: forcing overwrite for row ${existingRow.id} (legacy schema, corrected Plan Review)`,
+            `  📌 Baltimore: forcing overwrite for row ${existingRow.id} (legacy schema)`,
+          );
+        }
+        if (page._isBaltimore) {
+          console.log(
+            `  📌 Baltimore: full portal_data replace (attachments rows = this scrape only, no merge) projects.id=${existingRow.id}`,
           );
         }
         const updatePayload = {
@@ -3746,6 +4793,11 @@ async function scrapeAccelaRecord(
           );
         }
       } else {
+        if (page._isBaltimore) {
+          throw new Error(
+            "Baltimore scrape: missing projects row (should have been loaded by id)",
+          );
+        }
         const { data: created, error: createError } = await supabase
           .from("projects")
           .insert({
@@ -3799,137 +4851,186 @@ async function scrapeAccelaRecord(
  * Project Description, Owner; optional "More Details" expansion.
  */
 async function extractBaltimoreRecordDetails(contentFrame) {
-  function runSteps() {
-    return contentFrame.evaluate(() => {
+  try {
+    /* More Details + section expands disabled temporarily (speed) — re-enable when fixed.
+    try {
+      const moreBtn = await contentFrame.$('text="More Details"');
+      if (moreBtn) {
+        await moreBtn.click();
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch (e) {}
+
+    const sectionHeadings = [
+      "Related Contacts",
+      "Application Information",
+      "Parcel Information",
+      "Planning and Zoning Info",
+      "Permit Dates and Internal Use",
+      "Trade and Accessory Info",
+      "Responsible Parties",
+    ];
+    for (const heading of sectionHeadings) {
+      try {
+        const el = await contentFrame.$(`text="${heading}"`);
+        if (el) {
+          await el.click();
+          await new Promise((r) => setTimeout(r, 800));
+        }
+      } catch (e) {}
+    }
+    */
+
+    const fields = await contentFrame.evaluate(() => {
       const result = {};
-      function norm(s) {
-        return (s || "").replace(/\s+/g, " ").trim();
-      }
+      const clean = el => (el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '');
+      const allEls = [...document.querySelectorAll('*')];
 
-      function findElWithText(exactText) {
-        const tags = "h1, h2, h3, h4, h5, h6, div, span, strong, b, p, label";
-        const els = document.querySelectorAll(tags);
-        for (const el of els) {
-          if (norm(el.textContent) === exactText) return el;
+      // WORK LOCATION
+      for (const el of allEls) {
+        if (clean(el) === 'Work Location') {
+          let sib = el.nextElementSibling;
+          for (let i = 0; i < 8; i++) {
+            if (!sib) break;
+            const t = clean(sib);
+            if (t && t.length < 100 && /\d/.test(t) &&
+                t.indexOf('function') === -1 && t.indexOf('var ') === -1) {
+              result['Work Location'] = t.replace(/\s*\*\s*$/, '').replace(/-+$/, '').trim();
+              break;
+            }
+            sib = sib.nextElementSibling;
+          }
+          break;
         }
-        return null;
       }
 
-      function textUntilNextBoldHeading(labelEl) {
-        const parts = [];
-        let el = labelEl.nextElementSibling;
-        while (el) {
-          const tag = (el.tagName || "").toLowerCase();
-          const text = norm(el.textContent);
-          const isBoldHeading =
-            ["b", "strong", "h1", "h2", "h3", "h4", "h5", "h6"].includes(tag) &&
-            text.length < 120;
-          if (isBoldHeading) break;
-          if (text) parts.push(text);
-          el = el.nextElementSibling;
-        }
-        return norm(parts.join(" "));
-      }
+      // NAMED BLOCKS
+      const knownLabels = [
+        'Applicant', 'Licensed Professional', 'Project Description', 'Owner'
+      ];
 
-      // Work Location: find the heading, then find the address text
-      // The address is likely in a span, div, or td that follows
-      // It will NOT contain "function", "var ", or "script"
-      const allEls = [...document.querySelectorAll("*")];
-      const wlHeading = allEls.find((el) => {
-        const t = (el.innerText || "").trim();
-        return t === "Work Location" && el.children.length === 0;
-      });
+      for (const label of knownLabels) {
+        const candidates = allEls.filter(el => {
+          const t = clean(el).replace(/:$/, '');
+          return t === label;
+        });
 
-      if (wlHeading) {
-        // Walk siblings and children of parent to find address text
-        const parent = wlHeading.parentElement;
-        const siblings = parent ? [...parent.querySelectorAll("*")] : [];
-        for (const sib of siblings) {
-          const t = (sib.innerText || "").trim();
-          // Address: short, no JS keywords, contains digits
-          if (
-            t.length > 5 &&
-            t.length < 100 &&
-            !t.includes("function") &&
-            !t.includes("var ") &&
-            /\d/.test(t) &&
-            sib !== wlHeading
-          ) {
-            if (
-              t.includes("function ") ||
-              t.includes("var ") ||
-              t.includes("__doPostBack")
-            )
-              continue;
-            result["Work Location"] = t;
+        for (const candidate of candidates) {
+          const block = candidate.closest('td, li, div[class], p')
+                        || candidate.parentElement;
+          if (!block) continue;
+
+          let value = clean(block);
+          value = value.replace(label + ':', '').replace(label, '').trim();
+          value = value.replace(/\s+/g, ' ').trim();
+
+          if (value && value.length > 5 &&
+              value.indexOf('< Prev') === -1 &&
+              value.indexOf('Additional Results') === -1 &&
+              value.indexOf('spell check') === -1 &&
+              value.indexOf('function ') === -1 &&
+              value.indexOf('var ') === -1 &&
+              value.indexOf('__doPostBack') === -1 &&
+              value.indexOf('searchWaterMark') === -1) {
+            result[label] = value;
             break;
           }
         }
       }
 
-      // STEP 2 — Applicant
-      const applicantEl = findElWithText("Applicant:");
-      if (applicantEl) {
-        const block = textUntilNextBoldHeading(applicantEl);
-        if (block) result["Applicant"] = block;
+      const moreDetails = {};
+
+      // Related Contacts only (full More Details section loop disabled for speed)
+      const relatedHeading = 'Related Contacts';
+      const rcHeadingEl = allEls.find(el => {
+        const t = (el.innerText || '').trim();
+        return (t === relatedHeading || t === relatedHeading + ':') &&
+               el.children.length <= 2;
+      });
+      if (rcHeadingEl) {
+        const parent = rcHeadingEl.parentElement;
+        if (parent) {
+          const sectionData = {};
+          const container = parent.nextElementSibling || parent;
+          const tables = [...(container.querySelectorAll('table') || [])];
+
+          for (const table of tables) {
+            const rows = [...table.querySelectorAll('tr')];
+            for (const row of rows) {
+              const cells = [...row.querySelectorAll('td, th')];
+              if (cells.length === 2) {
+                const lbl = (cells[0].innerText || '').trim().replace(/:$/, '');
+                const val = (cells[1].innerText || '').trim();
+                if (lbl && val && lbl.length < 80 &&
+                    lbl.indexOf('function') === -1) {
+                  sectionData[lbl] = val;
+                }
+              } else if (cells.length > 2) {
+                const headers = [...table.querySelectorAll('th')].map(
+                  thEl => (thEl.innerText || '').trim()
+                );
+                if (headers.length > 0) {
+                  if (!sectionData['_rows']) sectionData['_rows'] = [];
+                  const rowObj = {};
+                  cells.forEach((td, i) => {
+                    const key = headers[i] || ('col_' + i);
+                    rowObj[key] = (td.innerText || '').trim();
+                  });
+                  if (Object.values(rowObj).some(v => v)) {
+                    sectionData['_rows'].push(rowObj);
+                  }
+                }
+              }
+            }
+          }
+
+          const divEls = [...(container.querySelectorAll('div, span, td') || [])];
+          for (const el of divEls) {
+            const t = (el.innerText || '').trim();
+            if (t.endsWith(':') && t.length < 80 && el.children.length === 0) {
+              const next = el.nextElementSibling;
+              if (next) {
+                const val = (next.innerText || '').trim();
+                const lbl = t.replace(/:$/, '');
+                if (val && val.indexOf('function') === -1 &&
+                    val.indexOf('var ') === -1 && !sectionData[lbl]) {
+                  sectionData[lbl] = val;
+                }
+              }
+            }
+          }
+
+          if (Object.keys(sectionData).length > 0) {
+            moreDetails[relatedHeading] = sectionData;
+          }
+        }
       }
 
-      // STEP 3 — Licensed Professional
-      const licProEl = findElWithText("Licensed Professional:");
-      if (licProEl) {
-        const block = textUntilNextBoldHeading(licProEl);
-        if (block) result["Licensed Professional"] = block;
-      }
-
-      // STEP 4 — Project Description
-      const projDescEl = findElWithText("Project Description:");
-      if (projDescEl) {
-        const block = textUntilNextBoldHeading(projDescEl);
-        if (block) result["Project Description"] = block;
-      }
-
-      // STEP 5 — Owner
-      const ownerEl = findElWithText("Owner:");
-      if (ownerEl) {
-        const block = textUntilNextBoldHeading(ownerEl);
-        if (block) result["Owner"] = block;
+      // Flatten moreDetails into top-level string key/value pairs
+      for (const [section, sectionData] of Object.entries(moreDetails)) {
+        if (typeof sectionData !== 'object') continue;
+        for (const [lbl, val] of Object.entries(sectionData)) {
+          if (lbl === '_rows') {
+            // Skip row arrays for now — not renderable as simple strings
+            continue;
+          }
+          if (typeof val === 'string' && val.trim()) {
+            result[section + ' - ' + lbl] = val.trim();
+          }
+        }
       }
 
       return result;
     });
-  }
 
-  function findAndClickMoreDetails() {
-    return contentFrame.evaluate(() => {
-      const links = document.querySelectorAll("a, button");
-      for (const el of links) {
-        const t = (el.textContent || "").trim();
-        if (t === "More Details") {
-          el.click();
-          return true;
-        }
-      }
-      return false;
-    });
-  }
+    const count = Object.keys(fields).length;
+    console.log('[Baltimore RecordDetails] Extracted ' + count + ' fields');
+    return fields;
 
-  let results = await runSteps();
-  const clickedMore = await findAndClickMoreDetails();
-  if (clickedMore) {
-    if (typeof contentFrame.waitForTimeout === "function") {
-      await contentFrame.waitForTimeout(2000);
-    } else {
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    const secondResults = await runSteps();
-    for (const [k, v] of Object.entries(secondResults)) {
-      if (results[k] === undefined) results[k] = v;
-    }
+  } catch(err) {
+    console.log('[Baltimore RecordDetails] ERROR:', err.message);
+    return {};
   }
-
-  const count = Object.keys(results).length;
-  console.log(`[Baltimore RecordDetails] Extracted ${count} fields`);
-  return results;
 }
 
 module.exports = {
